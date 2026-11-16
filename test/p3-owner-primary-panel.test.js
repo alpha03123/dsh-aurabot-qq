@@ -842,6 +842,43 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
       '固定主账号绝不得出现在未加入排序区域',
     )
 
+    // 复审 §3.1：当前固定主账号 bridge#2，自定义 fallbackOrder 仅含 [qq]（不含 bridge#2），
+    // 点击 qqbot「设为主账号」后，fallbackOrder 必须为 [qqbot, bridge#2, qq]（保留旧主账号为第 2 顺位备选）
+    hook = 0
+    refs.length = 0
+    const savedOptsBackup = state[0].ownerAccountOptions
+    state[0] = {
+      ...state[0],
+      ownerAccountOptions: [
+        ...prioOptions,
+        { key: 'qqbot:qqbot:qb_1', platform: 'qqbot', instance: 'qqbot', account: 'qb_1', state: 'connected', enabled: true, canProactive: true, multiInstance: false },
+      ],
+    }
+    const switchDraft = {
+      ...prioCfg,
+      ownerPrimary: {
+        ...prioCfg.ownerPrimary,
+        fallbackOrder: [{ platform: 'qq', instance: 'qq', account: '10001' }],
+      },
+    }
+    const switchTree = vmExport.panelTest.GlobalAccess({
+      st: prioSt,
+      draft: switchDraft,
+      setDraft: (d) => { draftState = d },
+      toast() {},
+    })
+    const qbExcludedRow = collectNodes(switchTree, (n) => n.props && n.props['data-prio-excluded-key'] === 'qqbot\x00qqbot\x00qb_1')[0]
+    assert.ok(qbExcludedRow)
+    const qbSetBtn = collectNodes(qbExcludedRow, (n) => n.type?.name === 'Btn' && textOf(n.children) === '设为主账号')[0]
+    assert.ok(qbSetBtn && !qbSetBtn.props.disabled)
+    qbSetBtn.props.onClick()
+    assert.deepEqual(JSON.parse(JSON.stringify(draftState.ownerPrimary.fallbackOrder)), [
+      { platform: 'qqbot', instance: 'qqbot', account: 'qb_1' },
+      { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
+      { platform: 'qq', instance: 'qq', account: '10001' },
+    ], '切换固定主账号时，即使原自定义列表未写旧主账号，也必须把旧主账号保留为新主账号之后的备选顺位')
+    state[0] = { ...state[0], ownerAccountOptions: savedOptsBackup }
+
     // 验证 3 项完整排序下（固定首位 bridge#2 + 可调序 qq、feishu）：
     // 1) 点击第 2 行「下移」与第 3 行「上移」均可交换第 2/3 位
     // 2) Pointer 拖拽第 2 行到第 3 行上精确交换位置（不会拖乱首位）；尝试拖到第 1 位主账号上被拦截
@@ -921,6 +958,35 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
       { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
       { platform: 'qq', instance: 'qq', account: '10001' },
     ], '拖拽到另一非固定列表项上必须交换位置')
+
+    // 校验 touch 触摸交互（复审 §3.2）：触碰行体空白处不拦截滚动，从 .ab-prio-handle 拖动触发 swap
+    draftState = JSON.parse(JSON.stringify({
+      ...prioCfg,
+      ownerPrimary: {
+        ...prioCfg.ownerPrimary,
+        fallbackOrder: [
+          { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
+          { platform: 'qq', instance: 'qq', account: '10001' },
+          { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
+        ],
+      },
+    }))
+    ptrRows[1].props.onPointerDown({ button: 0, pointerType: 'touch', clientX: 50, clientY: 65, target: { closest: () => null }, preventDefault() {} })
+    dispatchWinEvent('pointermove', { clientX: 50, clientY: 110 })
+    dispatchWinEvent('pointerup', { clientX: 50, clientY: 110 })
+    assert.deepEqual(JSON.parse(JSON.stringify(draftState.ownerPrimary.fallbackOrder)), [
+      { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
+      { platform: 'qq', instance: 'qq', account: '10001' },
+      { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
+    ], 'touch 非手柄区域滑动不得劫持列表滚动')
+    ptrRows[1].props.onPointerDown({ button: 0, pointerType: 'touch', clientX: 50, clientY: 65, target: { closest: (sel) => (sel === '.ab-prio-handle' ? {} : null) }, preventDefault() {} })
+    dispatchWinEvent('pointermove', { clientX: 50, clientY: 110 })
+    dispatchWinEvent('pointerup', { clientX: 50, clientY: 110 })
+    assert.deepEqual(JSON.parse(JSON.stringify(draftState.ownerPrimary.fallbackOrder)), [
+      { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
+      { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
+      { platform: 'qq', instance: 'qq', account: '10001' },
+    ], 'touch 从 .ab-prio-handle 手柄拖动必须精确交换位置')
 
     // 同时验证无固定主账号（recent 模式）下，第 1 项拖到第 3 项直接交换 #1 和 #3（而非移位）
     draftState = JSON.parse(JSON.stringify({

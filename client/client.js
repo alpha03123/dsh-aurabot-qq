@@ -361,7 +361,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-deep:#9cc4f5;--ab-sea:#6
 .ab-prio-item.dragging{opacity:.45}
 .ab-prio-item.over{border-color:var(--ab-sea);background:var(--ab-foam);box-shadow:inset 0 0 0 1px var(--ab-sea)}
 .ab-prio-handle{flex:none;color:var(--ab-dim);font-size:13px;line-height:1;user-select:none;letter-spacing:-1px}
-.ab-prio-handle.touch-drag{touch-action:none}
+.ab-prio-handle.touch-drag{touch-action:none;padding:4px 6px;margin:-4px -2px}
 .ab-prio-pin{flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;color:var(--ab-sea);background:var(--ab-foam);cursor:default}
 .ab-prio-main{flex:1;min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .ab-prio-actions{flex:none;display:flex;align-items:center;gap:4px}
@@ -2606,7 +2606,10 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const setPrimaryFromOption = (hit) => {
         if (!hit || !isOwnerOptionSelectable(hit)) return
         const hasCustom = Array.isArray(pref.fallbackOrder) && pref.fallbackOrder.length > 0
-        const nextOrder = hasCustom ? sanitizeFallbackOrderForOptions([hit, ...pref.fallbackOrder], options) : pref.fallbackOrder
+        // 保留旧固定主账号作为紧随新主账号之后的备选顺位（即使历史自定义列表遗漏过旧主账号，也不让其悄然掉出回退）
+        const nextOrder = hasCustom
+          ? sanitizeFallbackOrderForOptions([hit, ...(matchedOpt ? [matchedOpt] : []), ...pref.fallbackOrder], options)
+          : pref.fallbackOrder
         setDraft(setPath(draft, 'ownerPrimary', { ...pref, mode: 'fixed', platform: hit.platform, instance: hit.instance, account: hit.account, fallbackOrder: nextOrder }))
       }
 
