@@ -425,6 +425,128 @@ export function apply(ctx) {
     }
     try { gw.routing.setFixed(owner, '') } catch {}
   }
+  /** 构建主人路由只读快照上下文，供主账号解析与候选评估复用。 */
+  function createOwnerRouteContext(owner) {
+    const gwInstances = platformGateway?.instances?.() || []
+    const managedInstances = gwInstances.filter((x) => !(x.instance === defaultPlatform && legacyQqActive()))
+    const hasDefInGateway = Boolean(platformGateway && defaultPlatform && platformGateway.caps?.(`${defaultPlatform}:private:0`))
+    const defAcc = defaultPlatform ? String(identity.accountOn(owner, defaultPlatform) || '') : ''
+    const qqGwInsts = defaultPlatform ? managedInstances.filter((x) => x.platform === defaultPlatform) : []
+    const qqGwEnabled = qqGwInsts.some((x) => x.enabled)
+    const ownerAccountsAll = identity.accountsOf(owner) || []
+    return {
+      owner,
+      gwInstances,
+      managedInstances,
+      hasDefInGateway,
+      defAcc,
+      qqGwInsts,
+      qqGwEnabled,
+      ownerAccountsAll,
+    }
+  }
+  /** 纯只读评估单个主人目标（含传统直连 QQ 与网关多实例隔离校验）。 */
+  function evaluateOwnerTarget(spec, ctx) {
+    const implicitLegacyQq = Boolean(spec?.implicitLegacyQq)
+    let targetInstance = String(spec?.instance || '').trim()
+    let targetPlatform = implicitLegacyQq ? defaultPlatform : String(spec?.platform || '').trim()
+    let matchedInst = null
+
+    if (targetInstance) {
+      if (targetInstance === defaultPlatform && legacyQqActive()) {
+        targetPlatform = defaultPlatform
+      } else {
+        matchedInst = ctx.managedInstances.find((x) => x.instance === targetInstance) || null
+        targetPlatform = matchedInst?.platform || targetPlatform || String(targetInstance).split('#')[0] || ''
+      }
+    } else {
+      if (targetPlatform === defaultPlatform && legacyQqActive() && !ctx.hasDefInGateway) {
+        targetInstance = defaultPlatform
+      } else {
+        const same = ctx.managedInstances.filter((x) => x.platform === targetPlatform)
+        matchedInst = same.find((x) => x.enabled && x.state === 'connected' && x.caps && x.caps.proactive !== 'none')
+          || same.find((x) => x.enabled && x.state === 'connected')
+          || same[0]
+          || null
+        targetInstance = matchedInst?.instance || targetPlatform
+      }
+    }
+    const samePlat = targetPlatform ? ctx.managedInstances.filter((x) => x.platform === targetPlatform) : []
+
+    const ownerAccounts = ctx.ownerAccountsAll.filter((a) => a && a.platform === targetPlatform && a.account)
+    let acc = ''
+    let failReason = ''
+    const explicitAccount = implicitLegacyQq ? '' : String(spec?.account || '').trim()
+    if (explicitAccount) {
+      const hit = ownerAccounts.find((a) => String(a.account) === explicitAccount)
+      if (!hit) {
+        failReason = 'primary-unlinked'
+        acc = explicitAccount
+      } else {
+        acc = String(hit.account)
+      }
+    } else if (implicitLegacyQq && ctx.defAcc) {
+      acc = ctx.defAcc
+    } else if (ownerAccounts.length === 1) {
+      acc = String(ownerAccounts[0].account)
+    } else if (ownerAccounts.length > 1) {
+      const matchedByInst = targetInstance
+        ? ownerAccounts.find((a) =>
+            (platformGateway?.routing?.instancesForAccount?.(targetPlatform, a.account) || []).includes(targetInstance)
+          )
+        : null
+      acc = String(matchedByInst?.account || identity.accountOn(ctx.owner, targetPlatform) || ownerAccounts[0].account)
+    } else {
+      failReason = 'primary-unlinked'
+    }
+
+    const target = { platform: targetPlatform, instance: targetInstance || targetPlatform, account: acc }
+    if (!failReason) {
+      if (targetInstance === defaultPlatform && legacyQqActive() && !ctx.hasDefInGateway) {
+        if (onebotState === 'connected' && !wrongAccount) {
+          return {
+            ok: true,
+            chatId: `private:${acc}`,
+            failReason: '',
+            target: { platform: defaultPlatform, instance: defaultPlatform, account: acc },
+            unobservedSingle: false,
+          }
+        }
+        failReason = 'primary-offline'
+      } else {
+        const st = matchedInst || ctx.managedInstances.find((x) => x.instance === targetInstance) || null
+        if (!st || !st.enabled || st.state !== 'connected') {
+          failReason = 'primary-offline'
+        } else {
+          const knownInsts = platformGateway?.routing?.instancesForAccount?.(targetPlatform, acc) || []
+          if (st.self?.account && String(st.self.account) === String(acc)) {
+            failReason = 'primary-unlinked'
+          } else if (knownInsts.length > 0 && !knownInsts.includes(targetInstance)) {
+            failReason = 'primary-unlinked'
+          } else if (samePlat.length > 1 && !knownInsts.includes(targetInstance)) {
+            failReason = 'primary-unlinked'
+          } else if (!st.caps || st.caps.proactive === 'none') {
+            failReason = 'primary-proactive-none'
+          } else {
+            const chatId = formatChatId({ instance: st.instance, platform: st.platform, kind: 'private', id: acc })
+            if (!chatId) {
+              failReason = 'primary-unlinked'
+            } else {
+              return {
+                ok: true,
+                chatId,
+                failReason: '',
+                target: { platform: st.platform, instance: st.instance, account: acc },
+                unobservedSingle: knownInsts.length === 0,
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return { ok: false, chatId: '', failReason: failReason || 'primary-unlinked', target, unobservedSingle: false }
+  }
   /**
    * 纯只读集中式主人出站路由决策（v5 §5.2）：
    * - 返回 { chatId, blocked, reason, target, fallbackUsed }
@@ -437,125 +559,38 @@ export function apply(ctx) {
     const pref = getConfig()?.ownerPrimary || {
       mode: 'fixed', platform: '', instance: '', account: '', fallback: false, noticeFallback: true,
     }
-    const gwInstances = platformGateway?.instances?.() || []
-    const managedInstances = gwInstances.filter((x) => !(x.instance === defaultPlatform && legacyQqActive()))
-    const hasDefInGateway = Boolean(platformGateway && defaultPlatform && platformGateway.caps?.(`${defaultPlatform}:private:0`))
-    const defAcc = defaultPlatform ? String(identity.accountOn(owner, defaultPlatform) || '') : ''
-    const qqGwInsts = defaultPlatform ? managedInstances.filter((x) => x.platform === defaultPlatform) : []
-    const qqGwEnabled = qqGwInsts.some((x) => x.enabled)
+    const ctx = createOwnerRouteContext(owner)
     // 旧配置未设置 ownerPrimary（mode='fixed' 且 platform/instance 均空）且主人启用了 QQ：
     // 必须继续优先走 QQ，绝不因 router.seen 里有飞书等其他平台而默认漂移；只有显式 mode='recent' 或未启用 QQ（含仅存在 enabled=false 的 QQ 实例 / 纯非 QQ 主人）才跟随最近私聊。
     const implicitLegacyQq = pref.mode !== 'recent'
       && !pref.platform
       && !pref.instance
-      && Boolean(defAcc && (legacyQqActive() || qqGwEnabled || (hasDefInGateway && qqGwInsts.length === 0)))
+      && Boolean(ctx.defAcc && (legacyQqActive() || ctx.qqGwEnabled || (ctx.hasDefInGateway && ctx.qqGwInsts.length === 0)))
 
     let isFallback = false
     if (pref.mode !== 'recent' && (pref.platform || pref.instance || implicitLegacyQq)) {
-      let targetInstance = String(pref.instance || '').trim()
-      let targetPlatform = implicitLegacyQq ? defaultPlatform : String(pref.platform || '').trim()
-      let matchedInst = null
-
-      if (targetInstance) {
-        if (targetInstance === defaultPlatform && legacyQqActive()) {
-          targetPlatform = defaultPlatform
-        } else {
-          matchedInst = managedInstances.find((x) => x.instance === targetInstance) || null
-          targetPlatform = matchedInst?.platform || targetPlatform || String(targetInstance).split('#')[0] || ''
-        }
-      } else {
-        if (targetPlatform === defaultPlatform && legacyQqActive() && !hasDefInGateway) {
-          targetInstance = defaultPlatform
-        } else {
-          const same = managedInstances.filter((x) => x.platform === targetPlatform)
-          matchedInst = same.find((x) => x.enabled && x.state === 'connected' && x.caps && x.caps.proactive !== 'none')
-            || same.find((x) => x.enabled && x.state === 'connected')
-            || same[0]
-            || null
-          targetInstance = matchedInst?.instance || targetPlatform
-        }
-      }
-      const samePlat = targetPlatform ? managedInstances.filter((x) => x.platform === targetPlatform) : []
-
-      const ownerAccounts = (identity.accountsOf(owner) || []).filter((a) => a && a.platform === targetPlatform && a.account)
-      let acc = ''
-      let failReason = ''
-      const explicitAccount = implicitLegacyQq ? '' : String(pref.account || '').trim()
-      if (explicitAccount) {
-        const hit = ownerAccounts.find((a) => String(a.account) === explicitAccount)
-        if (!hit) {
-          failReason = 'primary-unlinked'
-          acc = explicitAccount
-        } else {
-          acc = String(hit.account)
-        }
-      } else if (implicitLegacyQq && defAcc) {
-        acc = defAcc
-      } else if (ownerAccounts.length === 1) {
-        acc = String(ownerAccounts[0].account)
-      } else if (ownerAccounts.length > 1) {
-        const matchedByInst = targetInstance
-          ? ownerAccounts.find((a) =>
-              (platformGateway?.routing?.instancesForAccount?.(targetPlatform, a.account) || []).includes(targetInstance)
-            )
-          : null
-        acc = String(matchedByInst?.account || identity.accountOn(owner, targetPlatform) || ownerAccounts[0].account)
-      } else {
-        failReason = 'primary-unlinked'
-      }
-
-      if (!failReason) {
-        if (targetInstance === defaultPlatform && legacyQqActive() && !hasDefInGateway) {
-          if (onebotState === 'connected' && !wrongAccount) {
-            if (record && purpose === 'proactive') lastBlockedRoute = null
-            return {
-              chatId: `private:${acc}`,
-              blocked: false,
-              reason: 'ok',
-              target: { platform: defaultPlatform, instance: defaultPlatform, account: acc },
-              fallbackUsed: false,
-            }
-          }
-          failReason = 'primary-offline'
-        } else {
-          const st = matchedInst || managedInstances.find((x) => x.instance === targetInstance) || null
-          if (!st || !st.enabled || st.state !== 'connected') {
-            failReason = 'primary-offline'
-          } else {
-            const knownInsts = platformGateway?.routing?.instancesForAccount?.(targetPlatform, acc) || []
-            if (st.self?.account && String(st.self.account) === String(acc)) {
-              failReason = 'primary-unlinked'
-            } else if (knownInsts.length > 0 && !knownInsts.includes(targetInstance)) {
-              failReason = 'primary-unlinked'
-            } else if (samePlat.length > 1 && !knownInsts.includes(targetInstance)) {
-              failReason = 'primary-unlinked'
-            } else if (!st.caps || st.caps.proactive === 'none') {
-              failReason = 'primary-proactive-none'
-            } else {
-              const chatId = formatChatId({ instance: st.instance, platform: st.platform, kind: 'private', id: acc })
-              if (!chatId) {
-                failReason = 'primary-unlinked'
-              } else {
-                if (record && knownInsts.length === 0) warnUnobservedSingleAccount(st.platform, st.instance, acc)
-                if (record && purpose === 'proactive') lastBlockedRoute = null
-                return {
-                  chatId,
-                  blocked: false,
-                  reason: 'ok',
-                  target: { platform: st.platform, instance: st.instance, account: acc },
-                  fallbackUsed: false,
-                }
-              }
-            }
-          }
+      const res = evaluateOwnerTarget({
+        platform: pref.platform,
+        instance: pref.instance,
+        account: pref.account,
+        implicitLegacyQq,
+      }, ctx)
+      if (res.ok) {
+        if (record && res.unobservedSingle) warnUnobservedSingleAccount(res.target.platform, res.target.instance, res.target.account)
+        if (record && purpose === 'proactive') lastBlockedRoute = null
+        return {
+          chatId: res.chatId,
+          blocked: false,
+          reason: 'ok',
+          target: res.target,
+          fallbackUsed: false,
         }
       }
 
-      const target = { platform: targetPlatform, instance: targetInstance || targetPlatform, account: acc }
       const allowFallback = purpose === 'notice' ? (pref.noticeFallback !== false) : (pref.fallback === true)
       if (!allowFallback) {
-        if (record) recordBlockedRoute(failReason, target, purpose)
-        return { chatId: '', blocked: true, reason: failReason, target, fallbackUsed: false }
+        if (record) recordBlockedRoute(res.failReason, res.target, purpose)
+        return { chatId: '', blocked: true, reason: res.failReason, target: res.target, fallbackUsed: false }
       }
       isFallback = true
     }
@@ -576,13 +611,13 @@ export function apply(ctx) {
         }
       }
     }
-    if (defAcc && !hasDefInGateway && onebotState === 'connected' && !wrongAccount) {
+    if (ctx.defAcc && !ctx.hasDefInGateway && onebotState === 'connected' && !wrongAccount) {
       if (record && purpose === 'proactive') lastBlockedRoute = null
       return {
-        chatId: `private:${defAcc}`,
+        chatId: `private:${ctx.defAcc}`,
         blocked: false,
         reason: isFallback ? 'fallback-used' : 'ok',
-        target: { platform: defaultPlatform, instance: defaultPlatform, account: defAcc },
+        target: { platform: defaultPlatform, instance: defaultPlatform, account: ctx.defAcc },
         fallbackUsed: Boolean(isFallback),
       }
     }

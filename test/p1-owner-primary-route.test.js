@@ -2,6 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { normalize, mergeFromPanel, pickPlatformNeutralConfig, publicConfig } from '../src/core/config.js'
@@ -661,4 +662,194 @@ test('P1-9：存在已停用的 QQ 实例配置（platforms.qq.enabled=false）�
   assert.equal(route.blocked, false)
   assert.equal(route.reason, 'ok')
   assert.equal(route.chatId, 'bridge:private:b_dq')
+})
+
+async function startFakeFeishuServer(t) {
+  const server = createServer((req, res) => {
+    res.setHeader('content-type', 'application/json')
+    if (req.url?.includes('/auth/v3/tenant_access_token/internal')) {
+      res.end(JSON.stringify({ code: 0, tenant_access_token: 'tenant-tok-golden', expire: 7200 }))
+      return
+    }
+    res.end(JSON.stringify({ code: 0, data: {} }))
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const addr = server.address()
+  t.after(() => new Promise((resolve) => server.close(() => resolve())))
+  return { baseUrl: `http://127.0.0.1:${addr.port}` }
+}
+
+test('P1-10：Golden Tests（evaluateOwnerTarget 纯重构等价性与 9 类基线路由边界）', async (t) => {
+  // 组 1：含传统直连 QQ + 飞书(webhook) + 多实例 bridge + proactive=none 全矩阵
+  const dir = makeSandbox(t, 'aurabot-p1-golden-')
+  const mockOb = await startMockOneBot({ selfId: '20000002' })
+  const feishuStub = await startFakeFeishuServer(t)
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({
+    enabled: true,
+    dryRun: false,
+    setupDone: true,
+    gateway: 'onebot',
+    snowluma: { httpUrl: mockOb.httpUrl, wsUrl: mockOb.wsUrl, httpToken: mockOb.token, wsToken: mockOb.token, autoStart: false, autoAttach: false },
+    botQQ: '20000002',
+    ownerQQ: '10001',
+    allow: { private: ['10001'], groups: [] },
+    platforms: {
+      feishu: { enabled: true, transport: 'webhook', appId: 'cli_gold', appSecret: 'sec_gold', verificationToken: 'vt-gold', baseUrl: feishuStub.baseUrl },
+      bridge: { enabled: true, token: 'tok-g1' },
+      'bridge#2': { enabled: true, token: 'tok-g2' },
+    },
+    voice: { engine: 'windows', autoChance: 0 },
+    stickers: { autoChance: 0 },
+  }))
+
+  const fake = createFakeDsh({ brain: async () => '' })
+  fake.ctx.webServer.port = 5111
+  const host = await import('../src/host.js')
+  const api = host.apply(fake.ctx)
+  t.after(async () => {
+    try { await mockOb.close() } catch {}
+    fake.dispose()
+    await new Promise((r) => setTimeout(r, 30))
+  })
+  await api.ready.catch(() => {})
+  assert.equal(await waitUntil(() => {
+    const list = api.gateway?.instances?.() || []
+    return list.some((x) => x.instance === 'feishu' && x.state === 'connected')
+      && list.some((x) => x.instance === 'bridge' && x.state === 'connected')
+      && list.some((x) => x.instance === 'bridge#2' && x.state === 'connected')
+      && mockOb.connected() >= 1
+      && api.resolveOwnerRoute().reason === 'ok'
+  }, 5000), true, '传统 QQ、飞书 webhook、bridge 与 bridge#2 均应连上')
+
+  const gw = api.gateway
+  const ownerId = gw.identity.owner()
+  gw.identity.link('feishu', 'ou_gold', ownerId, 'manual')
+  gw.identity.link('bridge', 'b_1', ownerId, 'manual')
+  gw.identity.link('bridge', 'b_2', ownerId, 'manual')
+  gw.identity.link('bridge', 'b_unseen', ownerId, 'manual')
+  gw.routing.noteAccountInstance('bridge', 'bridge', 'b_1')
+  gw.routing.noteAccountInstance('bridge#2', 'bridge', 'b_2')
+  // bridge 仅被动回复；bridge#2 与 feishu 可主动发送
+  await callBridgeHello(fake, 'bridge', 'tok-g1', { proactive: 'none' })
+  await callBridgeHello(fake, 'bridge#2', 'tok-g2', { proactive: 'free' })
+
+  // 1) fixed + implicitLegacyQq：即便最近在飞书私聊过，默认仍优先走传统 QQ
+  gw.noteSeen(ownerId, 'feishu:private:ou_gold', Date.now())
+  const rImplicit = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.deepEqual(rImplicit, {
+    chatId: 'private:10001',
+    blocked: false,
+    reason: 'ok',
+    target: { platform: 'qq', instance: 'qq', account: '10001' },
+    fallbackUsed: false,
+  })
+
+  // 2) fixed + 显式 QQ（在线）
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: { mode: 'fixed', platform: 'qq', instance: 'qq', account: '10001', fallback: false, noticeFallback: true },
+  }))
+  const rExplicitQq = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rExplicitQq.chatId, 'private:10001')
+  assert.equal(rExplicitQq.blocked, false)
+
+  // 3) fixed + 飞书
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: { mode: 'fixed', platform: 'feishu', instance: 'feishu', account: 'ou_gold', fallback: false, noticeFallback: true },
+  }))
+  const rFeishu = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.deepEqual(rFeishu, {
+    chatId: 'feishu:private:ou_gold',
+    blocked: false,
+    reason: 'ok',
+    target: { platform: 'feishu', instance: 'feishu', account: 'ou_gold' },
+    fallbackUsed: false,
+  })
+
+  // 4) recent + 有效 lastSeen（bridge#2:private:b_2）
+  gw.noteSeen(ownerId, 'bridge#2:private:b_2', Date.now())
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: { mode: 'recent' },
+  }))
+  const rRecentPrivate = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rRecentPrivate.chatId, 'bridge#2:private:b_2')
+  assert.equal(rRecentPrivate.fallbackUsed, false)
+
+  // 5) recent + 群聊/陌生人 lastSeen（改造前基线：noteSeen 拒绝写入 group 地址，陌生人/无归属实例在 routeTo 被跳过，绝不发往 group 或 stranger）
+  gw.noteSeen(ownerId, 'feishu:group:oc_gold', Date.now())
+  const rAfterGroupNote = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rAfterGroupNote.chatId, 'bridge#2:private:b_2', 'noteSeen 拒绝用 group 覆盖原 private lastSeen')
+  assert.ok(!rAfterGroupNote.chatId.includes(':group:'))
+  gw.noteSeen(ownerId, 'qqbot:private:stranger_only', Date.now())
+  const rRecentStranger = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.notEqual(rRecentStranger.chatId, 'qqbot:private:stranger_only')
+  assert.ok(rRecentStranger.chatId.includes('private:'))
+
+  // 6) 多实例未观测 → primary-unlinked + blocked
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: { mode: 'fixed', platform: 'bridge', instance: 'bridge#2', account: 'b_unseen', fallback: false, noticeFallback: true },
+  }))
+  const rMultiUnseen = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rMultiUnseen.blocked, true)
+  assert.equal(rMultiUnseen.reason, 'primary-unlinked')
+  assert.equal(rMultiUnseen.chatId, '')
+
+  // 7) proactive=none：设为主账号报 primary-proactive-none；允许回退时被 routeTo 跳过（绝不选到 bridge）
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: { mode: 'fixed', platform: 'bridge', instance: 'bridge', account: 'b_1', fallback: false, noticeFallback: true },
+  }))
+  const rProNone = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rProNone.blocked, true)
+  assert.equal(rProNone.reason, 'primary-proactive-none')
+  const rProNoneNotice = api.resolveOwnerRoute({ purpose: 'notice' })
+  assert.equal(rProNoneNotice.blocked, false)
+  assert.equal(rProNoneNotice.fallbackUsed, true)
+  assert.notEqual(rProNoneNotice.target?.instance, 'bridge')
+
+  // 8) 传统 QQ 离线切换：断掉 mockOb 后显式 QQ（fallback=false）与隐式 QQ 均应阻塞 proactive、回退 notice
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: { mode: 'fixed', platform: 'qq', instance: 'qq', account: '10001', fallback: false, noticeFallback: true },
+  }))
+  await mockOb.close()
+  assert.equal(await waitUntil(() => api.resolveOwnerRoute({ purpose: 'proactive' }).reason === 'primary-offline', 4000), true)
+  const rQqOffline = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rQqOffline.blocked, true)
+  assert.equal(rQqOffline.reason, 'primary-offline')
+  const rQqOfflineNotice = api.resolveOwnerRoute({ purpose: 'notice' })
+  assert.equal(rQqOfflineNotice.blocked, false)
+  assert.equal(rQqOfflineNotice.fallbackUsed, true)
+
+  // 组 2：纯非 QQ 未指定模式
+  const dir2 = makeSandbox(t, 'aurabot-p1-golden-purenonqq-')
+  const feishuStub2 = await startFakeFeishuServer(t)
+  writeFileSync(join(dir2, 'config.json'), JSON.stringify({
+    enabled: false,
+    dryRun: true,
+    setupDone: true,
+    ownerQQ: '',
+    platforms: {
+      feishu: { enabled: true, transport: 'webhook', appId: 'cli_gold2', appSecret: 'sec_gold2', verificationToken: 'vt-gold2', baseUrl: feishuStub2.baseUrl },
+    },
+    snowluma: { autoStart: false, autoAttach: false },
+    voice: { engine: 'windows', autoChance: 0 },
+    stickers: { autoChance: 0 },
+  }))
+  const fake2 = createFakeDsh({ brain: async () => '' })
+  fake2.ctx.webServer.port = 5112
+  const api2 = host.apply(fake2.ctx)
+  t.after(async () => {
+    fake2.dispose()
+    await new Promise((r) => setTimeout(r, 30))
+  })
+  await api2.ready.catch(() => {})
+  assert.equal(await waitUntil(() => (api2.gateway?.instances?.() || []).some((x) => x.instance === 'feishu' && x.state === 'connected')), true)
+  const gw2 = api2.gateway
+  gw2.identity.claimOwner('feishu', 'ou_pure')
+  const rPureDefault = api2.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.deepEqual(rPureDefault, {
+    chatId: 'feishu:private:ou_pure',
+    blocked: false,
+    reason: 'ok',
+    target: { platform: 'feishu', instance: 'feishu', account: 'ou_pure' },
+    fallbackUsed: false,
+  })
 })
