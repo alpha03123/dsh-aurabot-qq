@@ -390,7 +390,26 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
   const storage = new Map()
   const localStorage = { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)) }
   let loader
-  script.runInNewContext({ fetch: fakeFetch, localStorage, setTimeout() { return 0 }, clearTimeout() {}, window: { __ModuleLoader__: { load: (v) => { loader = v } }, addEventListener() {}, removeEventListener() {} } })
+  const winListeners = new Map()
+  const addWinListener = (ev, fn) => {
+    if (!winListeners.has(ev)) winListeners.set(ev, new Set())
+    winListeners.get(ev).add(fn)
+  }
+  const removeWinListener = (ev, fn) => { winListeners.get(ev)?.delete(fn) }
+  const dispatchWinEvent = (ev, data) => {
+    for (const fn of [...(winListeners.get(ev) || [])]) fn(data)
+  }
+  script.runInNewContext({
+    fetch: fakeFetch,
+    localStorage,
+    setTimeout() { return 0 },
+    clearTimeout() {},
+    window: {
+      __ModuleLoader__: { load: (v) => { loader = v } },
+      addEventListener: addWinListener,
+      removeEventListener: removeWinListener,
+    },
+  })
 
   let hook = 0
   let state = []
@@ -715,19 +734,22 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
     })
     const prioText = textOf(prioTree)
     assert.match(prioText, /账号接收优先级/)
-    assert.match(prioText, /当前主账号（首选）/)
+    assert.match(prioText, /当前主账号（首选 · 固定首位）/)
     assert.match(prioText, /仅支持回复（将跳过）/)
     assert.match(prioText, /普通主动消息回退：关闭｜系统通知回退：开启/)
     assert.match(prioText, /仅系统通知会改发/)
     assert.match(prioText, /QQ 官方机器人（请用你的账号向该实例发一条私聊以完成绑定/)
     assert.doesNotMatch(prioText, /99999_stale/, 'UI 不应展示已解绑的 stale 账号')
 
-    // 验证方案 B（可选子集）：仅已入列的 bridge#2 与 qq 在活跃排序列表中，未入列的 feishu:ou_nop 在未参与自动回退区
+    // 验证方案 B（可选子集）+ 固定主账号首位锁定：bridge#2 固定第 1 位，qq 在第 2 位，未入列的 feishu:ou_nop 在未参与自动回退区
     const prioRows = collectNodes(prioTree, (n) => n.props && n.props['data-prio-key'])
     assert.deepEqual(
       prioRows.map((r) => r.props['data-prio-key']),
       ['bridge\x00bridge#2\x00b_acc', 'qq\x00qq\x0010001'],
     )
+    assert.equal(prioRows[0].props['data-prio-pinned'], 'true', '固定主账号必须在首位且标记 pinned')
+    assert.equal(prioRows[0].props.onPointerDown, undefined, '固定主账号禁止拖动')
+    assert.equal(prioRows[0].props.onDrop, undefined, '固定主账号位置禁止被拖入替换')
     const excludedRows = collectNodes(prioTree, (n) => n.props && n.props['data-prio-excluded-key'])
     assert.deepEqual(
       excludedRows.map((r) => r.props['data-prio-excluded-key']),
@@ -736,29 +758,19 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
     )
     assert.match(prioText, /未加入优先排序的账号/)
 
-    // 点击首行「下移」按钮：首行应互换至第 2 位，同时顺手清洗掉 stale 项 99999_stale（仍保持严谨子集，不复活 feishu）
+    // 校验固定主账号行（首行）上移/下移/移出全禁用，第 2 行「上移」也禁用（不可顶替第一位）
     const up0 = collectNodes(prioRows[0], (n) => n.type?.name === 'Btn' && textOf(n.children) === '上移')[0]
+    const down0 = collectNodes(prioRows[0], (n) => n.type?.name === 'Btn' && textOf(n.children) === '下移')[0]
+    const rm0 = collectNodes(prioRows[0], (n) => n.type?.name === 'Btn' && textOf(n.children) === '移出')[0]
+    assert.equal(up0.props.disabled, true, '固定主账号「上移」应禁用')
+    assert.equal(down0.props.disabled, true, '固定主账号「下移」应禁用')
+    assert.equal(rm0.props.disabled, true, '固定主账号「移出」应禁用')
+    const up1InTwo = collectNodes(prioRows[1], (n) => n.type?.name === 'Btn' && textOf(n.children) === '上移')[0]
     const downLast = collectNodes(prioRows[prioRows.length - 1], (n) => n.type?.name === 'Btn' && textOf(n.children) === '下移')[0]
-    assert.equal(up0.props.disabled, true, '首行「上移」应禁用')
+    assert.equal(up1InTwo.props.disabled, true, '固定主账号在首位时，第 2 行「上移」应禁用')
     assert.equal(downLast.props.disabled, true, '末行「下移」应禁用')
-    const moveDown0 = collectNodes(prioRows[0], (n) => n.type?.name === 'Btn' && textOf(n.children) === '下移')[0]
-    assert.ok(moveDown0)
-    moveDown0.props.onClick()
-    assert.deepEqual(JSON.parse(JSON.stringify(draftState.ownerPrimary.fallbackOrder)), [
-      { platform: 'qq', instance: 'qq', account: '10001' },
-      { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
-    ])
-    // 点击第 2 行「上移」与「下移」互换语义等价
-    const up1 = collectNodes(prioRows[1], (n) => n.type?.name === 'Btn' && textOf(n.children) === '上移')[0]
-    assert.ok(up1)
-    draftState = JSON.parse(JSON.stringify(prioCfg))
-    up1.props.onClick()
-    assert.deepEqual(JSON.parse(JSON.stringify(draftState.ownerPrimary.fallbackOrder)), [
-      { platform: 'qq', instance: 'qq', account: '10001' },
-      { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
-    ])
 
-    // 验证「加入排序」与「移出」交互及仅剩 1 项时禁用「移出」
+    // 验证「加入排序」与「移出」交互，以及即使历史配置遗漏固定主账号时也不会将其放到 excluded 区
     draftState = JSON.parse(JSON.stringify(prioCfg))
     const includeFeishuBtn = collectNodes(excludedRows[0], (n) => n.type?.name === 'Btn' && textOf(n.children) === '加入排序')[0]
     assert.ok(includeFeishuBtn)
@@ -769,7 +781,7 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
       { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
     ])
 
-    // 验证「移出」把列表减为 1 项后再渲染时「移出」按钮应禁用（避免误变成空数组回退默认全量）
+    // 验证「移出」非主账号仅剩固定主账号 1 项时，「移出」仍禁用
     draftState = JSON.parse(JSON.stringify(prioCfg))
     const removeQqBtn = collectNodes(prioRows[1], (n) => n.type?.name === 'Btn' && textOf(n.children) === '移出')[0]
     assert.ok(removeQqBtn)
@@ -788,12 +800,12 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
     const singleRow = collectNodes(singlePrioTree, (n) => n.props && n.props['data-prio-key'])
     assert.equal(singleRow.length, 1)
     const singleRemoveBtn = collectNodes(singleRow[0], (n) => n.type?.name === 'Btn' && textOf(n.children) === '移出')[0]
-    assert.equal(singleRemoveBtn.props.disabled, true, '仅剩 1 个排序账号时必须禁用「移出」')
+    assert.equal(singleRemoveBtn.props.disabled, true, '仅剩 1 个排序账号且为主账号时必须禁用「移出」')
 
-    // 若把当前固定主账号也移出排序，excluded 行仍须标注「当前主账号（首选，仍优先于列表）」（复审 §2.2）
+    // 即使旧配置 fallbackOrder 未包含当前固定主账号且只列了 qq，渲染仍固定把 bridge#2 放在首位而非放入 excluded
     hook = 0
     refs.length = 0
-    const excludedPrimaryTree = vmExport.panelTest.GlobalAccess({
+    const normalizedPinnedTree = vmExport.panelTest.GlobalAccess({
       st: prioSt,
       draft: {
         ...prioCfg,
@@ -805,11 +817,21 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
       setDraft: (d) => { draftState = d },
       toast() {},
     })
-    const excludedPrimaryRows = collectNodes(excludedPrimaryTree, (n) => n.props && n.props['data-prio-excluded-key'] === 'bridge\x00bridge#2\x00b_acc')
-    assert.equal(excludedPrimaryRows.length, 1)
-    assert.match(textOf(excludedPrimaryRows[0]), /当前主账号（首选，仍优先于列表）/)
+    const normalizedRows = collectNodes(normalizedPinnedTree, (n) => n.props && n.props['data-prio-key'])
+    assert.deepEqual(
+      normalizedRows.map((r) => r.props['data-prio-key']),
+      ['bridge\x00bridge#2\x00b_acc', 'qq\x00qq\x0010001'],
+      '固定主账号即使在旧顺序中被遗漏或后置，UI 也必须强制固定在第 1 位',
+    )
+    assert.equal(
+      collectNodes(normalizedPinnedTree, (n) => n.props && n.props['data-prio-excluded-key'] === 'bridge\x00bridge#2\x00b_acc').length,
+      0,
+      '固定主账号绝不得出现在未加入排序区域',
+    )
 
-    // 验证 3 项完整排序下拖拽（onDragStart + onDragOver + onDrop）结果
+    // 验证 3 项完整排序下（固定首位 bridge#2 + 可调序 qq、feishu）：
+    // 1) 点击第 2 行「下移」与第 3 行「上移」均可交换第 2/3 位
+    // 2) Pointer 拖拽第 2 行到第 3 行上精确交换位置（不会拖乱首位）；尝试拖到第 1 位主账号上被拦截
     draftState = JSON.parse(JSON.stringify({
       ...prioCfg,
       ownerPrimary: {
@@ -830,6 +852,88 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
       toast() {},
     })
     const dragRows = collectNodes(prioTreeDrag, (n) => n.props && n.props['data-prio-key'])
+    assert.equal(collectNodes(dragRows[1], (n) => n.type?.name === 'Btn' && textOf(n.children) === '上移')[0].props.disabled, true, '第 2 行不得上移取代固定第 1 位')
+    collectNodes(dragRows[1], (n) => n.type?.name === 'Btn' && textOf(n.children) === '下移')[0].props.onClick()
+    assert.deepEqual(JSON.parse(JSON.stringify(draftState.ownerPrimary.fallbackOrder)), [
+      { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
+      { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
+      { platform: 'qq', instance: 'qq', account: '10001' },
+    ])
+
+    // 还原 3 项并验证 Pointer 拖拽交换（绕开 Windows dataTransfer \0 截断与 HTML5 限制）
+    draftState = JSON.parse(JSON.stringify({
+      ...prioCfg,
+      ownerPrimary: {
+        ...prioCfg.ownerPrimary,
+        fallbackOrder: [
+          { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
+          { platform: 'qq', instance: 'qq', account: '10001' },
+          { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
+        ],
+      },
+    }))
+    hook = 0
+    refs.length = 0
+    const prioTreePtr = vmExport.panelTest.GlobalAccess({
+      st: prioSt,
+      draft: draftState,
+      setDraft: (d) => { draftState = d },
+      toast() {},
+    })
+    const prioListVnode = collectNodes(prioTreePtr, (n) => n.props?.className && String(n.props.className).includes('ab-prio-list'))[0]
+    assert.ok(prioListVnode?.props?.ref)
+    const ptrRows = collectNodes(prioTreePtr, (n) => n.props && n.props['data-prio-key'])
+    prioListVnode.props.ref.current = {
+      querySelectorAll: () => [
+        { getAttribute: (k) => k === 'data-prio-key' ? 'bridge\x00bridge#2\x00b_acc' : (k === 'data-prio-pinned' ? 'true' : null), getBoundingClientRect: () => ({ left: 0, right: 300, top: 0, bottom: 40 }) },
+        { getAttribute: (k) => k === 'data-prio-key' ? 'qq\x00qq\x0010001' : (k === 'data-prio-pinned' ? 'false' : null), getBoundingClientRect: () => ({ left: 0, right: 300, top: 46, bottom: 86 }) },
+        { getAttribute: (k) => k === 'data-prio-key' ? 'feishu\x00feishu\x00ou_nop' : (k === 'data-prio-pinned' ? 'false' : null), getBoundingClientRect: () => ({ left: 0, right: 300, top: 92, bottom: 132 }) },
+      ],
+    }
+    // 尝试从 #3 拖到固定首位 #1（y=20）→ 必须忽略，不改顺序
+    ptrRows[2].props.onPointerDown({ button: 0, pointerType: 'mouse', clientX: 50, clientY: 110, target: { closest: () => null }, preventDefault() {} })
+    dispatchWinEvent('pointermove', { clientX: 50, clientY: 20 })
+    dispatchWinEvent('pointerup', { clientX: 50, clientY: 20 })
+    assert.deepEqual(JSON.parse(JSON.stringify(draftState.ownerPrimary.fallbackOrder)), [
+      { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
+      { platform: 'qq', instance: 'qq', account: '10001' },
+      { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
+    ], '拖到固定的第 1 位主账号上绝不得交换')
+    // 从 #2（y=65）拖到 #3（y=110）→ 精确交换位置
+    ptrRows[1].props.onPointerDown({ button: 0, pointerType: 'mouse', clientX: 50, clientY: 65, target: { closest: () => null }, preventDefault() {} })
+    dispatchWinEvent('pointermove', { clientX: 50, clientY: 110 })
+    dispatchWinEvent('pointerup', { clientX: 50, clientY: 110 })
+    assert.deepEqual(JSON.parse(JSON.stringify(draftState.ownerPrimary.fallbackOrder)), [
+      { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
+      { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
+      { platform: 'qq', instance: 'qq', account: '10001' },
+    ], '拖拽到另一非固定列表项上必须交换位置')
+
+    // 同时验证无固定主账号（recent 模式）下，第 1 项拖到第 3 项直接交换 #1 和 #3（而非移位）
+    draftState = JSON.parse(JSON.stringify({
+      ...prioCfg,
+      ownerPrimary: {
+        ...prioCfg.ownerPrimary,
+        mode: 'recent',
+        platform: '',
+        instance: '',
+        account: '',
+        fallbackOrder: [
+          { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
+          { platform: 'qq', instance: 'qq', account: '10001' },
+          { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
+        ],
+      },
+    }))
+    hook = 0
+    refs.length = 0
+    const prioTreeRecentSwap = vmExport.panelTest.GlobalAccess({
+      st: prioSt,
+      draft: draftState,
+      setDraft: (d) => { draftState = d },
+      toast() {},
+    })
+    const recentRows = collectNodes(prioTreeRecentSwap, (n) => n.props && n.props['data-prio-key'])
     const storeTransfer = new Map()
     const mkEvt = () => ({
       preventDefault() {},
@@ -839,14 +943,14 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
         getData: (k) => storeTransfer.get(k) || '',
       },
     })
-    dragRows[0].props.onDragStart(mkEvt())
-    dragRows[2].props.onDragOver(mkEvt())
-    dragRows[2].props.onDrop(mkEvt())
+    recentRows[0].props.onDragStart(mkEvt())
+    recentRows[2].props.onDragOver(mkEvt())
+    recentRows[2].props.onDrop(mkEvt())
     assert.deepEqual(JSON.parse(JSON.stringify(draftState.ownerPrimary.fallbackOrder)), [
-      { platform: 'qq', instance: 'qq', account: '10001' },
       { platform: 'feishu', instance: 'feishu', account: 'ou_nop' },
+      { platform: 'qq', instance: 'qq', account: '10001' },
       { platform: 'bridge', instance: 'bridge#2', account: 'b_acc' },
-    ])
+    ], '拖拽 #1 到 #3 上应直接交换两者位置')
 
     // 点击「恢复默认顺序」置空 fallbackOrder
     const resetBtn = collectNodes(prioTreeDrag, (n) => n.type?.name === 'Btn' && textOf(n.children) === '恢复默认顺序')[0]

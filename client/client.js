@@ -354,11 +354,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-deep:#9cc4f5;--ab-sea:#6
 .ab-pm-search .ab-sel-pop{box-sizing:border-box;min-width:max(100%,160px);max-width:min(320px,calc(100vw - 32px))}
 .ab-pm-search .ab-sel:last-child .ab-sel-pop{left:auto;right:0}
 .ab-prio-list{display:flex;flex-direction:column;gap:6px;width:100%;box-sizing:border-box}
+.ab-prio-list.dragging-active,.ab-prio-list.dragging-active .ab-prio-item.can-drag{cursor:grabbing}
 .ab-prio-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--ab-line);border-radius:10px;background:var(--ab-card-2);box-sizing:border-box;width:100%;transition:border-color .12s,opacity .12s,background .12s}
-.ab-prio-item[draggable=true]{cursor:grab}
-.ab-prio-item.dragging{opacity:.5}
-.ab-prio-item.over{border-color:var(--ab-sea);background:var(--ab-foam)}
+.ab-prio-item.can-drag{cursor:grab;user-select:none;-webkit-user-select:none}
+.ab-prio-item.pinned{background:var(--ab-foam-2);border-color:color-mix(in srgb,var(--ab-sea) 45%,var(--ab-line))}
+.ab-prio-item.dragging{opacity:.45}
+.ab-prio-item.over{border-color:var(--ab-sea);background:var(--ab-foam);box-shadow:inset 0 0 0 1px var(--ab-sea)}
 .ab-prio-handle{flex:none;color:var(--ab-dim);font-size:13px;line-height:1;user-select:none;letter-spacing:-1px}
+.ab-prio-handle.touch-drag{touch-action:none}
 .ab-prio-main{flex:1;min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .ab-prio-actions{flex:none;display:flex;align-items:center;gap:4px}
 .ab-prio-excluded{display:flex;flex-direction:column;gap:6px;width:100%;box-sizing:border-box;padding:8px 10px;border:1px dashed var(--ab-line);border-radius:10px;background:var(--ab-card)}
@@ -1435,34 +1438,44 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const acc = String(o.account).trim()
       return `${plat}\0${inst}\0${acc}`
     }
-    const splitOwnerPriorityOptions = (options, fallbackOrder) => {
+    const splitOwnerPriorityOptions = (options, fallbackOrder, pref = null) => {
       const opts = Array.isArray(options) ? options.filter((o) => ownerOptionKey(o)) : []
+      const pinnedOpt = (pref && pref.mode !== 'recent' && (pref.platform || pref.instance))
+        ? (opts.find((o) => isOwnerOptionSelected(pref, o)) || null)
+        : null
+      const pinnedKey = pinnedOpt ? ownerOptionKey(pinnedOpt) : ''
       const hasCustom = Array.isArray(fallbackOrder) && fallbackOrder.length > 0
       if (!hasCustom) {
+        const ordered = pinnedOpt
+          ? [{ ...pinnedOpt, _inSavedOrder: false, _pinnedPrimary: true }, ...opts.filter((o) => ownerOptionKey(o) !== pinnedKey).map((o) => ({ ...o, _inSavedOrder: false, _pinnedPrimary: false }))]
+          : opts.map((o) => ({ ...o, _inSavedOrder: false, _pinnedPrimary: false }))
         return {
           customActive: false,
-          included: opts.map((o) => ({ ...o, _inSavedOrder: false })),
+          included: ordered,
           excluded: [],
         }
       }
       const byKey = new Map(opts.map((o) => [ownerOptionKey(o), o]))
-      const used = new Set()
-      const included = []
+      const used = new Set(pinnedKey ? [pinnedKey] : [])
+      const restIncluded = []
       for (const item of fallbackOrder) {
         const k = ownerOptionKey(item)
         if (!k || used.has(k)) continue
         const hit = byKey.get(k)
         if (hit) {
           used.add(k)
-          included.push({ ...hit, _inSavedOrder: true })
+          restIncluded.push({ ...hit, _inSavedOrder: true, _pinnedPrimary: false })
         }
       }
+      const included = pinnedOpt
+        ? [{ ...pinnedOpt, _inSavedOrder: true, _pinnedPrimary: true }, ...restIncluded]
+        : restIncluded
       const excluded = opts
         .filter((o) => !used.has(ownerOptionKey(o)))
-        .map((o) => ({ ...o, _inSavedOrder: false }))
+        .map((o) => ({ ...o, _inSavedOrder: false, _pinnedPrimary: false }))
       return { customActive: true, included, excluded }
     }
-    const mergeOwnerPriorityOptions = (options, fallbackOrder) => splitOwnerPriorityOptions(options, fallbackOrder).included
+    const mergeOwnerPriorityOptions = (options, fallbackOrder, pref = null) => splitOwnerPriorityOptions(options, fallbackOrder, pref).included
     const sanitizeFallbackOrderForOptions = (order, options) => {
       if (!Array.isArray(order) || !order.length) return []
       const validKeys = Array.isArray(options) ? new Set(options.map(ownerOptionKey).filter(Boolean)) : null
@@ -2551,6 +2564,10 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       // 保持与旧 VM 测试 Hook 槽位兼容：新增交互 Hook 一律放在现有 useEffect 之后
       const [dragState, setDragState] = useState(null)
       const dragKeyRef = useRef('')
+      const prioListRef = useRef(null)
+      const dragSessionRef = useRef(null)
+      const swapLatestRef = useRef(null)
+      useEffect(() => () => { dragSessionRef.current?.clean?.() }, [])
 
       const pref = draft.ownerPrimary || { mode: 'fixed', platform: '', instance: '', account: '', fallback: false, noticeFallback: true, fallbackOrder: [] }
       const options = (peopleInfo && peopleInfo.ownerAccountOptions) || []
@@ -2573,7 +2590,11 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           setDraft(setPath(draft, 'ownerPrimary', { ...pref, mode: 'recent', platform: '', instance: '', account: '' }))
         } else if (val.startsWith('account:')) {
           const hit = options.find((o) => optValue(o) === val)
-          if (hit) setDraft(setPath(draft, 'ownerPrimary', { ...pref, mode: 'fixed', platform: hit.platform, instance: hit.instance, account: hit.account }))
+          if (hit) {
+            const hasCustom = Array.isArray(pref.fallbackOrder) && pref.fallbackOrder.length > 0
+            const nextOrder = hasCustom ? sanitizeFallbackOrderForOptions([hit, ...pref.fallbackOrder], options) : pref.fallbackOrder
+            setDraft(setPath(draft, 'ownerPrimary', { ...pref, mode: 'fixed', platform: hit.platform, instance: hit.instance, account: hit.account, fallbackOrder: nextOrder }))
+          }
         }
       }
 
@@ -2597,20 +2618,26 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         return '主人 · ' + platformLabel(o.platform) + instPart + ' · ' + o.account + statusPart + unobservedTag
       }
 
-      const { customActive: hasCustomOrder, included: orderedOptions, excluded: excludedOptions } = splitOwnerPriorityOptions(options, pref.fallbackOrder)
+      const { customActive: hasCustomOrder, included: orderedOptions, excluded: excludedOptions } = splitOwnerPriorityOptions(options, pref.fallbackOrder, pref)
+      const hasPinnedPrimary = Boolean(orderedOptions[0] && orderedOptions[0]._pinnedPrimary)
+      const minEditableIdx = hasPinnedPrimary ? 1 : 0
+      const reorderableCount = orderedOptions.length - minEditableIdx
       const applyFallbackOrder = (nextItems) => {
         const cleaned = sanitizeFallbackOrderForOptions(nextItems, options)
         setDraft(setPath(draft, 'ownerPrimary', { ...pref, fallbackOrder: cleaned }))
       }
-      const movePriorityItem = (fromIdx, toIdx) => {
-        if (fromIdx < 0 || toIdx < 0 || fromIdx >= orderedOptions.length || toIdx >= orderedOptions.length || fromIdx === toIdx) return
+      const swapPriorityItems = (idxA, idxB) => {
+        if (idxA < minEditableIdx || idxB < minEditableIdx || idxA >= orderedOptions.length || idxB >= orderedOptions.length || idxA === idxB) return
         const next = orderedOptions.slice()
-        const [moved] = next.splice(fromIdx, 1)
-        next.splice(toIdx, 0, moved)
+        const tmp = next[idxA]
+        next[idxA] = next[idxB]
+        next[idxB] = tmp
         applyFallbackOrder(next)
       }
+      const movePriorityItem = (fromIdx, toIdx) => swapPriorityItems(fromIdx, toIdx)
+      swapLatestRef.current = { orderedOptions, swapPriorityItems, minEditableIdx }
       const removePriorityItem = (idx) => {
-        if (orderedOptions.length <= 1 || idx < 0 || idx >= orderedOptions.length) return
+        if (idx < minEditableIdx || idx >= orderedOptions.length || orderedOptions.length <= 1) return
         const next = orderedOptions.filter((_, i) => i !== idx)
         applyFallbackOrder(next)
       }
@@ -2621,6 +2648,79 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       }
       const resetPriorityOrder = () => {
         setDraft(setPath(draft, 'ownerPrimary', { ...pref, fallbackOrder: [] }))
+      }
+      const startPointerDrag = (e, rowKey, isPinned) => {
+        if (isPinned || reorderableCount <= 1 || typeof window === 'undefined') return
+        if (e.button !== undefined && e.button !== 0) return
+        const target = e.target
+        if (target && typeof target.closest === 'function' && target.closest('button, a, input, select, textarea')) return
+        if (e.pointerType === 'touch' && !(target && typeof target.closest === 'function' && target.closest('.ab-prio-handle'))) return
+        dragSessionRef.current?.clean?.()
+        try { e.preventDefault?.() } catch {}
+        const startX = Number(e.clientX) || 0
+        const startY = Number(e.clientY) || 0
+        let active = false
+        let currentOver = rowKey
+        dragKeyRef.current = rowKey
+        const hitTestRowKey = (cx, cy) => {
+          const listEl = prioListRef.current
+          if (!listEl || typeof listEl.querySelectorAll !== 'function') return ''
+          const rows = listEl.querySelectorAll('[data-prio-key]')
+          for (let i = 0; i < rows.length; i++) {
+            const el = rows[i]
+            if (el.getAttribute('data-prio-pinned') === 'true') continue
+            const r = el.getBoundingClientRect()
+            if (cy >= r.top && cy <= r.bottom && cx >= r.left - 24 && cx <= r.right + 24) {
+              return el.getAttribute('data-prio-key') || ''
+            }
+          }
+          return ''
+        }
+        const onMove = (ev) => {
+          const cx = Number(ev.clientX) || 0
+          const cy = Number(ev.clientY) || 0
+          if (!active) {
+            if (Math.hypot(cx - startX, cy - startY) < 4) return
+            active = true
+            dragKeyRef.current = rowKey
+          }
+          const hit = hitTestRowKey(cx, cy)
+          currentOver = hit || rowKey
+          setDragState((cur) => (cur && cur.dragKey === rowKey && cur.overKey === currentOver ? cur : { dragKey: rowKey, overKey: currentOver }))
+        }
+        const finish = (commit) => {
+          clean()
+          const latest = swapLatestRef.current
+          dragKeyRef.current = ''
+          setDragState(null)
+          if (!commit || !active || !currentOver || currentOver === rowKey || !latest) return
+          const fromIdx = latest.orderedOptions.findIndex((x) => ownerOptionKey(x) === rowKey)
+          const toIdx = latest.orderedOptions.findIndex((x) => ownerOptionKey(x) === currentOver)
+          if (fromIdx >= latest.minEditableIdx && toIdx >= latest.minEditableIdx && fromIdx !== toIdx) {
+            latest.swapPriorityItems(fromIdx, toIdx)
+          }
+        }
+        const onUp = (ev) => {
+          if (active) {
+            const hit = hitTestRowKey(Number(ev.clientX) || 0, Number(ev.clientY) || 0)
+            if (hit) currentOver = hit
+          }
+          finish(true)
+        }
+        const onCancel = () => finish(false)
+        const onKey = (ev) => { if (ev.key === 'Escape') finish(false) }
+        const clean = () => {
+          window.removeEventListener('pointermove', onMove)
+          window.removeEventListener('pointerup', onUp)
+          window.removeEventListener('pointercancel', onCancel)
+          window.removeEventListener('keydown', onKey)
+          if (dragSessionRef.current && dragSessionRef.current.clean === clean) dragSessionRef.current = null
+        }
+        dragSessionRef.current = { clean }
+        window.addEventListener('pointermove', onMove)
+        window.addEventListener('pointerup', onUp)
+        window.addEventListener('pointercancel', onCancel)
+        window.addEventListener('keydown', onKey)
       }
       const fallbackStatusBadge = (o) => {
         const selectable = isOwnerOptionSelectable(o)
@@ -2748,61 +2848,89 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             )),
           h(Row, { label: '主人主账号不可用时，允许普通主动聊天改发其他在线平台', hint: '默认关闭。仅针对「固定主账号」模式：关闭时若固定主账号离线或未绑定，ta 会暂停主动搭话、汇报等普通主动消息，绝不串发；开启时按下方接收优先级顺序改发。' }, f.sw('ownerPrimary.fallback')),
           h(Row, { label: '主人主账号不可用时，允许系统重要通知与自测提醒改发其他在线平台（不含无会话危险操作）', hint: '默认开启。仅针对「固定主账号」模式，影响系统提醒与「测试发送给主人主账号」；无归属会话的危险操作与授权仍按原地 fail-closed 处理。' }, f.sw('ownerPrimary.noticeFallback')),
-          h(Row, { label: '账号接收优先级（回退/默认接收顺位）', hint: '支持拖动或点按钮调整顺序，也可将指定账号「移出」优先列表（自定义顺位下被移出的账号不参与自动回退，新绑定账号会自动加入末尾）。「跟随最近」或「未单独指定」时按此顺位接收；「固定主账号」时需开启上方回退开关才会改发。' },
+          h(Row, { label: '账号接收优先级（回退/默认接收顺位）', hint: '固定主账号锁定在第一位，不可拖动、调序或移除。其余账号可按住拖动与目标行交换位置或点按钮调序，也可「移出」排序列表（自定义顺位下被移出的账号不参与自动回退，新绑定账号会自动加入末尾）。' },
             h('div', { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 8 } },
               orderedOptions.length
-                ? h('div', { className: 'ab-prio-list' }, orderedOptions.map((o, idx) => {
+                ? h('div', { ref: prioListRef, className: cx('ab-prio-list', dragState ? 'dragging-active' : '') }, orderedOptions.map((o, idx) => {
                   const rowKey = ownerOptionKey(o)
-                  const isPrimaryItem = pref.mode !== 'recent' && Boolean(pref.platform || pref.instance) && isOwnerOptionSelected(pref, o)
+                  const isPinned = Boolean(o._pinnedPrimary)
+                  const isPrimaryItem = isPinned || (pref.mode !== 'recent' && Boolean(pref.platform || pref.instance) && isOwnerOptionSelected(pref, o))
+                  const canDragRow = !isPinned && reorderableCount > 1
                   const badge = fallbackStatusBadge(o)
                   const instPart = (o.multiInstance || (o.instance && o.instance !== o.platform)) ? ` · ${o.instance}` : ''
                   const rowCls = cx(
                     'ab-prio-item',
+                    isPinned ? 'pinned' : '',
+                    canDragRow ? 'can-drag' : '',
                     dragState && dragState.dragKey === rowKey ? 'dragging' : '',
-                    dragState && dragState.overKey === rowKey && dragState.dragKey !== rowKey ? 'over' : '',
+                    !isPinned && dragState && dragState.overKey === rowKey && dragState.dragKey !== rowKey ? 'over' : '',
                   )
+                  const decodeDragSrcKey = (e) => {
+                    if (dragKeyRef.current) return dragKeyRef.current
+                    if (dragState && dragState.dragKey) return dragState.dragKey
+                    try {
+                      const raw = e.dataTransfer?.getData?.('application/x-aurabot-prio') || e.dataTransfer?.getData?.('text/plain') || ''
+                      if (!raw) return ''
+                      if (orderedOptions.some((x) => ownerOptionKey(x) === raw)) return raw
+                      if (raw.startsWith('{')) {
+                        const parsed = JSON.parse(raw)
+                        if (parsed && typeof parsed.k === 'string') return parsed.k
+                      }
+                    } catch {}
+                    return ''
+                  }
                   return h('div', {
                     key: o.key || rowKey,
                     className: rowCls,
-                    draggable: orderedOptions.length > 1,
                     'data-prio-key': rowKey,
-                    onDragStart: (e) => {
+                    'data-prio-pinned': isPinned ? 'true' : 'false',
+                    onPointerDown: canDragRow ? (e) => startPointerDrag(e, rowKey, isPinned) : undefined,
+                    onDragStart: canDragRow ? (e) => {
                       dragKeyRef.current = rowKey
+                      try {
+                        const payload = JSON.stringify({ k: rowKey })
+                        e.dataTransfer?.setData('application/x-aurabot-prio', payload)
+                        e.dataTransfer?.setData('text/plain', payload)
+                        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+                      } catch {}
                       setDragState({ dragKey: rowKey, overKey: rowKey })
-                      try { e.dataTransfer?.setData('text/plain', rowKey); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move' } catch {}
-                    },
-                    onDragOver: (e) => {
-                      try { e.preventDefault?.() } catch {}
+                    } : undefined,
+                    onDragEnter: !isPinned ? (e) => {
+                      try { e.preventDefault?.(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'move' } catch {}
                       setDragState((cur) => (cur && cur.overKey !== rowKey ? { ...cur, overKey: rowKey } : cur || { dragKey: dragKeyRef.current || '', overKey: rowKey }))
-                    },
-                    onDrop: (e) => {
+                    } : undefined,
+                    onDragOver: !isPinned ? (e) => {
+                      try { e.preventDefault?.(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'move' } catch {}
+                      setDragState((cur) => (cur && cur.overKey !== rowKey ? { ...cur, overKey: rowKey } : cur || { dragKey: dragKeyRef.current || '', overKey: rowKey }))
+                    } : undefined,
+                    onDrop: !isPinned ? (e) => {
                       try { e.preventDefault?.() } catch {}
-                      let srcKey = ''
-                      try { srcKey = e.dataTransfer?.getData?.('text/plain') || '' } catch {}
-                      if (!srcKey) srcKey = dragKeyRef.current || (dragState && dragState.dragKey) || ''
+                      const srcKey = decodeDragSrcKey(e)
                       dragKeyRef.current = ''
                       setDragState(null)
                       if (!srcKey || srcKey === rowKey) return
                       const fromIdx = orderedOptions.findIndex((x) => ownerOptionKey(x) === srcKey)
-                      if (fromIdx >= 0 && fromIdx !== idx) movePriorityItem(fromIdx, idx)
-                    },
+                      if (fromIdx >= minEditableIdx && fromIdx !== idx) swapPriorityItems(fromIdx, idx)
+                    } : undefined,
                     onDragEnd: () => { dragKeyRef.current = ''; setDragState(null) },
                   },
-                    h('span', { className: 'ab-prio-handle', title: '拖动调整优先级' }, '⋮⋮'),
+                    h('span', { className: cx('ab-prio-handle', canDragRow ? 'touch-drag' : ''), title: isPinned ? '固定主账号锁定在第一位，禁止拖动' : (canDragRow ? '按住拖动到目标行可交换位置' : '当前无可交换位置的其他账号') }, isPinned ? '📌' : '⋮⋮'),
                     h('span', { className: 'ab-badge' }, '#' + (idx + 1)),
                     h('div', { className: 'ab-prio-main' },
                       h('span', null, '主人 · ' + platformLabel(o.platform) + instPart + ' · ' + o.account),
-                      isPrimaryItem ? h('span', { className: 'ab-badge mine', title: '固定主账号始终最优先；此处仅作备选顺位' }, '当前主账号（首选）') : null,
+                      isPrimaryItem ? h('span', { className: 'ab-badge mine', title: '固定主账号锁定在第一位，不可拖动、调序或移除' }, '当前主账号（首选 · 固定首位）') : null,
                       h('span', { className: cx('ab-badge', badge.cls) }, badge.text),
                     ),
                     h('div', { className: 'ab-prio-actions' },
-                      h(Btn, { small: true, disabled: idx === 0, onClick: () => movePriorityItem(idx, idx - 1) }, '上移'),
-                      h(Btn, { small: true, disabled: idx === orderedOptions.length - 1, onClick: () => movePriorityItem(idx, idx + 1) }, '下移'),
+                      h(Btn, { small: true, disabled: isPinned || idx <= minEditableIdx, onClick: () => movePriorityItem(idx, idx - 1) }, '上移'),
+                      h(Btn, { small: true, disabled: isPinned || idx >= orderedOptions.length - 1, onClick: () => movePriorityItem(idx, idx + 1) }, '下移'),
                       h(Btn, {
                         small: true,
                         kind: 'ghost',
-                        disabled: orderedOptions.length <= 1,
-                        title: orderedOptions.length <= 1 ? '至少保留 1 个排序账号；如需取消自定义，请点「恢复默认顺序」' : '移出排序列表（自定义顺位下不参与自动回退）',
+                        disabled: isPinned || orderedOptions.length <= 1,
+                        title: isPinned
+                          ? '固定主账号锁定在第一位，禁止移除'
+                          : (orderedOptions.length <= 1 ? '至少保留 1 个排序账号；如需取消自定义，请点「恢复默认顺序」' : '移出排序列表（自定义顺位下不参与自动回退）'),
                         onClick: () => removePriorityItem(idx),
                       }, '移出'),
                     ),
