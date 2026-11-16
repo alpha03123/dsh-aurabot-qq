@@ -361,6 +361,9 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-deep:#9cc4f5;--ab-sea:#6
 .ab-prio-handle{flex:none;color:var(--ab-dim);font-size:13px;line-height:1;user-select:none;letter-spacing:-1px}
 .ab-prio-main{flex:1;min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .ab-prio-actions{flex:none;display:flex;align-items:center;gap:4px}
+.ab-prio-excluded{display:flex;flex-direction:column;gap:6px;width:100%;box-sizing:border-box;padding:8px 10px;border:1px dashed var(--ab-line);border-radius:10px;background:var(--ab-card)}
+.ab-prio-excluded-item{display:flex;align-items:center;gap:8px;padding:4px 0;width:100%;box-sizing:border-box}
+@media (max-width:600px){.ab-prio-item,.ab-prio-excluded-item{flex-wrap:wrap}.ab-prio-actions{margin-left:auto}}
 .ab-pm-search .ab-sel-opt .tx{white-space:normal;overflow-wrap:anywhere}
 .ab-pm-rows{overflow-y:auto;min-height:0;padding:4px}
 .ab-pm-row{display:flex;align-items:center;gap:10px;width:100%;padding:8px;border:0;border-radius:10px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
@@ -1432,30 +1435,34 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const acc = String(o.account).trim()
       return `${plat}\0${inst}\0${acc}`
     }
-    const mergeOwnerPriorityOptions = (options, fallbackOrder) => {
+    const splitOwnerPriorityOptions = (options, fallbackOrder) => {
       const opts = Array.isArray(options) ? options.filter((o) => ownerOptionKey(o)) : []
+      const hasCustom = Array.isArray(fallbackOrder) && fallbackOrder.length > 0
+      if (!hasCustom) {
+        return {
+          customActive: false,
+          included: opts.map((o) => ({ ...o, _inSavedOrder: false })),
+          excluded: [],
+        }
+      }
       const byKey = new Map(opts.map((o) => [ownerOptionKey(o), o]))
       const used = new Set()
-      const ordered = []
-      const hasCustom = Array.isArray(fallbackOrder) && fallbackOrder.length > 0
-      for (const item of hasCustom ? fallbackOrder : []) {
+      const included = []
+      for (const item of fallbackOrder) {
         const k = ownerOptionKey(item)
         if (!k || used.has(k)) continue
         const hit = byKey.get(k)
         if (hit) {
           used.add(k)
-          ordered.push({ ...hit, _inSavedOrder: true })
+          included.push({ ...hit, _inSavedOrder: true })
         }
       }
-      for (const o of opts) {
-        const k = ownerOptionKey(o)
-        if (!used.has(k)) {
-          used.add(k)
-          ordered.push({ ...o, _inSavedOrder: false, _newPendingSave: hasCustom })
-        }
-      }
-      return ordered
+      const excluded = opts
+        .filter((o) => !used.has(ownerOptionKey(o)))
+        .map((o) => ({ ...o, _inSavedOrder: false }))
+      return { customActive: true, included, excluded }
     }
+    const mergeOwnerPriorityOptions = (options, fallbackOrder) => splitOwnerPriorityOptions(options, fallbackOrder).included
     const sanitizeFallbackOrderForOptions = (order, options) => {
       if (!Array.isArray(order) || !order.length) return []
       const validKeys = Array.isArray(options) ? new Set(options.map(ownerOptionKey).filter(Boolean)) : null
@@ -1471,12 +1478,21 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       }
       return out
     }
-    const prepareSaveBody = (rawDraft, ownerOptions = null) => {
+    const prepareSaveBody = (rawDraft, ownerOptions = null, serverConfig = null) => {
       const { allow, commandAllow, capabilityAllow, ...body } = rawDraft || {}
-      if (body.ownerPrimary && Array.isArray(body.ownerPrimary.fallbackOrder) && Array.isArray(ownerOptions)) {
-        body.ownerPrimary = {
-          ...body.ownerPrimary,
-          fallbackOrder: sanitizeFallbackOrderForOptions(body.ownerPrimary.fallbackOrder, ownerOptions),
+      if (body.ownerPrimary && Array.isArray(body.ownerPrimary.fallbackOrder)) {
+        const normDraftOrder = sanitizeFallbackOrderForOptions(body.ownerPrimary.fallbackOrder, null)
+        const hasServerOrder = Boolean(serverConfig && serverConfig.ownerPrimary && Array.isArray(serverConfig.ownerPrimary.fallbackOrder))
+        const normServerOrder = hasServerOrder ? sanitizeFallbackOrderForOptions(serverConfig.ownerPrimary.fallbackOrder, null) : null
+        if (hasServerOrder && JSON.stringify(normDraftOrder) === JSON.stringify(normServerOrder)) {
+          // 未在面板改动顺位时省略 fallbackOrder，防止覆盖服务端刚自动追加的新绑定账号；stale 项由 /save 幂等清理
+          const { fallbackOrder: _omit, ...restPrimary } = body.ownerPrimary
+          body.ownerPrimary = restPrimary
+        } else if (Array.isArray(ownerOptions)) {
+          body.ownerPrimary = {
+            ...body.ownerPrimary,
+            fallbackOrder: sanitizeFallbackOrderForOptions(body.ownerPrimary.fallbackOrder, ownerOptions),
+          }
         }
       }
       return body
@@ -2581,7 +2597,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         return '主人 · ' + platformLabel(o.platform) + instPart + ' · ' + o.account + statusPart + unobservedTag
       }
 
-      const orderedOptions = mergeOwnerPriorityOptions(options, pref.fallbackOrder)
+      const { customActive: hasCustomOrder, included: orderedOptions, excluded: excludedOptions } = splitOwnerPriorityOptions(options, pref.fallbackOrder)
       const applyFallbackOrder = (nextItems) => {
         const cleaned = sanitizeFallbackOrderForOptions(nextItems, options)
         setDraft(setPath(draft, 'ownerPrimary', { ...pref, fallbackOrder: cleaned }))
@@ -2592,6 +2608,16 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         const [moved] = next.splice(fromIdx, 1)
         next.splice(toIdx, 0, moved)
         applyFallbackOrder(next)
+      }
+      const removePriorityItem = (idx) => {
+        if (orderedOptions.length <= 1 || idx < 0 || idx >= orderedOptions.length) return
+        const next = orderedOptions.filter((_, i) => i !== idx)
+        applyFallbackOrder(next)
+      }
+      const includePriorityItem = (opt) => {
+        const k = ownerOptionKey(opt)
+        if (!k || orderedOptions.some((x) => ownerOptionKey(x) === k)) return
+        applyFallbackOrder([...orderedOptions, opt])
       }
       const resetPriorityOrder = () => {
         setDraft(setPath(draft, 'ownerPrimary', { ...pref, fallbackOrder: [] }))
@@ -2607,8 +2633,15 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         return { text: '未连接', cls: '' }
       }
       const unboundInstances = ((st && st.platforms) || []).filter((inst) => (
-        inst && inst.enabled !== false && !options.some((o) => o.platform === inst.platform)
+        inst
+        && inst.enabled !== false
+        && !options.some((o) => o.platform === inst.platform && o.instance === inst.instance && !o.unlinkedOnInstance)
       ))
+      const unboundInstLabel = (x) => (
+        (x.name && x.name !== x.platform && x.name !== x.instance)
+          ? ((x.instance && x.instance !== x.platform) ? `${x.name}（${x.instance}）` : x.name)
+          : ((x.instance && x.instance !== x.platform) ? `${platformLabel(x.platform)} · ${x.instance}` : (x.name || platformLabel(x.platform) || x.instance))
+      )
 
       const proRoute = peopleInfo && peopleInfo.resolvedProactiveRoute
       const noticeRoute = peopleInfo && peopleInfo.resolvedNoticeRoute
@@ -2634,9 +2667,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         } else if (fallbackPreview.reason === 'no-route') {
           cls = 'ab-note warn'
           detail = '主账号不可用时：暂无其他在线且支持主动消息的备选账号'
+        } else if (fallbackPreview.reason === 'recent-preview') {
+          const curTxt = fallbackPreview.currentTarget ? ownerTargetText(fallbackPreview.currentTarget) : '暂无最近活跃在线平台（将按下方顺位尝试）'
+          const candTxt = fallbackPreview.candidateTarget ? ownerTargetText(fallbackPreview.candidateTarget) : '暂无其他可用顺位'
+          detail = `当前优先：最近私聊平台（${curTxt}）；若不可用则顺延：${candTxt}`
         } else if (fallbackPreview.reason === 'not-applicable') {
-          const modeLabel = pref.mode === 'recent' ? '跟随最近私聊平台' : '未单独指定'
-          detail = `当前为「${modeLabel}」模式，直接按列表默认顺位接收` + (fallbackPreview.candidateTarget ? `（下一可用候选：${ownerTargetText(fallbackPreview.candidateTarget)}）` : '')
+          detail = '当前为「未单独指定」模式，直接按列表默认顺位接收' + (fallbackPreview.candidateTarget ? `（下一可用候选：${ownerTargetText(fallbackPreview.candidateTarget)}）` : '')
         } else if (fallbackPreview.reason === 'no-owner') {
           detail = '尚未认领主人身份'
         }
@@ -2712,7 +2748,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
             )),
           h(Row, { label: '主人主账号不可用时，允许普通主动聊天改发其他在线平台', hint: '默认关闭。仅针对「固定主账号」模式：关闭时若固定主账号离线或未绑定，ta 会暂停主动搭话、汇报等普通主动消息，绝不串发；开启时按下方接收优先级顺序改发。' }, f.sw('ownerPrimary.fallback')),
           h(Row, { label: '主人主账号不可用时，允许系统重要通知与自测提醒改发其他在线平台（不含无会话危险操作）', hint: '默认开启。仅针对「固定主账号」模式，影响系统提醒与「测试发送给主人主账号」；无归属会话的危险操作与授权仍按原地 fail-closed 处理。' }, f.sw('ownerPrimary.noticeFallback')),
-          h(Row, { label: '账号接收优先级（回退/默认接收顺位）', hint: '显示主人名下已添加的所有平台账号。「跟随最近」或「未单独指定」时，此列表决定默认（及最近平台不可用时的）接收顺序；「固定主账号」时，需开启上方回退开关才会改发至此处下一顺位。' },
+          h(Row, { label: '账号接收优先级（回退/默认接收顺位）', hint: '支持拖动或点按钮调整顺序，也可将指定账号「移出」优先列表（自定义顺位下被移出的账号不参与自动回退，新绑定账号会自动加入末尾）。「跟随最近」或「未单独指定」时按此顺位接收；「固定主账号」时需开启上方回退开关才会改发。' },
             h('div', { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 8 } },
               orderedOptions.length
                 ? h('div', { className: 'ab-prio-list' }, orderedOptions.map((o, idx) => {
@@ -2757,24 +2793,50 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                     h('div', { className: 'ab-prio-main' },
                       h('span', null, '主人 · ' + platformLabel(o.platform) + instPart + ' · ' + o.account),
                       isPrimaryItem ? h('span', { className: 'ab-badge mine', title: '固定主账号始终最优先；此处仅作备选顺位' }, '当前主账号（首选）') : null,
-                      o._newPendingSave ? h('span', { className: 'ab-badge' }, '新增') : null,
                       h('span', { className: cx('ab-badge', badge.cls) }, badge.text),
                     ),
                     h('div', { className: 'ab-prio-actions' },
                       h(Btn, { small: true, disabled: idx === 0, onClick: () => movePriorityItem(idx, idx - 1) }, '上移'),
                       h(Btn, { small: true, disabled: idx === orderedOptions.length - 1, onClick: () => movePriorityItem(idx, idx + 1) }, '下移'),
+                      h(Btn, {
+                        small: true,
+                        kind: 'ghost',
+                        disabled: orderedOptions.length <= 1,
+                        title: orderedOptions.length <= 1 ? '至少保留 1 个排序账号；如需取消自定义，请点「恢复默认顺序」' : '移出排序列表（自定义顺位下不参与自动回退）',
+                        onClick: () => removePriorityItem(idx),
+                      }, '移出'),
                     ),
                   )
                 }))
-                : h('div', { className: 'ab-small ab-muted' }, '暂无已绑定的主人账号，请先到「通讯平台」发送私聊或认领主人。'),
+                : options.length
+                  ? h('div', { className: 'ab-note warn' }, '当前自定义列表中暂无有效已绑定账号；请从下方「加入排序」或点击「恢复默认顺序」。')
+                  : h('div', { className: 'ab-small ab-muted' }, '暂无已绑定的主人账号，请先到「通讯平台」发送私聊或认领主人。'),
+              excludedOptions.length
+                ? h('div', { className: 'ab-prio-excluded' },
+                  h('div', { className: 'ab-small ab-muted', style: { marginBottom: 2 } }, '未加入优先排序的账号（自定义顺位生效中，将严格跳过以下账号）：'),
+                  excludedOptions.map((o) => {
+                    const rowKey = ownerOptionKey(o)
+                    const badge = fallbackStatusBadge(o)
+                    const instPart = (o.multiInstance || (o.instance && o.instance !== o.platform)) ? ` · ${o.instance}` : ''
+                    return h('div', { key: 'ex:' + (o.key || rowKey), className: 'ab-prio-excluded-item', 'data-prio-excluded-key': rowKey },
+                      h('div', { className: 'ab-prio-main' },
+                        h('span', null, '主人 · ' + platformLabel(o.platform) + instPart + ' · ' + o.account),
+                        h('span', { className: cx('ab-badge', badge.cls) }, badge.text),
+                      ),
+                      h(Btn, { small: true, kind: 'ghost', onClick: () => includePriorityItem(o) }, '加入排序'),
+                    )
+                  }))
+                : null,
               h('div', { className: 'ab-flex', style: { gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-                Array.isArray(pref.fallbackOrder) && pref.fallbackOrder.length > 0
+                hasCustomOrder
                   ? h(Btn, { small: true, kind: 'ghost', onClick: resetPriorityOrder }, '恢复默认顺序')
                   : null,
-                h('span', { className: 'ab-small ab-muted' }, '固定主账号始终最优先；恢复在线后不会抢在主账号前，此处顺位仅决定不可用时的备选顺序。'),
+                h('span', { className: 'ab-small ab-muted' },
+                  (!hasCustomOrder && orderedOptions.length > 0 ? '当前使用默认全量顺位；调序或移出账号后将启用自定义子集顺位。' : '')
+                  + '固定主账号始终最优先；恢复在线后不会抢在主账号前，此处顺位仅决定不可用时的备选顺序。'),
               ),
               unboundInstances.length
-                ? h('div', { className: 'ab-small ab-muted' }, '另有平台实例尚未绑定主人接收账号：' + unboundInstances.map((x) => x.name || platformLabel(x.platform) || x.instance).join('、') + '（请用你的账号向该实例发一条私聊以完成绑定，绑定后自动加入排序）')
+                ? h('div', { className: 'ab-small ab-muted' }, '另有平台实例尚未绑定主人接收账号：' + unboundInstances.map(unboundInstLabel).join('、') + '（请用你的账号向该实例发一条私聊以完成绑定，绑定后自动加入排序）')
                 : null,
               fallbackPreviewNode,
             )),
@@ -9745,6 +9807,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const pluginStartRef = useRef(0)
       const ownerOptionsRef = useRef(null)
       const onOwnerOptions = useCallback((opts) => { if (Array.isArray(opts)) ownerOptionsRef.current = opts }, [])
+      const serverFallbackRef = useRef(null)
       // kind：ok / err / 不填 = 普通
       const toast = (m, kind) => {
         const text = String(m || '')
@@ -9757,11 +9820,31 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         const r = await get('/state')
         if (!r || r.ok === false) { setErr(r && r.message ? r.message : '读不到插件状态'); return r }
         if (Number(r.startedAt)) pluginStartRef.current = Number(r.startedAt)
+        const prevServerOrder = Array.isArray(serverFallbackRef.current) ? serverFallbackRef.current : null
+        const nextServerOrder = Array.isArray(r.config?.ownerPrimary?.fallbackOrder) ? clone(r.config.ownerPrimary.fallbackOrder) : []
+        serverFallbackRef.current = nextServerOrder
         setErr('')
         setSt(r)
         setDraft((current) => {
           if (!dirtyRef.current || !current) return clone(r.config)
-          return { ...current, allow: r.config.allow, commandAllow: r.config.commandAllow, capabilityAllow: r.config.capabilityAllow }
+          const next = { ...current, allow: r.config.allow, commandAllow: r.config.commandAllow, capabilityAllow: r.config.capabilityAllow }
+          if (current.ownerPrimary && prevServerOrder) {
+            const curOrder = Array.isArray(current.ownerPrimary.fallbackOrder) ? current.ownerPrimary.fallbackOrder : []
+            if (JSON.stringify(curOrder) === JSON.stringify(prevServerOrder)) {
+              next.ownerPrimary = { ...current.ownerPrimary, fallbackOrder: clone(nextServerOrder) }
+            } else {
+              const prevKeys = new Set(prevServerOrder.map(ownerOptionKey).filter(Boolean))
+              const curKeys = new Set(curOrder.map(ownerOptionKey).filter(Boolean))
+              const added = nextServerOrder.filter((x) => {
+                const k = ownerOptionKey(x)
+                return k && !prevKeys.has(k) && !curKeys.has(k)
+              })
+              if (added.length) {
+                next.ownerPrimary = { ...current.ownerPrimary, fallbackOrder: [...clone(curOrder), ...clone(added)] }
+              }
+            }
+          }
+          return next
         })
         return r
       }, [])
@@ -9808,10 +9891,11 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       dirtyRef.current = dirty
       const setD = (d) => setDraft(d)
       const save = async (override) => {
-        const body = prepareSaveBody(override || draft, ownerOptionsRef.current)
+        const body = prepareSaveBody(override || draft, ownerOptionsRef.current, st && st.config)
         const r = await post('/save', body)
         if (r.ok === false) { toast(r.message || '保存失败', 'err'); return false }
         dirtyRef.current = false
+        serverFallbackRef.current = Array.isArray(r.config?.ownerPrimary?.fallbackOrder) ? clone(r.config.ownerPrimary.fallbackOrder) : []
         setSt(r)
         setDraft(clone(r.config))
         toast(r.message || '保存好了', 'ok')

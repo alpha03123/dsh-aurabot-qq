@@ -1132,26 +1132,33 @@ test('P1-11：严格 fallbackOrder 选路、不绕过列表也不误触发旧 QQ
   assert.equal(rPureOrder.fallbackUsed, false)
 })
 
-test('P1-12：启动期清理 stale、启动不复活已排除 ownerQQ、以及 /bind-code 自动追加新绑定账号', async (t) => {
-  // A) 启动时：identity 已有 qq:10001 与 feishu:ou_keep，配置刻意不含 QQ 且含 stale 项 bridge#old:b_stale
+test('P1-12：启动期清理 stale 与机器人自身账号、全失效列表下新绑定仍自动追加、以及 /bind-code 自动追加新绑定账号', async (t) => {
+  // A) 启动时：identity 已有 qq:10001（用户刻意排除）、feishu:ou_keep、bridge:b_bot_self（却配为 bridge 机器人自身 selfId），
+  // 配置含 stale 项 qqbot:qb_stale + b_bot_self + ou_keep → 仅保留 ou_keep，既剔除 stale 也剔除配置自身账号，且绝不复活 ownerQQ
   const dirStart = makeSandbox(t, 'aurabot-p1-startup-reconcile-')
   const gwDir = join(dirStart, 'gateway')
   mkdirSync(gwDir, { recursive: true })
   const idPre = createIdentity({ dataDir: gwDir, log: noopLog })
   const ownerPre = idPre.claimOwner('qq', '10001')
   idPre.link('feishu', 'ou_keep', ownerPre, 'manual')
+  idPre.link('bridge', 'b_bot_self', ownerPre, 'manual')
   writeFileSync(join(dirStart, 'config.json'), JSON.stringify({
-    enabled: true,
+    enabled: false,
     dryRun: true,
     setupDone: true,
+    botQQ: '20000002',
     ownerQQ: '10001',
+    platforms: {
+      bridge: { enabled: false, selfId: 'b_bot_self' },
+    },
     ownerPrimary: {
       mode: 'fixed',
       platform: 'feishu',
       instance: 'feishu',
       account: 'ou_keep',
       fallbackOrder: [
-        { platform: 'bridge', instance: 'bridge', account: 'b_stale_removed' },
+        { platform: 'qqbot', instance: 'qqbot', account: 'qb_stale_removed' },
+        { platform: 'bridge', instance: 'bridge', account: 'b_bot_self' },
         { platform: 'feishu', instance: 'feishu', account: 'ou_keep' },
       ],
     },
@@ -1171,7 +1178,7 @@ test('P1-12：启动期清理 stale、启动不复活已排除 ownerQQ、以及 
   assert.deepEqual(
     apiStart.getConfig().ownerPrimary.fallbackOrder,
     [{ platform: 'feishu', instance: 'feishu', account: 'ou_keep' }],
-    '启动期必须剔除 stale 项，且不得复活用户刻意未放进列表的已存在 ownerQQ',
+    '启动期必须同时剔除 stale 项与配置里的机器人自身账号，且不得复活用户刻意未放进列表的已存在 ownerQQ',
   )
 
   // B) /bind-code 绑定新账号到主人：若 fallbackOrder 非空，自动追加到末尾且立即可用
@@ -1238,5 +1245,43 @@ test('P1-12：启动期清理 stale、启动不复活已排除 ownerQQ、以及 
   assert.deepEqual(apiBind.getConfig().ownerPrimary.fallbackOrder, [
     { platform: 'feishu', instance: 'feishu', account: 'ou_bind_main' },
     { platform: 'bridge', instance: 'bridge#2', account: 'b_bound_via_code' },
+  ])
+
+  // C) 原 fallbackOrder 仅剩已失效 stale 项（过滤后曾为空 []）：后续绑定新账号仍须自动追加，且不复活已排除的旧账号（审阅 §3.1）
+  apiBind.gateway.identity.unlink('bridge', 'b_bound_via_code')
+  apiBind.setConfig({
+    ...apiBind.getConfig(),
+    ownerPrimary: {
+      ...apiBind.getConfig().ownerPrimary,
+      fallbackOrder: [{ platform: 'bridge', instance: 'bridge', account: 'b_only_stale' }],
+    },
+  })
+  const code2 = apiBind.gateway.identity.issueCode(ownerBind)
+  let inStatus2 = 200
+  const inPayload2 = {
+    chat: { kind: 'private', id: 'b_bound_after_all_stale' },
+    sender: { account: 'b_bound_after_all_stale', name: '全失效后新绑定' },
+    messageId: 'm_bind_code_2',
+    parts: [{ type: 'text', text: `/bind-code ${code2}` }],
+  }
+  await inRoute.handler(
+    {
+      method: 'POST',
+      headers: { 'x-bridge-token': 'tok-bc2' },
+      rawBody: Buffer.from(JSON.stringify(inPayload2)),
+      body: inPayload2,
+    },
+    { set statusCode(v) { inStatus2 = v }, get statusCode() { return inStatus2 }, setHeader() {}, end() {} },
+  )
+  assert.equal(inStatus2, 200)
+  assert.equal(
+    await waitUntil(() => {
+      const ord = apiBind.getConfig().ownerPrimary.fallbackOrder || []
+      return ord.length === 1 && ord[0].account === 'b_bound_after_all_stale'
+    }, 3000),
+    true,
+  )
+  assert.deepEqual(apiBind.getConfig().ownerPrimary.fallbackOrder, [
+    { platform: 'bridge', instance: 'bridge#2', account: 'b_bound_after_all_stale' },
   ])
 })

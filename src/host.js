@@ -194,6 +194,22 @@ export function apply(ctx) {
     try { cfg = saveConfig(cfg, cfg) }
     catch { log.warn('初始化主人授权记录失败，本次启动使用会话授权') }
   }
+  const configuredSelfInstances = (conf) => {
+    const out = []
+    const defPlat = parseChatId('private:0')?.platform || 'qq'
+    if (conf?.botQQ) {
+      out.push({ instance: defPlat, platform: defPlat, self: { account: String(conf.botQQ) } })
+    }
+    for (const [instName, raw] of Object.entries(conf?.platforms || {})) {
+      if (!raw || typeof raw !== 'object') continue
+      const plat = String(raw.platform || String(instName).split('#')[0] || instName).trim()
+      const selfAcc = raw.selfId ?? raw.selfOpenId ?? raw.selfOpenid ?? raw.account ?? raw.selfAccount ?? raw.self?.account ?? ''
+      if (selfAcc) {
+        out.push({ instance: instName, platform: plat, self: { account: String(selfAcc) } })
+      }
+    }
+    return out
+  }
   const reconcileFallbackOrderList = ({
     curOrder,
     nextOwner,
@@ -220,7 +236,8 @@ export function apply(ctx) {
         return !checkInsts.some((inst) => inst?.self?.account && String(inst.self.account) === item.account)
       })
     }
-    if (!allowAutoAppend || !nextOrder.length) return nextOrder
+    // base.length > 0 说明自定义优先列表原本已激活；即使全为失效项被清成空，只要允许自动追加仍须纳入新绑定账号
+    if (!allowAutoAppend) return nextOrder
     const prevAccSet = (prevOwner && prevOwner === nextOwner)
       ? new Set(
         (prevAccounts || [])
@@ -250,7 +267,7 @@ export function apply(ctx) {
     }
     return normalizeFallbackOrderList(appended)
   }
-  // 启动期清理失效/已解绑 stale 项；仅当配置 QQ 系本次启动新认领进身份库时才允许追加，绝不复活用户刻意排除的 QQ
+  // 启动期清理失效/已解绑 stale 及已知机器人自身账号；仅当配置 QQ 系本次启动新认领进身份库时才允许追加，绝不复活用户刻意排除的 QQ
   if ((cfg.ownerPrimary?.fallbackOrder?.length || 0) > 0) {
     const startupAccs = startupOwner ? (identity.accountsOf(startupOwner) || []) : []
     const cleanedStartupOrder = reconcileFallbackOrderList({
@@ -260,6 +277,7 @@ export function apply(ctx) {
       prevOwner: startupNewClaimedQq ? '' : startupOwner,
       prevAccounts: startupNewClaimedQq ? [] : startupAccs,
       allowAutoAppend: startupNewClaimedQq,
+      instances: configuredSelfInstances(cfg),
     })
     if (JSON.stringify(cleanedStartupOrder) !== JSON.stringify(cfg.ownerPrimary.fallbackOrder)) {
       try {
@@ -325,7 +343,10 @@ export function apply(ctx) {
     if (!curOrder.length) return curOrder
     const nextOwner = identity.owner() || ''
     const nextAccounts = nextOwner ? (identity.accountsOf(nextOwner) || []) : []
-    const instances = platformGateway ? knownPlatformInstances() : []
+    const instances = [
+      ...(platformGateway ? knownPlatformInstances() : []),
+      ...configuredSelfInstances(getConfig()),
+    ]
     const nextOrder = reconcileFallbackOrderList({
       curOrder,
       nextOwner,
@@ -889,11 +910,24 @@ export function apply(ctx) {
 
     const recentHit = pref.mode === 'recent' ? evalLastSeenTarget(ctx) : null
     const cand = recentHit ? previewNext(recentHit.target) : previewNext(null)
+    if (pref.mode === 'recent') {
+      return {
+        available: Boolean(cand),
+        reason: 'recent-preview',
+        chatId: cand ? cand.chatId : '',
+        target: cand ? cand.target : null,
+        currentTarget: recentHit ? recentHit.target : null,
+        candidateTarget: cand ? cand.target : null,
+        proactiveFallbackEnabled,
+        noticeFallbackEnabled,
+      }
+    }
     return {
       available: Boolean(cand),
       reason: 'not-applicable',
       chatId: cand ? cand.chatId : '',
       target: cand ? cand.target : null,
+      currentTarget: null,
       candidateTarget: cand ? cand.target : null,
       proactiveFallbackEnabled,
       noticeFallbackEnabled,
@@ -1224,8 +1258,13 @@ export function apply(ctx) {
     const offFlushed = gw.onFlushed((message, result) => {
       try { hub?.onGatewayFlushed?.(message, result) } catch (error) { logger.child('gateway').debug?.('补发留痕出错：', error?.message || error) }
     })
+    const offState = gw.onState?.(() => {
+      const curOwner = identity.owner() || ''
+      const curAccs = curOwner ? (identity.accountsOf(curOwner) || []) : []
+      syncOwnerFallbackOnAccountChange({ prevOwner: curOwner, prevAccounts: curAccs, allowAutoAppend: false })
+    })
     gw.sync().catch((error) => logger.child('gateway').warn('网关首次同步失败：', error?.message || error))
-    return () => { offMsg?.(); offFlushed?.() }
+    return () => { offMsg?.(); offFlushed?.(); offState?.() }
   }
   let gatewayOff = null
   if (platformGateway) gatewayOff = gatewayReady(platformGateway)
@@ -3451,7 +3490,7 @@ export function apply(ctx) {
       }
     }
     const ownerAccounts = identity.accountsOf(owner) || []
-    const allInsts = knownPlatformInstances()
+    const allInsts = [...knownPlatformInstances(), ...configuredSelfInstances(getConfig())]
     const clean = []
     const droppedStale = []
     for (const item of norm) {
@@ -3670,6 +3709,7 @@ export function apply(ctx) {
     if (touchesPrimaryTarget && nextPref.mode === 'fixed' && (nextPref.platform || nextPref.instance || nextPref.account)) {
       if (!owner) return { ok: false, message: '尚未认领主人身份，无法设置主账号' }
       const allInsts = knownPlatformInstances()
+      const selfInsts = [...allInsts, ...configuredSelfInstances(getConfig())]
       let matchedInst = null
       if (nextPref.instance) {
         matchedInst = allInsts.find((x) => x.instance === nextPref.instance) || null
@@ -3699,7 +3739,10 @@ export function apply(ctx) {
       if (nextPref.account) {
         const hitAcc = platAccounts.find((a) => String(a.account) === String(nextPref.account))
         if (!hitAcc) return { ok: false, message: '该账号未绑定在当前主人名下，无法设为主账号' }
-        if (matchedInst?.self?.account && String(matchedInst.self.account) === String(nextPref.account)) {
+        const checkSelfInsts = matchedInst
+          ? selfInsts.filter((x) => x.instance === matchedInst.instance || x.platform === targetPlatform)
+          : selfInsts.filter((x) => x.platform === targetPlatform)
+        if (checkSelfInsts.some((x) => x?.self?.account && String(x.self.account) === String(nextPref.account))) {
           return { ok: false, message: '不能把机器人自身账号设为主账号' }
         }
         if (matchedInst && !matchedInst.legacy) {
