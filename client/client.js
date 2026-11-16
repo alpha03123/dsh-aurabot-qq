@@ -362,11 +362,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-deep:#9cc4f5;--ab-sea:#6
 .ab-prio-item.over{border-color:var(--ab-sea);background:var(--ab-foam);box-shadow:inset 0 0 0 1px var(--ab-sea)}
 .ab-prio-handle{flex:none;color:var(--ab-dim);font-size:13px;line-height:1;user-select:none;letter-spacing:-1px}
 .ab-prio-handle.touch-drag{touch-action:none}
+.ab-prio-pin{flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;color:var(--ab-sea);background:var(--ab-foam);cursor:default}
 .ab-prio-main{flex:1;min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .ab-prio-actions{flex:none;display:flex;align-items:center;gap:4px}
 .ab-prio-excluded{display:flex;flex-direction:column;gap:6px;width:100%;box-sizing:border-box;padding:8px 10px;border:1px dashed var(--ab-line);border-radius:10px;background:var(--ab-card)}
 .ab-prio-excluded-item{display:flex;align-items:center;gap:8px;padding:4px 0;width:100%;box-sizing:border-box}
-@media (max-width:600px){.ab-prio-item,.ab-prio-excluded-item{flex-wrap:wrap}.ab-prio-actions{margin-left:auto}}
+@media (max-width:600px){.ab-prio-item,.ab-prio-excluded-item{flex-wrap:wrap}.ab-prio-actions{margin-left:auto;flex-wrap:wrap}}
 .ab-pm-search .ab-sel-opt .tx{white-space:normal;overflow-wrap:anywhere}
 .ab-pm-rows{overflow-y:auto;min-height:0;padding:4px}
 .ab-pm-row{display:flex;align-items:center;gap:10px;width:100%;padding:8px;border:0;border-radius:10px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
@@ -2544,6 +2545,15 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       )
     }
 
+    function PinIcon({ filled }) {
+      return h('svg', {
+        width: 13, height: 13, viewBox: '0 0 24 24', fill: filled ? 'currentColor' : 'none',
+        stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true,
+      },
+        h('path', { d: 'M12 17v5' }),
+        h('path', { d: 'M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z' }))
+    }
+
     function GlobalAccess({ st, draft, setDraft, toast, onOwnerOptions }) {
       const f = useField(draft, setDraft)
       const [peopleInfo, setPeopleInfo] = useState(null)
@@ -2590,12 +2600,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           setDraft(setPath(draft, 'ownerPrimary', { ...pref, mode: 'recent', platform: '', instance: '', account: '' }))
         } else if (val.startsWith('account:')) {
           const hit = options.find((o) => optValue(o) === val)
-          if (hit) {
-            const hasCustom = Array.isArray(pref.fallbackOrder) && pref.fallbackOrder.length > 0
-            const nextOrder = hasCustom ? sanitizeFallbackOrderForOptions([hit, ...pref.fallbackOrder], options) : pref.fallbackOrder
-            setDraft(setPath(draft, 'ownerPrimary', { ...pref, mode: 'fixed', platform: hit.platform, instance: hit.instance, account: hit.account, fallbackOrder: nextOrder }))
-          }
+          if (hit) setPrimaryFromOption(hit)
         }
+      }
+      const setPrimaryFromOption = (hit) => {
+        if (!hit || !isOwnerOptionSelectable(hit)) return
+        const hasCustom = Array.isArray(pref.fallbackOrder) && pref.fallbackOrder.length > 0
+        const nextOrder = hasCustom ? sanitizeFallbackOrderForOptions([hit, ...pref.fallbackOrder], options) : pref.fallbackOrder
+        setDraft(setPath(draft, 'ownerPrimary', { ...pref, mode: 'fixed', platform: hit.platform, instance: hit.instance, account: hit.account, fallbackOrder: nextOrder }))
       }
 
       const formatOptLabel = (o) => {
@@ -2831,30 +2843,47 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                 h('code', { className: 'ab-small' }, ownerPersonId),
                 ownerAccSummary ? h('span', { className: 'ab-small ab-muted' }, ownerAccSummary) : null)
               : h('span', { className: 'ab-muted ab-small' }, '尚未认主（请到「通讯平台」或向导中认领主人）')),
-          h(Row, { label: '主人的主账号（大肥鱼主动消息接收账号）', hint: '这里选的是主人的账号，不是机器人自己的账号。ta 主动私聊你、汇报结果或自测提醒时，会用自己的平台账号发到这个接收账号；不影响你在当前会话里和 ta 聊天时的原地回复。' },
-            h('div', { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 6 } },
+          h(Row, { label: '主人的主账号与接收优先级（大肥鱼主动消息接收账号）', hint: '这里管理的是主人的接收账号，不是机器人自己的账号。固定主账号锁定在第一位（不可拖动、调序或移除）；可在下方列表点「设为主账号」指定首选账号，或切换为「未单独指定 / 跟随最近」。其余账号支持拖动交换或点按钮调整顺序及「移出」；不影响当前会话的原地回复。' },
+            h('div', { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 8 } },
               h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
-                h('select', { className: 'ab-select', 'aria-label': '主人的主账号（大肥鱼主动消息接收账号）', value: selectValue, onChange: (e) => onSelectPrimary(e.target.value) },
-                  h('option', { value: '__default__' }, '未单独指定（有 QQ 时优先 QQ，否则跟随最近平台）'),
-                  h('option', { value: '__recent__' }, '跟随最近私聊平台（recent）'),
-                  options.map((o) => h('option', { key: o.key, value: optValue(o), disabled: !isOwnerOptionSelectable(o) }, formatOptLabel(o))),
-                  selectValue === '__orphan__' ? h('option', { value: '__orphan__' }, ownerPrimaryLabel(pref) + '（当前主人主账号配置，待刷新或已解绑）') : null),
+                h(Btn, {
+                  small: true,
+                  kind: selectValue === '__default__' ? 'primary' : 'ghost',
+                  'data-owner-mode': '__default__',
+                  'aria-pressed': selectValue === '__default__',
+                  title: '有 QQ 时优先 QQ，否则按下方优先级或最近平台接收',
+                  onClick: () => onSelectPrimary('__default__'),
+                }, '未单独指定（默认优先 QQ）'),
+                h(Btn, {
+                  small: true,
+                  kind: selectValue === '__recent__' ? 'primary' : 'ghost',
+                  'data-owner-mode': '__recent__',
+                  'aria-pressed': selectValue === '__recent__',
+                  title: '跟随主人最近一次主动发起私聊的在线平台',
+                  onClick: () => onSelectPrimary('__recent__'),
+                }, '跟随最近私聊平台（recent）'),
+                selectValue !== '__default__' && selectValue !== '__recent__'
+                  ? h('span', { className: cx('ab-badge', selectValue === '__orphan__' ? 'err' : 'mine') },
+                    selectValue === '__orphan__'
+                      ? ('配置主账号待更新：' + ownerPrimaryLabel(pref))
+                      : ('当前固定主账号：' + ownerPrimaryLabel(pref)))
+                  : null,
                 h(Btn, { small: true, disabled: testSending, onClick: testSend }, testSending ? '发送中…' : '测试发送给主人主账号'),
               ),
-              hasUnsavedPrimary ? h('div', { className: 'ab-small', style: { color: 'var(--ab-warn)' } }, '有未保存的主人主账号改动，请点击底部「保存设置」后再生效/测试。') : null,
+              selectValue === '__orphan__'
+                ? h('div', { className: 'ab-note warn', style: { width: '100%' } },
+                  '当前配置的主账号（' + ownerPrimaryLabel(pref) + '）已解绑或不在可用列表中，请在下方列表点击「设为主账号」重新指定，或切换为「未单独指定 / 跟随最近」。')
+                : null,
+              hasUnsavedPrimary ? h('div', { className: 'ab-small', style: { color: 'var(--ab-warn)' } }, '有未保存的主账号或顺位改动，请点击底部「保存设置」后再生效/测试。') : null,
               routeStatusNode,
               testResult ? h('div', { className: cx('ab-note', testResult.ok ? '' : (testResult.blocked ? 'warn' : 'err')), style: { width: '100%' } },
                 (testResult.message || '') + (testResult.fallbackUsed ? '（本次通过回退平台发出）' : '')) : null,
-            )),
-          h(Row, { label: '主人主账号不可用时，允许普通主动聊天改发其他在线平台', hint: '默认关闭。仅针对「固定主账号」模式：关闭时若固定主账号离线或未绑定，ta 会暂停主动搭话、汇报等普通主动消息，绝不串发；开启时按下方接收优先级顺序改发。' }, f.sw('ownerPrimary.fallback')),
-          h(Row, { label: '主人主账号不可用时，允许系统重要通知与自测提醒改发其他在线平台（不含无会话危险操作）', hint: '默认开启。仅针对「固定主账号」模式，影响系统提醒与「测试发送给主人主账号」；无归属会话的危险操作与授权仍按原地 fail-closed 处理。' }, f.sw('ownerPrimary.noticeFallback')),
-          h(Row, { label: '账号接收优先级（回退/默认接收顺位）', hint: '固定主账号锁定在第一位，不可拖动、调序或移除。其余账号可按住拖动与目标行交换位置或点按钮调序，也可「移出」排序列表（自定义顺位下被移出的账号不参与自动回退，新绑定账号会自动加入末尾）。' },
-            h('div', { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 8 } },
               orderedOptions.length
                 ? h('div', { ref: prioListRef, className: cx('ab-prio-list', dragState ? 'dragging-active' : '') }, orderedOptions.map((o, idx) => {
                   const rowKey = ownerOptionKey(o)
                   const isPinned = Boolean(o._pinnedPrimary)
                   const isPrimaryItem = isPinned || (pref.mode !== 'recent' && Boolean(pref.platform || pref.instance) && isOwnerOptionSelected(pref, o))
+                  const selectable = isOwnerOptionSelectable(o)
                   const canDragRow = !isPinned && reorderableCount > 1
                   const badge = fallbackStatusBadge(o)
                   const instPart = (o.multiInstance || (o.instance && o.instance !== o.platform)) ? ` · ${o.instance}` : ''
@@ -2865,6 +2894,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                     dragState && dragState.dragKey === rowKey ? 'dragging' : '',
                     !isPinned && dragState && dragState.overKey === rowKey && dragState.dragKey !== rowKey ? 'over' : '',
                   )
+                  const primaryBtnTitle = !o.canProactive
+                    ? '仅支持回复，无法设为主人主账号'
+                    : o.hasInstance === false
+                      ? '未配置平台实例，无法设为主人主账号'
+                      : !selectable
+                        ? '当前实例未观测到，无法设为主人主账号'
+                        : '设为主人的固定主账号（固定在首位）'
                   const decodeDragSrcKey = (e) => {
                     if (dragKeyRef.current) return dragKeyRef.current
                     if (dragState && dragState.dragKey) return dragState.dragKey
@@ -2914,7 +2950,9 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                     } : undefined,
                     onDragEnd: () => { dragKeyRef.current = ''; setDragState(null) },
                   },
-                    h('span', { className: cx('ab-prio-handle', canDragRow ? 'touch-drag' : ''), title: isPinned ? '固定主账号锁定在第一位，禁止拖动' : (canDragRow ? '按住拖动到目标行可交换位置' : '当前无可交换位置的其他账号') }, isPinned ? '📌' : '⋮⋮'),
+                    isPinned
+                      ? h('span', { className: 'ab-prio-pin', title: '固定主账号锁定在第一位，禁止拖动、调序或移除' }, h(PinIcon, { filled: true }))
+                      : h('span', { className: cx('ab-prio-handle', canDragRow ? 'touch-drag' : ''), title: canDragRow ? '按住拖动到目标行可交换位置' : '当前无可交换位置的其他账号' }, '⋮⋮'),
                     h('span', { className: 'ab-badge' }, '#' + (idx + 1)),
                     h('div', { className: 'ab-prio-main' },
                       h('span', null, '主人 · ' + platformLabel(o.platform) + instPart + ' · ' + o.account),
@@ -2922,6 +2960,9 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                       h('span', { className: cx('ab-badge', badge.cls) }, badge.text),
                     ),
                     h('div', { className: 'ab-prio-actions' },
+                      !isPrimaryItem
+                        ? h(Btn, { small: true, kind: 'ghost', disabled: !selectable, title: primaryBtnTitle, onClick: () => setPrimaryFromOption(o) }, '设为主账号')
+                        : null,
                       h(Btn, { small: true, disabled: isPinned || idx <= minEditableIdx, onClick: () => movePriorityItem(idx, idx - 1) }, '上移'),
                       h(Btn, { small: true, disabled: isPinned || idx >= orderedOptions.length - 1, onClick: () => movePriorityItem(idx, idx + 1) }, '下移'),
                       h(Btn, {
@@ -2945,6 +2986,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                   excludedOptions.map((o) => {
                     const rowKey = ownerOptionKey(o)
                     const isPrimaryItem = pref.mode !== 'recent' && Boolean(pref.platform || pref.instance) && isOwnerOptionSelected(pref, o)
+                    const selectable = isOwnerOptionSelectable(o)
                     const badge = fallbackStatusBadge(o)
                     const instPart = (o.multiInstance || (o.instance && o.instance !== o.platform)) ? ` · ${o.instance}` : ''
                     return h('div', { key: 'ex:' + (o.key || rowKey), className: 'ab-prio-excluded-item', 'data-prio-excluded-key': rowKey },
@@ -2953,7 +2995,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                         isPrimaryItem ? h('span', { className: 'ab-badge mine', title: '固定主账号仍然实际最优先，移出列表仅影响主账号以外顺位' }, '当前主账号（首选，仍优先于列表）') : null,
                         h('span', { className: cx('ab-badge', badge.cls) }, badge.text),
                       ),
-                      h(Btn, { small: true, kind: 'ghost', onClick: () => includePriorityItem(o) }, '加入排序'),
+                      h('div', { className: 'ab-prio-actions' },
+                        !isPrimaryItem
+                          ? h(Btn, { small: true, kind: 'ghost', disabled: !selectable, title: selectable ? '设为主人的固定主账号（固定在首位）' : '当前实例不支持主动消息或未观测到，无法设为主账号', onClick: () => setPrimaryFromOption(o) }, '设为主账号')
+                          : null,
+                        h(Btn, { small: true, kind: 'ghost', onClick: () => includePriorityItem(o) }, '加入排序'),
+                      ),
                     )
                   }))
                 : null,
@@ -2963,13 +3010,15 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                   : null,
                 h('span', { className: 'ab-small ab-muted' },
                   (!hasCustomOrder && orderedOptions.length > 0 ? '当前使用默认全量顺位；调序或移出账号后将启用自定义子集顺位。' : '')
-                  + '固定主账号始终最优先；恢复在线后不会抢在主账号前，此处顺位仅决定不可用时的备选顺序。'),
+                  + '固定主账号始终最优先；恢复在线后不会抢在主账号前，其余顺位仅决定不可用时的备选顺序。'),
               ),
               unboundInstances.length
                 ? h('div', { className: 'ab-small ab-muted' }, '另有平台实例尚未绑定主人接收账号：' + unboundInstances.map(unboundInstLabel).join('、') + '（请用你的账号向该实例发一条私聊以完成绑定，绑定后自动加入排序）')
                 : null,
               fallbackPreviewNode,
             )),
+          h(Row, { label: '主人主账号不可用时，允许普通主动聊天改发其他在线平台', hint: '默认关闭。仅针对「固定主账号」模式：关闭时若固定主账号离线或未绑定，ta 会暂停主动搭话、汇报等普通主动消息，绝不串发；开启时按上方接收优先级顺序改发。' }, f.sw('ownerPrimary.fallback')),
+          h(Row, { label: '主人主账号不可用时，允许系统重要通知与自测提醒改发其他在线平台（不含无会话危险操作）', hint: '默认开启。仅针对「固定主账号」模式，影响系统提醒与「测试发送给主人主账号」；无归属会话的危险操作与授权仍按原地 fail-closed 处理。' }, f.sw('ownerPrimary.noticeFallback')),
           h(Row, { label: '主人 QQ 号（可选）', hint: '仅在使用 QQ 网关或兼容旧 QQ 功能时填写；纯飞书 / QQ 官方机器人 / 通用桥主人认主后可留空。修改此项会重置当前敏感命令授权代次。' }, f.text('ownerQQ', { placeholder: ownerPersonId ? '纯非 QQ 平台可留空' : '例如 123456789' })),
           h(Row, { label: 'ta怎么称呼你' }, f.text('ownerName', { placeholder: '主人' })),
           h(Row, { label: '主人私聊的权限', hint: '群聊永远没有电脑操作权限，这里管不到群。' },
@@ -3474,15 +3523,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('a', { key: 'o2', href: 'https://console.volcengine.com/speech/app', target: '_blank', rel: 'noreferrer' }, '开通管理'),
           '（新账号要在「语音合成大模型」那一项点开通，开通后等几分钟生效）。音色也要账号里开通过才能念，报「speaker permission denied」就换一个。'),
       ]
-    }
-
-    function PinIcon({ filled }) {
-      return h('svg', {
-        width: 13, height: 13, viewBox: '0 0 24 24', fill: filled ? 'currentColor' : 'none',
-        stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
-      },
-        h('path', { d: 'M12 17v5' }),
-        h('path', { d: 'M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z' }))
     }
 
     /**

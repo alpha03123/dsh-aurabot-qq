@@ -501,21 +501,33 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
     }
 
     const gaText = textOf(tree)
-    assert.match(gaText, /主人的主账号/)
+    assert.match(gaText, /主人的主账号与接收优先级/)
     assert.match(gaText, /不是机器人自己的账号/)
     assert.doesNotMatch(gaText, /大肥鱼的主账号/)
     assert.match(gaText, /主人 · QQ/)
     assert.match(gaText, /主人 · 飞书/)
 
-    const selects = collectNodes(tree, (n) => n.type === 'select')
-    assert.equal(selects.length, 1)
-    assert.equal(selects[0].props['aria-label'], '主人的主账号（大肥鱼主动消息接收账号）')
-    const opts = collectNodes(selects[0], (n) => n.type === 'option')
-    assert.ok(opts.some((o) => o.props.value === '__default__' && textOf(o).includes('有 QQ 时优先 QQ，否则跟随最近平台')))
-    assert.ok(opts.some((o) => o.props.value === '__recent__' && textOf(o).includes('recent')))
-    assert.ok(opts.some((o) => o.props.value === 'account:feishu:feishu:ou_nop' && o.props.disabled === true && textOf(o).includes('仅支持回复')))
+    // 校验合并后的模式切换按钮与行内「设为主账号」按钮
+    const modeDefaultBtn = collectNodes(tree, (n) => n.props && n.props['data-owner-mode'] === '__default__')[0]
+    const modeRecentBtn = collectNodes(tree, (n) => n.props && n.props['data-owner-mode'] === '__recent__')[0]
+    assert.ok(modeDefaultBtn && modeRecentBtn, '应渲染默认与 recent 模式切换按钮')
+    const treeRows = collectNodes(tree, (n) => n.props && n.props['data-prio-key'])
+    assert.equal(treeRows[0].props['data-prio-pinned'], 'true')
+    assert.ok(collectNodes(treeRows[0], (n) => n.props?.className === 'ab-prio-pin' && collectNodes(n, (s) => s.type?.name === 'PinIcon').length > 0).length === 1, '固定首位行应使用 PinIcon SVG 置顶图标')
+    const feishuRow0 = treeRows.find((r) => r.props['data-prio-key'] === 'feishu\x00feishu\x00ou_nop')
+    const feishuSetBtn = collectNodes(feishuRow0, (n) => n.type?.name === 'Btn' && textOf(n.children) === '设为主账号')[0]
+    assert.equal(feishuSetBtn.props.disabled, true, '仅支持回复的实例必须禁用「设为主账号」')
 
-    // 多实例未观测选项（observed:false, selectable:false）在下拉与快捷按钮均禁用
+    // 点击「QQ · 10001」行的「设为主账号」：切换为 QQ 并重置首位置顶预览状态
+    const qqRow0 = treeRows.find((r) => r.props['data-prio-key'] === 'qq\x00qq\x0010001')
+    const qqSetBtn = collectNodes(qqRow0, (n) => n.type?.name === 'Btn' && textOf(n.children) === '设为主账号')[0]
+    assert.ok(qqSetBtn && !qqSetBtn.props.disabled)
+    qqSetBtn.props.onClick()
+    assert.equal(draftState.ownerPrimary.mode, 'fixed')
+    assert.equal(draftState.ownerPrimary.platform, 'qq')
+    assert.equal(draftState.ownerPrimary.account, '10001')
+
+    // 多实例未观测选项（observed:false, selectable:false）在列表行「设为主账号」中禁用
     hook = 0
     state = [
       {
@@ -538,10 +550,11 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
       setDraft() {},
       toast() {},
     })
-    const optsMulti = collectNodes(treeMulti, (n) => n.type === 'option')
-    assert.ok(optsMulti.some((o) => o.props.value === 'account:bridge:bridge:b_acc' && o.props.disabled === true && textOf(o).includes('未观测到')))
-    assert.ok(optsMulti.some((o) => o.props.value === 'account:qqbot:qqbot:qb_noinst' && o.props.disabled === true && textOf(o).includes('未配置平台实例')))
-    assert.ok(optsMulti.some((o) => o.props.value === 'account:bridge:bridge#2:b_acc' && o.props.disabled !== true))
+    const rowsMulti = collectNodes(treeMulti, (n) => n.props && n.props['data-prio-key'])
+    const unobsRow = rowsMulti.find((r) => r.props['data-prio-key'] === 'bridge\x00bridge\x00b_acc')
+    const noInstRow = rowsMulti.find((r) => r.props['data-prio-key'] === 'qqbot\x00qqbot\x00qb_noinst')
+    assert.equal(collectNodes(unobsRow, (n) => n.type?.name === 'Btn' && textOf(n.children) === '设为主账号')[0].props.disabled, true)
+    assert.equal(collectNodes(noInstRow, (n) => n.type?.name === 'Btn' && textOf(n.children) === '设为主账号')[0].props.disabled, true)
 
     // 恢复 GlobalAccess 原始 tree 状态供下方按钮/开关测试使用
     hook = 0
@@ -568,8 +581,8 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
       toast() {},
     })
 
-    // 切换成 recent 会触发 setDraft 清空旧字段语义交由服务端前先把 mode 置 recent、platform/instance/account 清空
-    selects[0].props.onChange({ target: { value: '__recent__' } })
+    // 点击「跟随最近私聊平台（recent）」按钮会触发 setDraft 清空旧字段语义交由服务端前先把 mode 置 recent、platform/instance/account 清空
+    modeRecentBtn.props.onClick()
     assert.equal(draftState.ownerPrimary.mode, 'recent')
     assert.equal(draftState.ownerPrimary.instance, '')
 
@@ -733,7 +746,7 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
       toast() {},
     })
     const prioText = textOf(prioTree)
-    assert.match(prioText, /账号接收优先级/)
+    assert.match(prioText, /主人的主账号与接收优先级/)
     assert.match(prioText, /当前主账号（首选 · 固定首位）/)
     assert.match(prioText, /仅支持回复（将跳过）/)
     assert.match(prioText, /普通主动消息回退：关闭｜系统通知回退：开启/)
