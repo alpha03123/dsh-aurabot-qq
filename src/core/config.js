@@ -29,6 +29,7 @@ export const DEFAULTS = {
     account: '',
     fallback: false, // A 类普通主动消息在主账号不可达时是否允许跨平台回退
     noticeFallback: true, // B 类系统重要通知在主账号不可达时是否允许跨平台回退
+    fallbackOrder: [], // 账号接收优先级列表（从高到低）：[{ platform, instance, account }, ...]
   },
   approvalNotify: true, // DSH 要授权时把请求发到主人私聊
   // 什么情况往主人 QQ 上报：enabled 是总开关，approval = 工具要授权，question = 她要向人提问选选项。
@@ -529,6 +530,25 @@ function normalizePlatforms(raw, gateway) {
   return out
 }
 
+export function normalizeFallbackOrderList(rawList) {
+  if (!Array.isArray(rawList)) return []
+  const seen = new Set()
+  const out = []
+  for (const item of rawList) {
+    if (!isObj(item)) continue
+    const platform = String(item.platform ?? '').trim()
+    const account = String(item.account ?? '').trim()
+    const instance = String(item.instance ?? '').trim() || platform
+    if (!platform || !account) continue
+    const key = `${platform}\0${instance}\0${account}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ platform, instance, account })
+    if (out.length >= 50) break
+  }
+  return out
+}
+
 function normalizeOwnerPrimary(raw) {
   const src = isObj(raw) ? raw : {}
   const mode = src.mode === 'recent' ? 'recent' : 'fixed'
@@ -542,6 +562,7 @@ function normalizeOwnerPrimary(raw) {
     account,
     fallback: src.fallback === true,
     noticeFallback: src.noticeFallback !== false,
+    fallbackOrder: normalizeFallbackOrderList(src.fallbackOrder),
   }
 }
 

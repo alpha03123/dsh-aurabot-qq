@@ -14,7 +14,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import net from 'node:net'
-import { loadConfig, saveConfig, publicConfig, mergeFromPanel, authOwnerKey, ownerAuthorizationRevision } from './core/config.js'
+import { loadConfig, saveConfig, publicConfig, mergeFromPanel, authOwnerKey, ownerAuthorizationRevision, normalizeFallbackOrderList } from './core/config.js'
 import { createLogger } from './core/logger.js'
 import { encodeResponse } from './core/http-compress.js'
 import { registerSecret, redact } from './core/redact.js'
@@ -162,22 +162,20 @@ export function apply(ctx) {
       if (report?.notice) log.warn(report.notice)
     }
   } catch (error) { log.error('恢复备份失败：', error.message) }
-  let cfg = loadConfig()
+  let cfg = loadConfig(), startupNewClaimedQq = false
   // 启动迁移（I4/I3 就地升级点）：有旧记忆文件先成组备份并升级迁移身份表，再补认领旧配置 ownerQQ
   try {
     ensureUpgradedStorage({
       root: dataDir(),
       log: logger.child('upgrade'),
-      onClaimOwner: (idStore) => {
-        if (cfg.ownerQQ && !idStore.owner()) idStore.claimOwner('qq', cfg.ownerQQ)
-      },
+      onClaimOwner: (idStore) => { if (cfg.ownerQQ && !idStore.owner()) { idStore.claimOwner('qq', cfg.ownerQQ); startupNewClaimedQq = true } },
     })
   } catch (error) { log.warn('迁移记忆与身份库失败：', error?.message || error) }
 
   // 启动迁移（I3 唯一合法转换点）：身份库尚无主人而旧配置有 ownerQQ 时认领进身份主线
   const identity = createIdentity({ dataDir: dataDir('gateway'), log: logger.child('identity') })
   if (cfg.ownerQQ && !identity.owner()) {
-    try { identity.claimOwner('qq', cfg.ownerQQ) }
+    try { identity.claimOwner('qq', cfg.ownerQQ); startupNewClaimedQq = true }
     catch (error) { log.warn('迁移配置主人 QQ 到身份主线失败：', error?.message || error) }
   }
   const startupOwner = identity.owner() || ''
@@ -195,6 +193,81 @@ export function apply(ctx) {
   if (authOwnerKey(cfg) && !ownerAuthorizationRevision(cfg)) {
     try { cfg = saveConfig(cfg, cfg) }
     catch { log.warn('初始化主人授权记录失败，本次启动使用会话授权') }
+  }
+  const reconcileFallbackOrderList = ({
+    curOrder,
+    nextOwner,
+    nextAccounts,
+    prevOwner = '',
+    prevAccounts = [],
+    allowAutoAppend = true,
+    preferredInstanceByKey = null,
+    instances = null,
+    lookupInstance = null,
+  }) => {
+    const base = normalizeFallbackOrderList(curOrder)
+    if (!base.length || !nextOwner) return []
+    const validAccSet = new Set(
+      (nextAccounts || [])
+        .filter((a) => a?.platform && a?.account)
+        .map((a) => `${a.platform}\0${String(a.account)}`),
+    )
+    let nextOrder = base.filter((item) => validAccSet.has(`${item.platform}\0${item.account}`))
+    if (Array.isArray(instances) && instances.length) {
+      nextOrder = nextOrder.filter((item) => {
+        const exactInst = instances.find((x) => x.instance === item.instance)
+        const checkInsts = exactInst ? [exactInst] : instances.filter((x) => x.platform === item.platform)
+        return !checkInsts.some((inst) => inst?.self?.account && String(inst.self.account) === item.account)
+      })
+    }
+    if (!allowAutoAppend || !nextOrder.length) return nextOrder
+    const prevAccSet = (prevOwner && prevOwner === nextOwner)
+      ? new Set(
+        (prevAccounts || [])
+          .filter((a) => a?.platform && a?.account)
+          .map((a) => `${a.platform}\0${String(a.account)}`),
+      )
+      : new Set()
+    const appended = [...nextOrder]
+    for (const acc of nextAccounts || []) {
+      if (!acc?.platform || !acc?.account) continue
+      const accStr = String(acc.account)
+      const key = `${acc.platform}\0${accStr}`
+      if (prevAccSet.has(key)) continue
+      const platInsts = Array.isArray(instances) ? instances.filter((x) => x.platform === acc.platform) : []
+      const preferred = preferredInstanceByKey?.get?.(key)
+        || (typeof lookupInstance === 'function' ? lookupInstance(acc.platform, accStr) : '')
+        || ''
+      let targetInst = preferred || acc.platform
+      if (!preferred && platInsts.length) {
+        const nonSelf = platInsts.filter((inst) => !(inst?.self?.account && String(inst.self.account) === accStr))
+        targetInst = nonSelf[0]?.instance || platInsts[0]?.instance || acc.platform
+      }
+      if (platInsts.some((inst) => inst.instance === targetInst && inst?.self?.account && String(inst.self.account) === accStr)) continue
+      if (!appended.some((x) => x.platform === acc.platform && x.instance === targetInst && x.account === accStr)) {
+        appended.push({ platform: acc.platform, instance: targetInst, account: accStr })
+      }
+    }
+    return normalizeFallbackOrderList(appended)
+  }
+  // 启动期清理失效/已解绑 stale 项；仅当配置 QQ 系本次启动新认领进身份库时才允许追加，绝不复活用户刻意排除的 QQ
+  if ((cfg.ownerPrimary?.fallbackOrder?.length || 0) > 0) {
+    const startupAccs = startupOwner ? (identity.accountsOf(startupOwner) || []) : []
+    const cleanedStartupOrder = reconcileFallbackOrderList({
+      curOrder: cfg.ownerPrimary.fallbackOrder,
+      nextOwner: startupOwner,
+      nextAccounts: startupAccs,
+      prevOwner: startupNewClaimedQq ? '' : startupOwner,
+      prevAccounts: startupNewClaimedQq ? [] : startupAccs,
+      allowAutoAppend: startupNewClaimedQq,
+    })
+    if (JSON.stringify(cleanedStartupOrder) !== JSON.stringify(cfg.ownerPrimary.fallbackOrder)) {
+      try {
+        cfg = saveConfig({ ...cfg, ownerPrimary: { ...cfg.ownerPrimary, fallbackOrder: cleanedStartupOrder } }, cfg)
+      } catch (error) {
+        logger.child('gateway').warn('启动清理失效接收优先级列表失败：', error?.message || error)
+      }
+    }
   }
   let mods = null
   let bridge = null
@@ -240,6 +313,34 @@ export function apply(ctx) {
       setConfig({ ...cfg, ownerPersonId: ownerNow })
     }
     return ownerNow
+  }
+  const syncOwnerFallbackOnAccountChange = ({
+    prevOwner = '',
+    prevAccounts = [],
+    allowAutoAppend = true,
+    preferredInstanceByKey = null,
+  } = {}) => {
+    const curPref = getConfig()?.ownerPrimary
+    const curOrder = curPref?.fallbackOrder || []
+    if (!curOrder.length) return curOrder
+    const nextOwner = identity.owner() || ''
+    const nextAccounts = nextOwner ? (identity.accountsOf(nextOwner) || []) : []
+    const instances = platformGateway ? knownPlatformInstances() : []
+    const nextOrder = reconcileFallbackOrderList({
+      curOrder,
+      nextOwner,
+      nextAccounts,
+      prevOwner,
+      prevAccounts,
+      allowAutoAppend,
+      preferredInstanceByKey,
+      instances,
+      lookupInstance: (plat, acc) => platformGateway?.routing?.instancesForAccount?.(plat, acc)?.[0] || '',
+    })
+    if (JSON.stringify(nextOrder) !== JSON.stringify(curOrder)) {
+      setConfig(mergeFromPanel(getConfig(), { ownerPrimary: { fallbackOrder: nextOrder } }))
+    }
+    return nextOrder
   }
   secrets()
   seedPersonas()
@@ -485,6 +586,8 @@ export function apply(ctx) {
       } else {
         acc = String(hit.account)
       }
+    } else if (spec?.requireExplicitAccount) {
+      failReason = 'primary-unlinked'
     } else if (implicitLegacyQq && ctx.defAcc) {
       acc = ctx.defAcc
     } else if (ownerAccounts.length === 1) {
@@ -547,8 +650,48 @@ export function apply(ctx) {
 
     return { ok: false, chatId: '', failReason: failReason || 'primary-unlinked', target, unobservedSingle: false }
   }
+  function isSameOwnerTarget(a, b) {
+    if (!a || !b) return false
+    const pa = String(a.platform || '').trim()
+    const pb = String(b.platform || '').trim()
+    const ia = String(a.instance || pa).trim()
+    const ib = String(b.instance || pb).trim()
+    const aa = String(a.account || '').trim()
+    const ab = String(b.account || '').trim()
+    return Boolean(pa && pb && aa && ab && pa === pb && ia === ib && aa === ab)
+  }
+  function pickFromFallbackOrder(orderList, ctx, excludeTarget = null) {
+    for (const item of orderList || []) {
+      if (!item?.platform || !item?.account) continue
+      const spec = {
+        platform: item.platform,
+        instance: item.instance || item.platform,
+        account: item.account,
+        requireExplicitAccount: true,
+      }
+      if (excludeTarget && isSameOwnerTarget(spec, excludeTarget)) continue
+      const res = evaluateOwnerTarget(spec, ctx)
+      if (res.ok) return res
+    }
+    return null
+  }
+  function evalLastSeenTarget(ctx) {
+    const seen = platformGateway?.routing?.lastSeen?.(ctx.owner)
+    const addr = seen?.chatId ? parseChatId(seen.chatId) : null
+    if (!addr || addr.kind !== 'private' || !addr.id) return null
+    const accStr = String(addr.id)
+    const owned = ctx.ownerAccountsAll.some((a) => a && a.platform === addr.platform && String(a.account) === accStr)
+    if (!owned) return null
+    const res = evaluateOwnerTarget({
+      platform: addr.platform,
+      instance: addr.instance || addr.platform,
+      account: accStr,
+      requireExplicitAccount: true,
+    }, ctx)
+    return res.ok ? res : null
+  }
   /**
-   * 纯只读集中式主人出站路由决策（v5 §5.2）：
+   * 纯只读集中式主人出站路由决策（v5 §5.2 + 账号接收优先级）：
    * - 返回 { chatId, blocked, reason, target, fallbackUsed }
    * - 严禁在本函数内调用 setFixed 或写 router.json
    */
@@ -557,8 +700,10 @@ export function apply(ctx) {
     if (!owner) return { chatId: '', blocked: false, reason: 'no-owner', target: null, fallbackUsed: false }
 
     const pref = getConfig()?.ownerPrimary || {
-      mode: 'fixed', platform: '', instance: '', account: '', fallback: false, noticeFallback: true,
+      mode: 'fixed', platform: '', instance: '', account: '', fallback: false, noticeFallback: true, fallbackOrder: [],
     }
+    const orderList = normalizeFallbackOrderList(pref.fallbackOrder)
+    const hasCustomOrder = orderList.length > 0
     const ctx = createOwnerRouteContext(owner)
     // 旧配置未设置 ownerPrimary（mode='fixed' 且 platform/instance 均空）且主人启用了 QQ：
     // 必须继续优先走 QQ，绝不因 router.seen 里有飞书等其他平台而默认漂移；只有显式 mode='recent' 或未启用 QQ（含仅存在 enabled=false 的 QQ 实例 / 纯非 QQ 主人）才跟随最近私聊。
@@ -567,7 +712,47 @@ export function apply(ctx) {
       && !pref.instance
       && Boolean(ctx.defAcc && (legacyQqActive() || ctx.qqGwEnabled || (ctx.hasDefInGateway && ctx.qqGwInsts.length === 0)))
 
-    let isFallback = false
+    const finishOk = (res, reason, fallbackUsed) => {
+      if (record && res.unobservedSingle) warnUnobservedSingleAccount(res.target.platform, res.target.instance, res.target.account)
+      if (record && purpose === 'proactive') lastBlockedRoute = null
+      return {
+        chatId: res.chatId,
+        blocked: false,
+        reason,
+        target: res.target,
+        fallbackUsed,
+      }
+    }
+    const legacyOrGatewayTail = (isFallback) => {
+      if (platformGateway) {
+        const r = platformGateway.routeTo(owner)
+        const cid = typeof r === 'string' ? r : r?.chatId
+        if (cid) {
+          const chatId = String(cid)
+          const addr = parseChatId(chatId)
+          if (record && purpose === 'proactive') lastBlockedRoute = null
+          return {
+            chatId,
+            blocked: false,
+            reason: isFallback ? 'fallback-used' : 'ok',
+            target: addr ? { platform: addr.platform, instance: addr.instance || addr.platform, account: addr.id } : null,
+            fallbackUsed: Boolean(isFallback),
+          }
+        }
+      }
+      if (ctx.defAcc && !ctx.hasDefInGateway && onebotState === 'connected' && !wrongAccount) {
+        if (record && purpose === 'proactive') lastBlockedRoute = null
+        return {
+          chatId: `private:${ctx.defAcc}`,
+          blocked: false,
+          reason: isFallback ? 'fallback-used' : 'ok',
+          target: { platform: defaultPlatform, instance: defaultPlatform, account: ctx.defAcc },
+          fallbackUsed: Boolean(isFallback),
+        }
+      }
+      return { chatId: '', blocked: false, reason: 'no-route', target: null, fallbackUsed: false }
+    }
+
     if (pref.mode !== 'recent' && (pref.platform || pref.instance || implicitLegacyQq)) {
       const res = evaluateOwnerTarget({
         platform: pref.platform,
@@ -575,53 +760,144 @@ export function apply(ctx) {
         account: pref.account,
         implicitLegacyQq,
       }, ctx)
-      if (res.ok) {
-        if (record && res.unobservedSingle) warnUnobservedSingleAccount(res.target.platform, res.target.instance, res.target.account)
-        if (record && purpose === 'proactive') lastBlockedRoute = null
-        return {
-          chatId: res.chatId,
-          blocked: false,
-          reason: 'ok',
-          target: res.target,
-          fallbackUsed: false,
-        }
-      }
+      if (res.ok) return finishOk(res, 'ok', false)
 
       const allowFallback = purpose === 'notice' ? (pref.noticeFallback !== false) : (pref.fallback === true)
       if (!allowFallback) {
         if (record) recordBlockedRoute(res.failReason, res.target, purpose)
         return { chatId: '', blocked: true, reason: res.failReason, target: res.target, fallbackUsed: false }
       }
-      isFallback = true
+      if (hasCustomOrder) {
+        const fb = pickFromFallbackOrder(orderList, ctx, res.target)
+        if (fb) return finishOk(fb, 'fallback-used', true)
+        return { chatId: '', blocked: false, reason: 'no-route', target: null, fallbackUsed: false }
+      }
+      return legacyOrGatewayTail(true)
     }
 
-    if (platformGateway) {
-      const r = platformGateway.routeTo(owner)
-      const cid = typeof r === 'string' ? r : r?.chatId
-      if (cid) {
-        const chatId = String(cid)
-        const addr = parseChatId(chatId)
-        if (record && purpose === 'proactive') lastBlockedRoute = null
-        return {
-          chatId,
-          blocked: false,
-          reason: isFallback ? 'fallback-used' : 'ok',
-          target: addr ? { platform: addr.platform, instance: addr.instance || addr.platform, account: addr.id } : null,
-          fallbackUsed: Boolean(isFallback),
+    if (pref.mode === 'recent') {
+      if (hasCustomOrder) {
+        const recentRes = evalLastSeenTarget(ctx)
+        if (recentRes) return finishOk(recentRes, 'ok', false)
+        const fb = pickFromFallbackOrder(orderList, ctx, null)
+        if (fb) return finishOk(fb, 'ok', false)
+        return { chatId: '', blocked: false, reason: 'no-route', target: null, fallbackUsed: false }
+      }
+      return legacyOrGatewayTail(false)
+    }
+
+    // 固定模式且未单独指定主账号（纯非 QQ，无 implicitLegacyQq）
+    if (hasCustomOrder) {
+      const fb = pickFromFallbackOrder(orderList, ctx, null)
+      if (fb) return finishOk(fb, 'ok', false)
+      return { chatId: '', blocked: false, reason: 'no-route', target: null, fallbackUsed: false }
+    }
+    return legacyOrGatewayTail(false)
+  }
+  /** 纯只读计算面板回退下一跳预览（不记录告警与 blocked 状态）。 */
+  function computeFallbackPreview() {
+    const pref = getConfig()?.ownerPrimary || {
+      mode: 'fixed', platform: '', instance: '', account: '', fallback: false, noticeFallback: true, fallbackOrder: [],
+    }
+    const proactiveFallbackEnabled = pref.fallback === true
+    const noticeFallbackEnabled = pref.noticeFallback !== false
+    const owner = identity.owner()
+    if (!owner) {
+      return {
+        available: false,
+        reason: 'no-owner',
+        chatId: '',
+        target: null,
+        candidateTarget: null,
+        proactiveFallbackEnabled,
+        noticeFallbackEnabled,
+      }
+    }
+    const orderList = normalizeFallbackOrderList(pref.fallbackOrder)
+    const hasCustomOrder = orderList.length > 0
+    const ctx = createOwnerRouteContext(owner)
+    const implicitLegacyQq = pref.mode !== 'recent'
+      && !pref.platform
+      && !pref.instance
+      && Boolean(ctx.defAcc && (legacyQqActive() || ctx.qqGwEnabled || (ctx.hasDefInGateway && ctx.qqGwInsts.length === 0)))
+
+    const previewNext = (excludeTarget) => {
+      if (hasCustomOrder) {
+        const r = pickFromFallbackOrder(orderList, ctx, excludeTarget)
+        return r ? { chatId: r.chatId, target: r.target } : null
+      }
+      const recentHit = evalLastSeenTarget(ctx)
+      if (recentHit && (!excludeTarget || !isSameOwnerTarget(recentHit.target, excludeTarget))) {
+        return { chatId: recentHit.chatId, target: recentHit.target }
+      }
+      for (const st of ctx.managedInstances) {
+        if (!st || !st.enabled || st.state !== 'connected' || !st.caps || st.caps.proactive === 'none') continue
+        const r = evaluateOwnerTarget({ platform: st.platform, instance: st.instance, account: '' }, ctx)
+        if (r.ok && (!excludeTarget || !isSameOwnerTarget(r.target, excludeTarget))) {
+          return { chatId: r.chatId, target: r.target }
         }
       }
+      if (ctx.defAcc && !ctx.hasDefInGateway && onebotState === 'connected' && !wrongAccount) {
+        const legacyTarget = { platform: defaultPlatform, instance: defaultPlatform, account: ctx.defAcc }
+        if (!excludeTarget || !isSameOwnerTarget(legacyTarget, excludeTarget)) {
+          return { chatId: `private:${ctx.defAcc}`, target: legacyTarget }
+        }
+      }
+      return null
     }
-    if (ctx.defAcc && !ctx.hasDefInGateway && onebotState === 'connected' && !wrongAccount) {
-      if (record && purpose === 'proactive') lastBlockedRoute = null
+
+    if (pref.mode !== 'recent' && (pref.platform || pref.instance || implicitLegacyQq)) {
+      const primaryRes = evaluateOwnerTarget({
+        platform: pref.platform,
+        instance: pref.instance,
+        account: pref.account,
+        implicitLegacyQq,
+      }, ctx)
+      const next = previewNext(primaryRes.target)
+      if (!proactiveFallbackEnabled && !noticeFallbackEnabled) {
+        return {
+          available: false,
+          reason: 'fallback-disabled',
+          chatId: '',
+          target: null,
+          candidateTarget: next ? next.target : null,
+          proactiveFallbackEnabled,
+          noticeFallbackEnabled,
+        }
+      }
+      if (next) {
+        return {
+          available: true,
+          reason: 'ok',
+          chatId: next.chatId,
+          target: next.target,
+          candidateTarget: next.target,
+          proactiveFallbackEnabled,
+          noticeFallbackEnabled,
+        }
+      }
       return {
-        chatId: `private:${ctx.defAcc}`,
-        blocked: false,
-        reason: isFallback ? 'fallback-used' : 'ok',
-        target: { platform: defaultPlatform, instance: defaultPlatform, account: ctx.defAcc },
-        fallbackUsed: Boolean(isFallback),
+        available: false,
+        reason: 'no-route',
+        chatId: '',
+        target: null,
+        candidateTarget: null,
+        proactiveFallbackEnabled,
+        noticeFallbackEnabled,
       }
     }
-    return { chatId: '', blocked: false, reason: 'no-route', target: null, fallbackUsed: false }
+
+    const recentHit = pref.mode === 'recent' ? evalLastSeenTarget(ctx) : null
+    const cand = recentHit ? previewNext(recentHit.target) : previewNext(null)
+    return {
+      available: Boolean(cand),
+      reason: 'not-applicable',
+      chatId: cand ? cand.chatId : '',
+      target: cand ? cand.target : null,
+      candidateTarget: cand ? cand.target : null,
+      proactiveFallbackEnabled,
+      noticeFallbackEnabled,
+    }
   }
   function routeOwner() {
     return resolveOwnerRoute({ purpose: 'proactive' }).chatId
@@ -862,6 +1138,17 @@ export function apply(ctx) {
     platformLabel,
     resolveOwnerRoute,
     routeOwner,
+    onOwnerAccountLinked: ({ prevOwner, prevAccounts, platform, instance, account }) => {
+      const preferredInstanceByKey = platform && account && instance
+        ? new Map([[`${platform}\0${String(account)}`, instance]])
+        : null
+      syncOwnerFallbackOnAccountChange({
+        prevOwner,
+        prevAccounts,
+        allowAutoAppend: true,
+        preferredInstanceByKey,
+      })
+    },
     stickers,
     tts,
     buildTools: (where) => mods.buildTools(where),
@@ -1758,7 +2045,32 @@ export function apply(ctx) {
     // 控制台密码不能只改配置（SnowLuma 那边还是旧的）：拿出来单独去 SnowLuma 改
     const newPw = typeof body?.snowluma?.webuiPassword === 'string' ? body.snowluma.webuiPassword : ''
     if (body?.snowluma) delete body.snowluma.webuiPassword
-    setConfig(mergeFromPanel(cfg, body))
+
+    const owner = identity.owner()
+    const beforeOrder = normalizeFallbackOrderList(before?.ownerPrimary?.fallbackOrder)
+    const hasBodyOrder = Boolean(body?.ownerPrimary && typeof body.ownerPrimary === 'object' && Object.hasOwn(body.ownerPrimary, 'fallbackOrder'))
+    const explicitOrderChange = hasBodyOrder && (
+      !Array.isArray(body.ownerPrimary.fallbackOrder)
+      || JSON.stringify(normalizeFallbackOrderList(body.ownerPrimary.fallbackOrder)) !== JSON.stringify(beforeOrder)
+    )
+    let saveWarnings = []
+    let nextBody = body
+    if (hasBodyOrder) {
+      const v = validateOwnerFallbackOrder(owner, body.ownerPrimary.fallbackOrder, { allowCleanNoOwner: !explicitOrderChange })
+      if (!v.ok) return { ok: false, message: v.message }
+      saveWarnings = [...v.warnings]
+      nextBody = { ...body, ownerPrimary: { ...body.ownerPrimary, fallbackOrder: v.list } }
+    }
+    let mergedNext = mergeFromPanel(cfg, nextBody)
+    if (!hasBodyOrder && (mergedNext.ownerPrimary?.fallbackOrder?.length || 0) > 0) {
+      const vCur = validateOwnerFallbackOrder(owner, mergedNext.ownerPrimary.fallbackOrder, { allowCleanNoOwner: true })
+      if (!vCur.ok) return { ok: false, message: vCur.message }
+      if (JSON.stringify(vCur.list) !== JSON.stringify(mergedNext.ownerPrimary.fallbackOrder)) {
+        mergedNext = { ...mergedNext, ownerPrimary: { ...mergedNext.ownerPrimary, fallbackOrder: vCur.list } }
+      }
+      saveWarnings = [...saveWarnings, ...vCur.warnings]
+    }
+    setConfig(mergedNext)
     let pw = null
     if (newPw && newPw !== before.snowluma.webuiPassword) pw = await snowluma.setPassword(newPw)
     const changedConn = before.gateway !== cfg.gateway || ['httpUrl', 'wsUrl', 'httpToken', 'wsToken', 'dir'].some((k) => before.snowluma[k] !== cfg.snowluma[k])
@@ -1783,7 +2095,8 @@ export function apply(ctx) {
         log.debug('建调试会话失败：', error.message)
       }
     }
-    return { ...(await overview()), message: '保存好了' + (pw ? '，' + pw.message : '') + debugNote }
+    const warnNote = saveWarnings.length ? '（' + saveWarnings.join('；') + '）' : ''
+    return { ...(await overview()), ...(saveWarnings.length ? { warnings: saveWarnings } : {}), message: '保存好了' + (pw ? '，' + pw.message : '') + debugNote + warnNote }
   })
 
   route('/debug/session', async () => {
@@ -3103,13 +3416,62 @@ export function apply(ctx) {
       candidate = platformCandidates.get(`${platform}:${account}`) || null
     }
     if (!platform || !account) return { ok: false, message: '这个账号还不完整，先让它发一条私聊' }
+    const prevOwner = identity.owner() || ''
+    const prevAccounts = prevOwner ? (identity.accountsOf(prevOwner) || []) : []
     const person = identity.claimOwner(platform, account)
     if (candidate?.instance) {
       try { platformGateway?.routing?.noteAccountInstance?.(candidate.instance, platform, account, Date.now()) } catch {}
     }
     syncOwnerPersonId()
+    syncOwnerFallbackOnAccountChange({
+      prevOwner,
+      prevAccounts,
+      allowAutoAppend: true,
+      preferredInstanceByKey: candidate?.instance ? new Map([[`${platform}\0${account}`, candidate.instance]]) : null,
+    })
     return { ...platformView(), ok: true, person, message: '已把这个账号认成主人' }
   })
+
+  function validateOwnerFallbackOrder(owner, rawList, { allowCleanNoOwner = false } = {}) {
+    if (rawList !== undefined && !Array.isArray(rawList)) {
+      return { ok: false, list: [], droppedStale: [], warnings: [], message: 'fallbackOrder 必须是数组' }
+    }
+    const norm = normalizeFallbackOrderList(rawList)
+    if (!owner) {
+      if (!norm.length) return { ok: true, list: [], droppedStale: [], warnings: [], message: '' }
+      if (!allowCleanNoOwner) {
+        return { ok: false, list: [], droppedStale: [], warnings: [], message: '尚未认领主人身份，无法设置接收账号优先级' }
+      }
+      return {
+        ok: true,
+        list: [],
+        droppedStale: norm,
+        warnings: ['尚未认领主人身份，已清理无效的接收优先级列表'],
+        message: '',
+      }
+    }
+    const ownerAccounts = identity.accountsOf(owner) || []
+    const allInsts = knownPlatformInstances()
+    const clean = []
+    const droppedStale = []
+    for (const item of norm) {
+      const exactInst = allInsts.find((x) => x.instance === item.instance)
+      const checkInsts = exactInst ? [exactInst] : allInsts.filter((x) => x.platform === item.platform)
+      if (checkInsts.some((inst) => inst?.self?.account && String(inst.self.account) === item.account)) {
+        return { ok: false, list: [], droppedStale: [], warnings: [], message: '不能把机器人自身账号放入接收优先级列表' }
+      }
+      const owned = ownerAccounts.some((a) => a && a.platform === item.platform && String(a.account) === item.account)
+      if (!owned) {
+        droppedStale.push(item)
+        continue
+      }
+      clean.push(item)
+    }
+    const warnings = droppedStale.length
+      ? [`已自动移除 ${droppedStale.length} 个已解绑或非主人的接收优先级账号`]
+      : []
+    return { ok: true, list: clean, droppedStale, warnings, message: warnings[0] || '' }
+  }
 
   const buildOwnerAccountOptions = (owner) => {
     if (!owner) return []
@@ -3195,6 +3557,7 @@ export function apply(ctx) {
       ownerAccountOptions: buildOwnerAccountOptions(owner),
       resolvedProactiveRoute: resolveOwnerRoute({ purpose: 'proactive', record: false }),
       resolvedNoticeRoute: resolveOwnerRoute({ purpose: 'notice', record: false }),
+      resolvedFallbackPreview: computeFallbackPreview(),
       lastBlockedRoute,
     }
   })
@@ -3229,8 +3592,13 @@ export function apply(ctx) {
     const into = String(b.into || '').trim()
     if (!from || !into || from === into) return { ok: false, message: '要选两个不同的人' }
     try {
+      const prevOwner = identity.owner() || ''
+      const prevAccounts = prevOwner ? (identity.accountsOf(prevOwner) || []) : []
       const r = await mergePerson({ from, into, dryRun: b.dryRun !== false, memory: use('memory'), identity, log })
-      if (r?.ok !== false && b.dryRun === false) syncOwnerPersonId()
+      if (r?.ok !== false && b.dryRun === false) {
+        syncOwnerPersonId()
+        syncOwnerFallbackOnAccountChange({ prevOwner, prevAccounts, allowAutoAppend: true })
+      }
       return { ...r, ok: r?.ok !== false, from, into, dryRun: b.dryRun !== false }
     } catch (error) { return { ok: false, message: error.message } }
   })
@@ -3240,8 +3608,11 @@ export function apply(ctx) {
     const account = String(b.account || '').trim()
     if (!platform || !account) return { ok: false, message: '缺少平台或账号' }
     try {
+      const prevOwner = identity.owner() || ''
+      const prevAccounts = prevOwner ? (identity.accountsOf(prevOwner) || []) : []
       identity.unlink(platform, account)
       syncOwnerPersonId()
+      syncOwnerFallbackOnAccountChange({ prevOwner, prevAccounts, allowAutoAppend: false })
       return { ...(await platformView()), ok: true, message: '已解绑这个账号' }
     } catch (error) { return { ok: false, message: error.message } }
   })
@@ -3278,11 +3649,25 @@ export function apply(ctx) {
       if (typeof b.noticeFallback !== 'boolean') return { ok: false, message: 'noticeFallback 必须是布尔值' }
       patch.noticeFallback = b.noticeFallback
     }
-    const merged = mergeFromPanel(getConfig(), { ownerPrimary: patch })
+    let warnings = []
+    const owner = identity.owner()
+    if (b.fallbackOrder !== undefined) {
+      const v = validateOwnerFallbackOrder(owner, b.fallbackOrder, { allowCleanNoOwner: false })
+      if (!v.ok) return { ok: false, message: v.message }
+      patch.fallbackOrder = v.list
+      warnings = v.warnings
+    }
+    let merged = mergeFromPanel(getConfig(), { ownerPrimary: patch })
+    if (b.fallbackOrder === undefined && (merged.ownerPrimary?.fallbackOrder?.length || 0) > 0) {
+      const vCur = validateOwnerFallbackOrder(owner, merged.ownerPrimary.fallbackOrder, { allowCleanNoOwner: true })
+      if (vCur.ok && JSON.stringify(vCur.list) !== JSON.stringify(merged.ownerPrimary.fallbackOrder)) {
+        merged = { ...merged, ownerPrimary: { ...merged.ownerPrimary, fallbackOrder: vCur.list } }
+        warnings = [...warnings, ...vCur.warnings]
+      }
+    }
     const nextPref = merged.ownerPrimary
     const touchesPrimaryTarget = b.mode !== undefined || b.platform !== undefined || b.instance !== undefined || b.account !== undefined
     if (touchesPrimaryTarget && nextPref.mode === 'fixed' && (nextPref.platform || nextPref.instance || nextPref.account)) {
-      const owner = identity.owner()
       if (!owner) return { ok: false, message: '尚未认领主人身份，无法设置主账号' }
       const allInsts = knownPlatformInstances()
       let matchedInst = null
@@ -3335,16 +3720,18 @@ export function apply(ctx) {
       }
     }
     setConfig(merged)
-    const owner = identity.owner()
+    const afterOwner = identity.owner()
     return {
       ok: true,
       ownerPrimary: getConfig().ownerPrimary,
-      ownerAccountOptions: buildOwnerAccountOptions(owner),
+      ownerAccountOptions: buildOwnerAccountOptions(afterOwner),
       config: publicConfig(getConfig()),
       resolvedProactiveRoute: resolveOwnerRoute({ purpose: 'proactive', record: false }),
       resolvedNoticeRoute: resolveOwnerRoute({ purpose: 'notice', record: false }),
+      resolvedFallbackPreview: computeFallbackPreview(),
       lastBlockedRoute,
-      message: '已更新大肥鱼的主账号设置',
+      ...(warnings.length ? { warnings } : {}),
+      message: '已更新大肥鱼的主账号设置' + (warnings.length ? '（' + warnings.join('；') + '）' : ''),
     }
   })
   route('/platforms/import/preview', async (req) => {

@@ -281,7 +281,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-deep:#9cc4f5;--ab-sea:#6
 .ab-seg button.on{background:var(--ab-foam-2);color:var(--ab-deep);font-weight:600}
 .ab-seg.off{opacity:.45}
 .ab-seg.off button{cursor:not-allowed}
-.ab-note{padding:10px 12px;border-radius:10px;background:var(--ab-foam);color:var(--ab-text);font-size:12.5px;border:1px solid var(--ab-foam-2)}
+.ab-note{padding:10px 12px;border-radius:10px;background:var(--ab-foam);color:var(--ab-text);font-size:12.5px;border:1px solid var(--ab-foam-2);box-sizing:border-box}
 .ab-note.warn{background:rgba(191,135,0,.08);border-color:rgba(191,135,0,.25)}
 .ab-note.err{background:rgba(207,34,46,.07);border-color:rgba(207,34,46,.25)}
 .ab-steps{counter-reset:s;display:flex;flex-direction:column;gap:10px}
@@ -353,6 +353,14 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-deep:#9cc4f5;--ab-sea:#6
 .ab-pm-search .ab-sel{flex:1 1 100px;min-width:0;max-width:100%}
 .ab-pm-search .ab-sel-pop{box-sizing:border-box;min-width:max(100%,160px);max-width:min(320px,calc(100vw - 32px))}
 .ab-pm-search .ab-sel:last-child .ab-sel-pop{left:auto;right:0}
+.ab-prio-list{display:flex;flex-direction:column;gap:6px;width:100%;box-sizing:border-box}
+.ab-prio-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--ab-line);border-radius:10px;background:var(--ab-card-2);box-sizing:border-box;width:100%;transition:border-color .12s,opacity .12s,background .12s}
+.ab-prio-item[draggable=true]{cursor:grab}
+.ab-prio-item.dragging{opacity:.5}
+.ab-prio-item.over{border-color:var(--ab-sea);background:var(--ab-foam)}
+.ab-prio-handle{flex:none;color:var(--ab-dim);font-size:13px;line-height:1;user-select:none;letter-spacing:-1px}
+.ab-prio-main{flex:1;min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ab-prio-actions{flex:none;display:flex;align-items:center;gap:4px}
 .ab-pm-search .ab-sel-opt .tx{white-space:normal;overflow-wrap:anywhere}
 .ab-pm-rows{overflow-y:auto;min-height:0;padding:4px}
 .ab-pm-row{display:flex;align-items:center;gap:10px;width:100%;padding:8px;border:0;border-radius:10px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
@@ -1417,6 +1425,62 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       if (o.multiInstance && o.observed === false) return false
       return true
     }
+    const ownerOptionKey = (o) => {
+      if (!o || !o.platform || !o.account) return ''
+      const plat = String(o.platform).trim()
+      const inst = String(o.instance || plat).trim() || plat
+      const acc = String(o.account).trim()
+      return `${plat}\0${inst}\0${acc}`
+    }
+    const mergeOwnerPriorityOptions = (options, fallbackOrder) => {
+      const opts = Array.isArray(options) ? options.filter((o) => ownerOptionKey(o)) : []
+      const byKey = new Map(opts.map((o) => [ownerOptionKey(o), o]))
+      const used = new Set()
+      const ordered = []
+      const hasCustom = Array.isArray(fallbackOrder) && fallbackOrder.length > 0
+      for (const item of hasCustom ? fallbackOrder : []) {
+        const k = ownerOptionKey(item)
+        if (!k || used.has(k)) continue
+        const hit = byKey.get(k)
+        if (hit) {
+          used.add(k)
+          ordered.push({ ...hit, _inSavedOrder: true })
+        }
+      }
+      for (const o of opts) {
+        const k = ownerOptionKey(o)
+        if (!used.has(k)) {
+          used.add(k)
+          ordered.push({ ...o, _inSavedOrder: false, _newPendingSave: hasCustom })
+        }
+      }
+      return ordered
+    }
+    const sanitizeFallbackOrderForOptions = (order, options) => {
+      if (!Array.isArray(order) || !order.length) return []
+      const validKeys = Array.isArray(options) ? new Set(options.map(ownerOptionKey).filter(Boolean)) : null
+      const seen = new Set()
+      const out = []
+      for (const item of order) {
+        const k = ownerOptionKey(item)
+        if (!k || seen.has(k)) continue
+        if (validKeys && !validKeys.has(k)) continue
+        seen.add(k)
+        const [platform, instance, account] = k.split('\0')
+        out.push({ platform, instance, account })
+      }
+      return out
+    }
+    const prepareSaveBody = (rawDraft, ownerOptions = null) => {
+      const { allow, commandAllow, capabilityAllow, ...body } = rawDraft || {}
+      if (body.ownerPrimary && Array.isArray(body.ownerPrimary.fallbackOrder) && Array.isArray(ownerOptions)) {
+        body.ownerPrimary = {
+          ...body.ownerPrimary,
+          fallbackOrder: sanitizeFallbackOrderForOptions(body.ownerPrimary.fallbackOrder, ownerOptions),
+        }
+      }
+      return body
+    }
     const platformConnectionSummary = (st) => {
       const cfg = (st && st.config) || {}
       const conn = Boolean(st && st.onebot && st.onebot.state === 'connected')
@@ -2451,18 +2515,28 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       )
     }
 
-    function GlobalAccess({ st, draft, setDraft, toast }) {
+    function GlobalAccess({ st, draft, setDraft, toast, onOwnerOptions }) {
       const f = useField(draft, setDraft)
       const [peopleInfo, setPeopleInfo] = useState(null)
       const [testSending, setTestSending] = useState(false)
       const [testResult, setTestResult] = useState(null)
-      const refreshPeople = () => get('/platforms/people').then((r) => { if (r && r.ok !== false) setPeopleInfo(r) }).catch(() => {})
+      const refreshPeople = () => get('/platforms/people').then((r) => {
+        if (r && r.ok !== false) {
+          setPeopleInfo(r)
+          if (typeof onOwnerOptions === 'function' && Array.isArray(r.ownerAccountOptions)) {
+            onOwnerOptions(r.ownerAccountOptions)
+          }
+        }
+      }).catch(() => {})
       const primaryKey = JSON.stringify(st && st.config ? st.config.ownerPrimary : null)
       const platformsKey = JSON.stringify(st && st.config ? st.config.platforms : null)
       const onebotState = st && st.onebot ? st.onebot.state : ''
       useEffect(() => { refreshPeople() }, [primaryKey, platformsKey, onebotState])
+      // 保持与旧 VM 测试 Hook 槽位兼容：新增交互 Hook 一律放在现有 useEffect 之后
+      const [dragState, setDragState] = useState(null)
+      const dragKeyRef = useRef('')
 
-      const pref = draft.ownerPrimary || { mode: 'fixed', platform: '', instance: '', account: '', fallback: false, noticeFallback: true }
+      const pref = draft.ownerPrimary || { mode: 'fixed', platform: '', instance: '', account: '', fallback: false, noticeFallback: true, fallbackOrder: [] }
       const options = (peopleInfo && peopleInfo.ownerAccountOptions) || []
       const optValue = (o) => 'account:' + o.platform + ':' + o.instance + ':' + o.account
       const matchedOpt = pref.mode === 'recent' || (!pref.platform && !pref.instance)
@@ -2507,10 +2581,70 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         return '主人 · ' + platformLabel(o.platform) + instPart + ' · ' + o.account + statusPart + unobservedTag
       }
 
+      const orderedOptions = mergeOwnerPriorityOptions(options, pref.fallbackOrder)
+      const applyFallbackOrder = (nextItems) => {
+        const cleaned = sanitizeFallbackOrderForOptions(nextItems, options)
+        setDraft(setPath(draft, 'ownerPrimary', { ...pref, fallbackOrder: cleaned }))
+      }
+      const movePriorityItem = (fromIdx, toIdx) => {
+        if (fromIdx < 0 || toIdx < 0 || fromIdx >= orderedOptions.length || toIdx >= orderedOptions.length || fromIdx === toIdx) return
+        const next = orderedOptions.slice()
+        const [moved] = next.splice(fromIdx, 1)
+        next.splice(toIdx, 0, moved)
+        applyFallbackOrder(next)
+      }
+      const resetPriorityOrder = () => {
+        setDraft(setPath(draft, 'ownerPrimary', { ...pref, fallbackOrder: [] }))
+      }
+      const fallbackStatusBadge = (o) => {
+        const selectable = isOwnerOptionSelectable(o)
+        if (!o.canProactive) return { text: '仅支持回复（将跳过）', cls: '' }
+        if (o.hasInstance === false) return { text: '未配置实例（将跳过）', cls: '' }
+        if (!selectable) return { text: '当前实例未观测（将跳过）', cls: '' }
+        if (!o.enabled) return { text: '已停用', cls: '' }
+        if (o.state === 'connected') return { text: '在线', cls: 'ok' }
+        if (o.state === 'connecting') return { text: '连接中', cls: '' }
+        return { text: '未连接', cls: '' }
+      }
+      const unboundInstances = ((st && st.platforms) || []).filter((inst) => (
+        inst && inst.enabled !== false && !options.some((o) => o.platform === inst.platform)
+      ))
+
       const proRoute = peopleInfo && peopleInfo.resolvedProactiveRoute
       const noticeRoute = peopleInfo && peopleInfo.resolvedNoticeRoute
+      const fallbackPreview = peopleInfo && peopleInfo.resolvedFallbackPreview
       const lastBlocked = peopleInfo && peopleInfo.lastBlockedRoute
       const hasUnsavedPrimary = Boolean(st && st.config && JSON.stringify(pref) !== JSON.stringify(st.config.ownerPrimary))
+      const fallbackPreviewNode = (() => {
+        if (!fallbackPreview) return null
+        const switchLine = `普通主动消息回退：${fallbackPreview.proactiveFallbackEnabled ? '开启' : '关闭'}｜系统通知回退：${fallbackPreview.noticeFallbackEnabled ? '开启' : '关闭'}`
+        let detail = ''
+        let cls = 'ab-small ab-muted'
+        if (fallbackPreview.reason === 'ok' && fallbackPreview.available) {
+          const targetTxt = ownerTargetText(fallbackPreview.target) || fallbackPreview.chatId
+          detail = fallbackPreview.proactiveFallbackEnabled
+            ? `主账号不可用时下一可用顺位：${targetTxt}`
+            : `主账号不可用时下一可用顺位（当前仅系统通知会改发，普通主动聊天仍暂停）：${targetTxt}`
+          if (!fallbackPreview.proactiveFallbackEnabled) cls = 'ab-note warn'
+        } else if (fallbackPreview.reason === 'fallback-disabled') {
+          cls = 'ab-note warn'
+          detail = fallbackPreview.candidateTarget
+            ? `下一顺位：${ownerTargetText(fallbackPreview.candidateTarget)}，但当前回退开关均关闭，不会自动发送`
+            : '当前回退开关均关闭，且暂无其他在线备选账号'
+        } else if (fallbackPreview.reason === 'no-route') {
+          cls = 'ab-note warn'
+          detail = '主账号不可用时：暂无其他在线且支持主动消息的备选账号'
+        } else if (fallbackPreview.reason === 'not-applicable') {
+          const modeLabel = pref.mode === 'recent' ? '跟随最近私聊平台' : '未单独指定'
+          detail = `当前为「${modeLabel}」模式，直接按列表默认顺位接收` + (fallbackPreview.candidateTarget ? `（下一可用候选：${ownerTargetText(fallbackPreview.candidateTarget)}）` : '')
+        } else if (fallbackPreview.reason === 'no-owner') {
+          detail = '尚未认领主人身份'
+        }
+        return h('div', { className: cls, style: { width: '100%' } },
+          h('div', null, switchLine),
+          detail ? h('div', { style: { marginTop: 2 } }, detail) : null,
+          hasUnsavedPrimary ? h('div', { className: 'ab-small', style: { color: 'var(--ab-warn)', marginTop: 2 } }, '顺位或开关有未保存改动，点击底部「保存设置」后刷新下一跳预览。') : null)
+      })()
       const routeStatusNode = (() => {
         if (!proRoute) return null
         if (proRoute.blocked) {
@@ -2576,8 +2710,74 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               testResult ? h('div', { className: cx('ab-note', testResult.ok ? '' : (testResult.blocked ? 'warn' : 'err')), style: { width: '100%' } },
                 (testResult.message || '') + (testResult.fallbackUsed ? '（本次通过回退平台发出）' : '')) : null,
             )),
-          h(Row, { label: '主人主账号不可用时，允许普通主动聊天改发其他在线平台', hint: '默认关闭。关闭时若主人主账号离线或未绑定，ta 会暂停主动搭话、汇报等普通主动消息，绝不串发到其他平台。' }, f.sw('ownerPrimary.fallback')),
-          h(Row, { label: '主人主账号不可用时，允许系统重要通知与自测提醒改发其他在线平台（不含无会话危险操作）', hint: '默认开启。仅影响系统提醒与「测试发送给主人主账号」；无归属会话的危险操作与授权仍按原地 fail-closed 处理。' }, f.sw('ownerPrimary.noticeFallback')),
+          h(Row, { label: '主人主账号不可用时，允许普通主动聊天改发其他在线平台', hint: '默认关闭。仅针对「固定主账号」模式：关闭时若固定主账号离线或未绑定，ta 会暂停主动搭话、汇报等普通主动消息，绝不串发；开启时按下方接收优先级顺序改发。' }, f.sw('ownerPrimary.fallback')),
+          h(Row, { label: '主人主账号不可用时，允许系统重要通知与自测提醒改发其他在线平台（不含无会话危险操作）', hint: '默认开启。仅针对「固定主账号」模式，影响系统提醒与「测试发送给主人主账号」；无归属会话的危险操作与授权仍按原地 fail-closed 处理。' }, f.sw('ownerPrimary.noticeFallback')),
+          h(Row, { label: '账号接收优先级（回退/默认接收顺位）', hint: '显示主人名下已添加的所有平台账号。「跟随最近」或「未单独指定」时，此列表决定默认（及最近平台不可用时的）接收顺序；「固定主账号」时，需开启上方回退开关才会改发至此处下一顺位。' },
+            h('div', { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 8 } },
+              orderedOptions.length
+                ? h('div', { className: 'ab-prio-list' }, orderedOptions.map((o, idx) => {
+                  const rowKey = ownerOptionKey(o)
+                  const isPrimaryItem = pref.mode !== 'recent' && Boolean(pref.platform || pref.instance) && isOwnerOptionSelected(pref, o)
+                  const badge = fallbackStatusBadge(o)
+                  const instPart = (o.multiInstance || (o.instance && o.instance !== o.platform)) ? ` · ${o.instance}` : ''
+                  const rowCls = cx(
+                    'ab-prio-item',
+                    dragState && dragState.dragKey === rowKey ? 'dragging' : '',
+                    dragState && dragState.overKey === rowKey && dragState.dragKey !== rowKey ? 'over' : '',
+                  )
+                  return h('div', {
+                    key: o.key || rowKey,
+                    className: rowCls,
+                    draggable: orderedOptions.length > 1,
+                    'data-prio-key': rowKey,
+                    onDragStart: (e) => {
+                      dragKeyRef.current = rowKey
+                      setDragState({ dragKey: rowKey, overKey: rowKey })
+                      try { e.dataTransfer?.setData('text/plain', rowKey); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move' } catch {}
+                    },
+                    onDragOver: (e) => {
+                      try { e.preventDefault?.() } catch {}
+                      setDragState((cur) => (cur && cur.overKey !== rowKey ? { ...cur, overKey: rowKey } : cur || { dragKey: dragKeyRef.current || '', overKey: rowKey }))
+                    },
+                    onDrop: (e) => {
+                      try { e.preventDefault?.() } catch {}
+                      let srcKey = ''
+                      try { srcKey = e.dataTransfer?.getData?.('text/plain') || '' } catch {}
+                      if (!srcKey) srcKey = dragKeyRef.current || (dragState && dragState.dragKey) || ''
+                      dragKeyRef.current = ''
+                      setDragState(null)
+                      if (!srcKey || srcKey === rowKey) return
+                      const fromIdx = orderedOptions.findIndex((x) => ownerOptionKey(x) === srcKey)
+                      if (fromIdx >= 0 && fromIdx !== idx) movePriorityItem(fromIdx, idx)
+                    },
+                    onDragEnd: () => { dragKeyRef.current = ''; setDragState(null) },
+                  },
+                    h('span', { className: 'ab-prio-handle', title: '拖动调整优先级' }, '⋮⋮'),
+                    h('span', { className: 'ab-badge' }, '#' + (idx + 1)),
+                    h('div', { className: 'ab-prio-main' },
+                      h('span', null, '主人 · ' + platformLabel(o.platform) + instPart + ' · ' + o.account),
+                      isPrimaryItem ? h('span', { className: 'ab-badge mine', title: '固定主账号始终最优先；此处仅作备选顺位' }, '当前主账号（首选）') : null,
+                      o._newPendingSave ? h('span', { className: 'ab-badge' }, '新增') : null,
+                      h('span', { className: cx('ab-badge', badge.cls) }, badge.text),
+                    ),
+                    h('div', { className: 'ab-prio-actions' },
+                      h(Btn, { small: true, disabled: idx === 0, onClick: () => movePriorityItem(idx, idx - 1) }, '上移'),
+                      h(Btn, { small: true, disabled: idx === orderedOptions.length - 1, onClick: () => movePriorityItem(idx, idx + 1) }, '下移'),
+                    ),
+                  )
+                }))
+                : h('div', { className: 'ab-small ab-muted' }, '暂无已绑定的主人账号，请先到「通讯平台」发送私聊或认领主人。'),
+              h('div', { className: 'ab-flex', style: { gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+                Array.isArray(pref.fallbackOrder) && pref.fallbackOrder.length > 0
+                  ? h(Btn, { small: true, kind: 'ghost', onClick: resetPriorityOrder }, '恢复默认顺序')
+                  : null,
+                h('span', { className: 'ab-small ab-muted' }, '固定主账号始终最优先；恢复在线后不会抢在主账号前，此处顺位仅决定不可用时的备选顺序。'),
+              ),
+              unboundInstances.length
+                ? h('div', { className: 'ab-small ab-muted' }, '另有平台实例尚未绑定主人接收账号：' + unboundInstances.map((x) => x.name || platformLabel(x.platform) || x.instance).join('、') + '（请用你的账号向该实例发一条私聊以完成绑定，绑定后自动加入排序）')
+                : null,
+              fallbackPreviewNode,
+            )),
           h(Row, { label: '主人 QQ 号（可选）', hint: '仅在使用 QQ 网关或兼容旧 QQ 功能时填写；纯飞书 / QQ 官方机器人 / 通用桥主人认主后可留空。修改此项会重置当前敏感命令授权代次。' }, f.text('ownerQQ', { placeholder: ownerPersonId ? '纯非 QQ 平台可留空' : '例如 123456789' })),
           h(Row, { label: 'ta怎么称呼你' }, f.text('ownerName', { placeholder: '主人' })),
           h(Row, { label: '主人私聊的权限', hint: '群聊永远没有电脑操作权限，这里管不到群。' },
@@ -9543,6 +9743,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const dirtyRef = useRef(false)
       const saveRef = useRef(null)
       const pluginStartRef = useRef(0)
+      const ownerOptionsRef = useRef(null)
+      const onOwnerOptions = useCallback((opts) => { if (Array.isArray(opts)) ownerOptionsRef.current = opts }, [])
       // kind：ok / err / 不填 = 普通
       const toast = (m, kind) => {
         const text = String(m || '')
@@ -9606,7 +9808,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       dirtyRef.current = dirty
       const setD = (d) => setDraft(d)
       const save = async (override) => {
-        const { allow, commandAllow, capabilityAllow, ...body } = override || draft
+        const body = prepareSaveBody(override || draft, ownerOptionsRef.current)
         const r = await post('/save', body)
         if (r.ok === false) { toast(r.message || '保存失败', 'err'); return false }
         dirtyRef.current = false
@@ -9657,7 +9859,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                 ? { cls: 'warn', text: '在线 · 试运行' }
                 : { cls: 'ok', text: conn ? '在线' : '在线（多平台）' }
       const persona = st.personas.find((p) => p.id === cfg.persona.current)
-      const props = { st, draft, setDraft: setD, toast, reload, go, openWizard: () => setWizardOpen(true) }
+      const props = { st, draft, setDraft: setD, toast, reload, go, openWizard: () => setWizardOpen(true), onOwnerOptions }
       const showWizard = !cfg.setupDone || wizardOpen
       // 标签页：内置的按模块在不在跑决定显示；自己写的模块有设置或面板的各占一页
       const mods = st.modules || []

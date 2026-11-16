@@ -204,11 +204,11 @@ export function createRouter({ file, log, now = Date.now } = {}) {
       }
     }
 
-    // 2. 最近说过话的实例（优先实例里她有账号才用）
+    // 2. 最近说过话的实例（仅限 private 私聊且实例支持主动消息、账号归属本人）
     const seen = lastSeen(person)
     if (seen) {
       const addr = parseChatId(seen.chatId)
-      if (addr) {
+      if (addr && addr.kind === 'private') {
         const st = statuses.find((s) => s.instance === addr.instance && usable(s))
         if (st) {
           const chatId = addressOn(st)

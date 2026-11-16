@@ -744,6 +744,7 @@ export function createGateway({ config, dataDir, http, identity, log, now = Date
       setFixed: (person, platform) => router.setFixed(person, platform),
       fixedPlatform: (person) => router.fixedPlatform(person),
       noteSeen: (person, chatId, at) => router.noteSeen(person, chatId, at),
+      lastSeen: (person) => router.lastSeen(person),
       noteAccountInstance: (instance, platform, account, at) => router.noteAccountInstance(instance, platform, account, at),
       instancesForAccount: (platform, account) => router.instancesForAccount(platform, account),
       accountsForInstance: (instance, platform) => router.accountsForInstance(instance, platform),

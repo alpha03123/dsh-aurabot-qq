@@ -71,11 +71,12 @@ test('P1-1：config.js ownerPrimary 默认值、normalize、mergeFromPanel 清�
     account: '',
     fallback: false,
     noticeFallback: true,
+    fallbackOrder: [],
   })
 
   // 非法值归一化与 publicConfig 保留
   const bad = normalize({
-    ownerPrimary: { mode: 'invalid', platform: ' feishu ', instance: ' feishu#2 ', account: ' ou_1 ', fallback: 'yes', noticeFallback: undefined },
+    ownerPrimary: { mode: 'invalid', platform: ' feishu ', instance: ' feishu#2 ', account: ' ou_1 ', fallback: 'yes', noticeFallback: undefined, fallbackOrder: 'bad' },
   })
   assert.deepEqual(bad.ownerPrimary, {
     mode: 'fixed',
@@ -84,12 +85,41 @@ test('P1-1：config.js ownerPrimary 默认值、normalize、mergeFromPanel 清�
     account: 'ou_1',
     fallback: false,
     noticeFallback: true,
+    fallbackOrder: [],
   })
   assert.deepEqual(publicConfig(bad).ownerPrimary, bad.ownerPrimary)
 
-  // recent 模式下强清三元组；切换 platform 清旧 instance/account；切换 instance 清旧 account；单传 account:'' 清空 account
+  // fallbackOrder 归一化：去空格、单实例默认填 platform、滤除残缺项并去重
+  const normOrder = normalize({
+    ownerPrimary: {
+      fallbackOrder: [
+        { platform: ' feishu ', account: ' ou_1 ' },
+        { platform: 'feishu', instance: 'feishu', account: 'ou_1' },
+        { platform: 'bridge', instance: ' bridge#2 ', account: ' b_2 ' },
+        { platform: 'qqbot', account: '' },
+        'invalid',
+      ],
+    },
+  })
+  assert.deepEqual(normOrder.ownerPrimary.fallbackOrder, [
+    { platform: 'feishu', instance: 'feishu', account: 'ou_1' },
+    { platform: 'bridge', instance: 'bridge#2', account: 'b_2' },
+  ])
+
+  // recent 模式下强清三元组；切换 platform 清旧 instance/account；切换 instance 清旧 account；单传 account:'' 清空 account；均保留 fallbackOrder
   const step1 = mergeFromPanel(def, {
-    ownerPrimary: { mode: 'fixed', platform: 'feishu', instance: 'feishu#2', account: 'ou_2', fallback: true, noticeFallback: false },
+    ownerPrimary: {
+      mode: 'fixed',
+      platform: 'feishu',
+      instance: 'feishu#2',
+      account: 'ou_2',
+      fallback: true,
+      noticeFallback: false,
+      fallbackOrder: [
+        { platform: 'feishu', instance: 'feishu#2', account: 'ou_2' },
+        { platform: 'bridge', instance: 'bridge', account: 'b_1' },
+      ],
+    },
   })
   assert.deepEqual(step1.ownerPrimary, {
     mode: 'fixed',
@@ -98,6 +128,10 @@ test('P1-1：config.js ownerPrimary 默认值、normalize、mergeFromPanel 清�
     account: 'ou_2',
     fallback: true,
     noticeFallback: false,
+    fallbackOrder: [
+      { platform: 'feishu', instance: 'feishu#2', account: 'ou_2' },
+      { platform: 'bridge', instance: 'bridge', account: 'b_1' },
+    ],
   })
 
   // 仅保存无关字段：保留 ownerPrimary 原样
@@ -118,13 +152,14 @@ test('P1-1：config.js ownerPrimary 默认值、normalize、mergeFromPanel 清�
   assert.equal(stepSwitchInst.ownerPrimary.instance, 'feishu')
   assert.equal(stepSwitchInst.ownerPrimary.account, '')
 
-  // 切换 platform → 清空旧 instance 与 account
+  // 切换 platform → 清空旧 instance 与 account（不丢失 fallbackOrder）
   const stepSwitchPlat = mergeFromPanel(step1, { ownerPrimary: { platform: 'qqbot' } })
   assert.equal(stepSwitchPlat.ownerPrimary.platform, 'qqbot')
   assert.equal(stepSwitchPlat.ownerPrimary.instance, '')
   assert.equal(stepSwitchPlat.ownerPrimary.account, '')
+  assert.deepEqual(stepSwitchPlat.ownerPrimary.fallbackOrder, step1.ownerPrimary.fallbackOrder)
 
-  // 从 fixed 切到 recent → 强制清空三元组
+  // 从 fixed 切到 recent → 强制清空三元组，同时保留 fallbackOrder
   const stepRecent = mergeFromPanel(step1, { ownerPrimary: { mode: 'recent' } })
   assert.deepEqual(stepRecent.ownerPrimary, {
     mode: 'recent',
@@ -133,7 +168,15 @@ test('P1-1：config.js ownerPrimary 默认值、normalize、mergeFromPanel 清�
     account: '',
     fallback: true,
     noticeFallback: false,
+    fallbackOrder: [
+      { platform: 'feishu', instance: 'feishu#2', account: 'ou_2' },
+      { platform: 'bridge', instance: 'bridge', account: 'b_1' },
+    ],
   })
+
+  // 显式清空 fallbackOrder: []
+  const stepClearOrder = mergeFromPanel(step1, { ownerPrimary: { fallbackOrder: [] } })
+  assert.deepEqual(stepClearOrder.ownerPrimary.fallbackOrder, [])
 
   // pickPlatformNeutralConfig 保留 ownerPrimary
   const picked = pickPlatformNeutralConfig(step1)
@@ -852,4 +895,348 @@ test('P1-10：Golden Tests（evaluateOwnerTarget 纯重构等价性与 9 类基�
     target: { platform: 'feishu', instance: 'feishu', account: 'ou_pure' },
     fallbackUsed: false,
   })
+})
+
+test('P1-11：严格 fallbackOrder 选路、不绕过列表也不误触发旧 QQ/routeTo、方案 A 开关控制与脏 lastSeen 拦截', async (t) => {
+  const dir = makeSandbox(t, 'aurabot-p1-fallback-order-')
+  const mockOb = await startMockOneBot({ selfId: '20000002' })
+  const feishuStub = await startFakeFeishuServer(t)
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({
+    enabled: true,
+    dryRun: false,
+    setupDone: true,
+    gateway: 'onebot',
+    snowluma: { httpUrl: mockOb.httpUrl, wsUrl: mockOb.wsUrl, httpToken: mockOb.token, wsToken: mockOb.token, autoStart: false, autoAttach: false },
+    botQQ: '20000002',
+    ownerQQ: '10001',
+    allow: { private: ['10001'], groups: [] },
+    platforms: {
+      feishu: { enabled: true, transport: 'webhook', appId: 'cli_fo', appSecret: 'sec_fo', verificationToken: 'vt-fo', baseUrl: feishuStub.baseUrl },
+      bridge: { enabled: true, token: 'tok-fo1' },
+      'bridge#2': { enabled: true, token: 'tok-fo2' },
+    },
+    voice: { engine: 'windows', autoChance: 0 },
+    stickers: { autoChance: 0 },
+  }))
+  const fake = createFakeDsh({ brain: async () => '' })
+  fake.ctx.webServer.port = 5113
+  const host = await import('../src/host.js')
+  const api = host.apply(fake.ctx)
+  t.after(async () => {
+    try { await mockOb.close() } catch {}
+    fake.dispose()
+    await new Promise((r) => setTimeout(r, 30))
+  })
+  await api.ready.catch(() => {})
+  assert.equal(await waitUntil(() => {
+    const list = api.gateway?.instances?.() || []
+    return list.some((x) => x.instance === 'feishu' && x.state === 'connected')
+      && list.some((x) => x.instance === 'bridge' && x.state === 'connected')
+      && list.some((x) => x.instance === 'bridge#2' && x.state === 'connected')
+      && mockOb.connected() >= 1
+      && api.resolveOwnerRoute().reason === 'ok'
+  }, 5000), true)
+
+  const gw = api.gateway
+  const ownerId = gw.identity.owner()
+  gw.identity.link('feishu', 'ou_1', ownerId, 'manual')
+  gw.identity.link('bridge', 'b_1', ownerId, 'manual')
+  gw.identity.link('bridge', 'b_2', ownerId, 'manual')
+  gw.routing.noteAccountInstance('bridge', 'bridge', 'b_1')
+  gw.routing.noteAccountInstance('bridge#2', 'bridge', 'b_2')
+  await callBridgeHello(fake, 'bridge', 'tok-fo1', { proactive: 'none' })
+  await callBridgeHello(fake, 'bridge#2', 'tok-fo2', { proactive: 'free' })
+
+  // 先在 bridge#2 留一条私聊 seen 记录：后续用来验证自定义列表绝不会被 routeTo.lastSeen 抢走或截胡
+  gw.noteSeen(ownerId, 'bridge#2:private:b_2', Date.now())
+
+  // 1) 主账号指向离线/不存在实例，开启 fallback 并设顺序 [feishu, qq]：优先命中 feishu（忽略 router.seen 里的 bridge#2）
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: {
+      mode: 'fixed',
+      platform: 'bridge',
+      instance: 'bridge#missing',
+      account: 'b_2',
+      fallback: true,
+      noticeFallback: true,
+      fallbackOrder: [
+        { platform: 'feishu', instance: 'feishu', account: 'ou_1' },
+        { platform: 'qq', instance: 'qq', account: '10001' },
+      ],
+    },
+  }))
+  const rFirst = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rFirst.chatId, 'feishu:private:ou_1')
+  assert.equal(rFirst.fallbackUsed, true)
+  assert.equal(rFirst.reason, 'fallback-used')
+
+  // 调整顺序把传统直连 QQ 放到首位 → 改发传统 QQ
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: {
+      fallbackOrder: [
+        { platform: 'qq', instance: 'qq', account: '10001' },
+        { platform: 'feishu', instance: 'feishu', account: 'ou_1' },
+      ],
+    },
+  }))
+  const rQqFirst = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rQqFirst.chatId, 'private:10001')
+  assert.equal(rQqFirst.fallbackUsed, true)
+
+  // 2) fallback=false + noticeFallback=true：A 类严格 blocked，绝不读 fallbackOrder；B 类按列表顺位改发
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: { fallback: false, noticeFallback: true },
+  }))
+  const rBlockedA = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rBlockedA.blocked, true)
+  assert.equal(rBlockedA.reason, 'primary-offline')
+  assert.equal(rBlockedA.chatId, '')
+  const rNoticeB = api.resolveOwnerRoute({ purpose: 'notice' })
+  assert.equal(rNoticeB.blocked, false)
+  assert.equal(rNoticeB.chatId, 'private:10001')
+  assert.equal(rNoticeB.fallbackUsed, true)
+
+  // 3) 列表全不可用 + routeTo(lastSeen=bridge#2) 在线 + 传统 QQ 在线，列表刻意不含 QQ → 严格返回 no-route，绝不绕过列表！
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: {
+      mode: 'fixed',
+      platform: 'bridge',
+      instance: 'bridge#missing',
+      account: 'b_2',
+      fallback: true,
+      noticeFallback: true,
+      fallbackOrder: [
+        // bridge 仅 proactive='none'（不可主动）；feishu 未连/已改用不存在实例
+        { platform: 'bridge', instance: 'bridge', account: 'b_1' },
+        { platform: 'bridge', instance: 'bridge#2', account: 'b_unlinked' },
+      ],
+    },
+  }))
+  const rStrictNoRouteA = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.deepEqual(rStrictNoRouteA, {
+    chatId: '',
+    blocked: false,
+    reason: 'no-route',
+    target: null,
+    fallbackUsed: false,
+  })
+  const rStrictNoRouteB = api.resolveOwnerRoute({ purpose: 'notice' })
+  assert.deepEqual(rStrictNoRouteB, {
+    chatId: '',
+    blocked: false,
+    reason: 'no-route',
+    target: null,
+    fallbackUsed: false,
+  })
+
+  // 列表内所有账号均为 stale / 不归属主人时，同样返回 no-route，绝不调用 routeTo 或误发 QQ
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: {
+      fallbackOrder: [{ platform: 'feishu', instance: 'feishu', account: 'ou_gone_stale' }],
+    },
+  }))
+  assert.equal(api.resolveOwnerRoute({ purpose: 'proactive' }).reason, 'no-route')
+
+  // 4) 方案 A：recent 模式下即使 fallback=false，当 lastSeen 失效/被跳过时仍按 fallbackOrder 取下一个可用账号
+  // 同时向磁盘 router.json 写入一条污染的 group 记录验证 evalLastSeenTarget 拦截
+  const routerPath = join(dir, 'gateway', 'gateway', 'router.json')
+  const routerJson = JSON.parse(readFileSync(routerPath, 'utf8'))
+  routerJson.seen[ownerId] = { chatId: 'feishu:group:oc_dirty_legacy', at: Date.now() + 10_000 }
+  writeFileSync(routerPath, JSON.stringify(routerJson))
+  api.setConfig(mergeFromPanel(api.getConfig(), {
+    ownerPrimary: {
+      mode: 'recent',
+      fallback: false,
+      noticeFallback: false,
+      fallbackOrder: [
+        { platform: 'bridge', instance: 'bridge#2', account: 'b_2' },
+        { platform: 'feishu', instance: 'feishu', account: 'ou_1' },
+      ],
+    },
+  }))
+  const rRecentFallback = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rRecentFallback.blocked, false)
+  assert.equal(rRecentFallback.reason, 'ok')
+  assert.equal(rRecentFallback.chatId, 'bridge#2:private:b_2')
+
+  // 若 dirty lastSeen 指向同平台陌生人 private 地址，同样跳过并用 fallbackOrder 首位
+  routerJson.seen[ownerId] = { chatId: 'feishu:private:ou_stranger_dirty', at: Date.now() + 20_000 }
+  writeFileSync(routerPath, JSON.stringify(routerJson))
+  const rRecentStranger = api.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rRecentStranger.chatId, 'bridge#2:private:b_2')
+
+  // 5) 方案 A：纯非 QQ「未单独指定」且 fallback=false 时，按 fallbackOrder 首位可用接收
+  const dirPure = makeSandbox(t, 'aurabot-p1-pure-order-')
+  const feishuStubPure = await startFakeFeishuServer(t)
+  writeFileSync(join(dirPure, 'config.json'), JSON.stringify({
+    enabled: false,
+    dryRun: true,
+    setupDone: true,
+    ownerQQ: '',
+    ownerPrimary: {
+      mode: 'fixed',
+      platform: '',
+      instance: '',
+      account: '',
+      fallback: false,
+      noticeFallback: false,
+      fallbackOrder: [
+        { platform: 'bridge', instance: 'bridge#2', account: 'b_p2' },
+        { platform: 'feishu', instance: 'feishu', account: 'ou_pure2' },
+      ],
+    },
+    platforms: {
+      feishu: { enabled: true, transport: 'webhook', appId: 'cli_p2', appSecret: 'sec_p2', verificationToken: 'vt-p2', baseUrl: feishuStubPure.baseUrl },
+      'bridge#2': { enabled: true, token: 'tok-p2' },
+    },
+    voice: { engine: 'windows', autoChance: 0 },
+    stickers: { autoChance: 0 },
+  }))
+  const fakePure = createFakeDsh({ brain: async () => '' })
+  fakePure.ctx.webServer.port = 5114
+  const apiPure = host.apply(fakePure.ctx)
+  t.after(async () => {
+    fakePure.dispose()
+    await new Promise((r) => setTimeout(r, 30))
+  })
+  await apiPure.ready.catch(() => {})
+  assert.equal(await waitUntil(() => {
+    const list = apiPure.gateway?.instances?.() || []
+    return list.some((x) => x.instance === 'feishu' && x.state === 'connected')
+      && list.some((x) => x.instance === 'bridge#2' && x.state === 'connected')
+  }, 4000), true)
+  const gwPure = apiPure.gateway
+  const pureOwner = gwPure.identity.claimOwner('feishu', 'ou_pure2')
+  gwPure.identity.link('bridge', 'b_p2', pureOwner, 'manual')
+  gwPure.routing.noteAccountInstance('bridge#2', 'bridge', 'b_p2')
+  await callBridgeHello(fakePure, 'bridge#2', 'tok-p2', { proactive: 'free' })
+  apiPure.setConfig(mergeFromPanel(apiPure.getConfig(), {
+    ownerPrimary: {
+      mode: 'fixed',
+      platform: '',
+      instance: '',
+      account: '',
+      fallback: false,
+      noticeFallback: false,
+      fallbackOrder: [
+        { platform: 'bridge', instance: 'bridge#2', account: 'b_p2' },
+        { platform: 'feishu', instance: 'feishu', account: 'ou_pure2' },
+      ],
+    },
+  }))
+  // bridge#2 排在第 1 → 即使 fallback=false 且未单独指定主账号，直接取列表首位可用 bridge#2
+  const rPureOrder = apiPure.resolveOwnerRoute({ purpose: 'proactive' })
+  assert.equal(rPureOrder.blocked, false)
+  assert.equal(rPureOrder.reason, 'ok')
+  assert.equal(rPureOrder.chatId, 'bridge#2:private:b_p2')
+  assert.equal(rPureOrder.fallbackUsed, false)
+})
+
+test('P1-12：启动期清理 stale、启动不复活已排除 ownerQQ、以及 /bind-code 自动追加新绑定账号', async (t) => {
+  // A) 启动时：identity 已有 qq:10001 与 feishu:ou_keep，配置刻意不含 QQ 且含 stale 项 bridge#old:b_stale
+  const dirStart = makeSandbox(t, 'aurabot-p1-startup-reconcile-')
+  const gwDir = join(dirStart, 'gateway')
+  mkdirSync(gwDir, { recursive: true })
+  const idPre = createIdentity({ dataDir: gwDir, log: noopLog })
+  const ownerPre = idPre.claimOwner('qq', '10001')
+  idPre.link('feishu', 'ou_keep', ownerPre, 'manual')
+  writeFileSync(join(dirStart, 'config.json'), JSON.stringify({
+    enabled: true,
+    dryRun: true,
+    setupDone: true,
+    ownerQQ: '10001',
+    ownerPrimary: {
+      mode: 'fixed',
+      platform: 'feishu',
+      instance: 'feishu',
+      account: 'ou_keep',
+      fallbackOrder: [
+        { platform: 'bridge', instance: 'bridge', account: 'b_stale_removed' },
+        { platform: 'feishu', instance: 'feishu', account: 'ou_keep' },
+      ],
+    },
+    snowluma: { autoStart: false, autoAttach: false },
+    voice: { engine: 'windows', autoChance: 0 },
+    stickers: { autoChance: 0 },
+  }))
+  const fakeStart = createFakeDsh({ brain: async () => '' })
+  fakeStart.ctx.webServer.port = 5115
+  const hostMod = await import('../src/host.js')
+  const apiStart = hostMod.apply(fakeStart.ctx)
+  t.after(async () => {
+    fakeStart.dispose()
+    await new Promise((r) => setTimeout(r, 30))
+  })
+  await apiStart.ready.catch(() => {})
+  assert.deepEqual(
+    apiStart.getConfig().ownerPrimary.fallbackOrder,
+    [{ platform: 'feishu', instance: 'feishu', account: 'ou_keep' }],
+    '启动期必须剔除 stale 项，且不得复活用户刻意未放进列表的已存在 ownerQQ',
+  )
+
+  // B) /bind-code 绑定新账号到主人：若 fallbackOrder 非空，自动追加到末尾且立即可用
+  const dirBind = makeSandbox(t, 'aurabot-p1-bindcode-append-')
+  const feishuStubB = await startFakeFeishuServer(t)
+  const gwBindDir = join(dirBind, 'gateway')
+  mkdirSync(gwBindDir, { recursive: true })
+  const idBind = createIdentity({ dataDir: gwBindDir, log: noopLog })
+  const ownerBind = idBind.claimOwner('feishu', 'ou_bind_main')
+  const code = idBind.issueCode(ownerBind)
+  writeFileSync(join(dirBind, 'config.json'), JSON.stringify({
+    enabled: false,
+    dryRun: false,
+    setupDone: true,
+    ownerQQ: '',
+    ownerPrimary: {
+      mode: 'fixed',
+      platform: 'bridge',
+      instance: 'bridge',
+      account: 'b_offline_primary',
+      fallback: true,
+      noticeFallback: true,
+      fallbackOrder: [{ platform: 'feishu', instance: 'feishu', account: 'ou_bind_main' }],
+    },
+    platforms: {
+      feishu: { enabled: true, transport: 'webhook', appId: 'cli_bc', appSecret: 'sec_bc', verificationToken: 'vt-bc', baseUrl: feishuStubB.baseUrl },
+      'bridge#2': { enabled: true, token: 'tok-bc2' },
+    },
+    voice: { engine: 'windows', autoChance: 0 },
+    stickers: { autoChance: 0 },
+  }))
+  const fakeBind = createFakeDsh({ brain: async () => '' })
+  fakeBind.ctx.webServer.port = 5116
+  const apiBind = hostMod.apply(fakeBind.ctx)
+  t.after(async () => {
+    fakeBind.dispose()
+    await new Promise((r) => setTimeout(r, 30))
+  })
+  await apiBind.ready.catch(() => {})
+  assert.equal(await waitUntil(() => (apiBind.gateway?.instances?.() || []).some((x) => x.instance === 'bridge#2' && x.state === 'connected')), true)
+  await callBridgeHello(fakeBind, 'bridge#2', 'tok-bc2', { proactive: 'free' })
+
+  // 通过 bridge#2 发送 /bind-code 兑换口令
+  const inRoute = fakeBind.routes.get('/platform/bridge#2/inbound')
+  assert.ok(inRoute)
+  let inStatus = 200
+  const inPayload = {
+    chat: { kind: 'private', id: 'b_bound_via_code' },
+    sender: { account: 'b_bound_via_code', name: '新账号' },
+    messageId: 'm_bind_code_1',
+    parts: [{ type: 'text', text: `/bind-code ${code}` }],
+  }
+  await inRoute.handler(
+    {
+      method: 'POST',
+      headers: { 'x-bridge-token': 'tok-bc2' },
+      rawBody: Buffer.from(JSON.stringify(inPayload)),
+      body: inPayload,
+    },
+    { set statusCode(v) { inStatus = v }, get statusCode() { return inStatus }, setHeader() {}, end() {} },
+  )
+  assert.equal(inStatus, 200)
+  assert.equal(await waitUntil(() => (apiBind.getConfig().ownerPrimary.fallbackOrder || []).length === 2, 3000), true)
+  assert.deepEqual(apiBind.getConfig().ownerPrimary.fallbackOrder, [
+    { platform: 'feishu', instance: 'feishu', account: 'ou_bind_main' },
+    { platform: 'bridge', instance: 'bridge#2', account: 'b_bound_via_code' },
+  ])
 })

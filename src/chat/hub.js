@@ -101,7 +101,7 @@ export function reallySent (r) {
   return Boolean(r) && r.message_id !== undefined && !String(r.message_id).startsWith('sim-')
 }
 
-export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, buildTools, contextProviders, onActivity, memoryScore, onMemoryCommand, onCommand, isMuted, dislikes, random = Math.random, moodEffects, localApi, hooks, availableModels, toolsGeneration, capabilitiesOf, gateway: initialGateway = null, identity = null, handover = null, platformLabel: platformLabelInjected = null, routeOwner: routeOwnerInjected = null, resolveOwnerRoute: resolveOwnerRouteInjected = null }) {
+export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, buildTools, contextProviders, onActivity, memoryScore, onMemoryCommand, onCommand, isMuted, dislikes, random = Math.random, moodEffects, localApi, hooks, availableModels, toolsGeneration, capabilitiesOf, gateway: initialGateway = null, identity = null, handover = null, platformLabel: platformLabelInjected = null, routeOwner: routeOwnerInjected = null, resolveOwnerRoute: resolveOwnerRouteInjected = null, onOwnerAccountLinked = null }) {
   let gateway = initialGateway
   const ownerRef = () => identity
   const ownerId = () => identity?.owner?.() || null
@@ -2788,12 +2788,30 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       await sendText(msg.chatId, '用法：/bind-code 六位口令', undefined, [], undefined, { force: true }).catch(() => {})
       return true
     }
+    const prevOwner = identity.owner?.() || ''
+    const prevAccounts = prevOwner ? (identity.accountsOf?.(prevOwner) || []) : []
+    const bindPlatform = msg.platform || parseChatId(msg.chatId)?.platform || defaultPlatform()
+    const bindInstance = msg.instance || parseChatId(msg.chatId)?.instance || bindPlatform
     let person = null
     try {
       const redeem = identity.redeemCodeBinding || identity.redeemCode
-      person = redeem.call(identity, msg.platform || defaultPlatform(), msg.userId, code)
+      person = redeem.call(identity, bindPlatform, msg.userId, code)
     } catch (error) {
       log.warn('兑换绑定口令失败：', error.message)
+    }
+    if (person && identity.isOwner?.(person) && typeof onOwnerAccountLinked === 'function') {
+      try {
+        onOwnerAccountLinked({
+          prevOwner,
+          prevAccounts,
+          owner: person,
+          platform: bindPlatform,
+          instance: bindInstance,
+          account: String(msg.userId || ''),
+        })
+      } catch (error) {
+        log.warn('同步主人新增账号至接收优先级失败：', error.message)
+      }
     }
     await sendText(
       msg.chatId,
