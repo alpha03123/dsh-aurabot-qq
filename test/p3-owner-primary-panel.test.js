@@ -502,8 +502,11 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
 
     const gaText = textOf(tree)
     assert.match(gaText, /主人的主账号与接收优先级/)
-    assert.match(gaText, /不是机器人自己的账号/)
+    assert.doesNotMatch(gaText, /大肥鱼主动消息接收账号/)
+    assert.match(gaText, /这里管理的是主人的账号，不是她的账号/)
+    assert.match(gaText, /开启时按「接收优先级」顺序改发/)
     assert.doesNotMatch(gaText, /大肥鱼的主账号/)
+    assert.doesNotMatch(gaText, /当前固定主账号：/)
     assert.match(gaText, /主人 · QQ/)
     assert.match(gaText, /主人 · 飞书/)
 
@@ -747,7 +750,9 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
     })
     const prioText = textOf(prioTree)
     assert.match(prioText, /主人的主账号与接收优先级/)
-    assert.match(prioText, /当前主账号（首选 · 固定首位）/)
+    assert.match(prioText, /当前主账号/)
+    assert.doesNotMatch(prioText, /当前主账号（首选 · 固定首位）/)
+    assert.doesNotMatch(prioText, /当前固定主账号：/)
     assert.match(prioText, /仅支持回复（将跳过）/)
     assert.match(prioText, /普通主动消息回退：关闭｜系统通知回退：开启/)
     assert.match(prioText, /仅系统通知会改发/)

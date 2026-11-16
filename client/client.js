@@ -2846,7 +2846,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                 h('code', { className: 'ab-small' }, ownerPersonId),
                 ownerAccSummary ? h('span', { className: 'ab-small ab-muted' }, ownerAccSummary) : null)
               : h('span', { className: 'ab-muted ab-small' }, '尚未认主（请到「通讯平台」或向导中认领主人）')),
-          h(Row, { label: '主人的主账号与接收优先级（大肥鱼主动消息接收账号）', hint: '这里管理的是主人的接收账号，不是机器人自己的账号。固定主账号锁定在第一位（不可拖动、调序或移除）；可在下方列表点「设为主账号」指定首选账号，或切换为「未单独指定 / 跟随最近」。其余账号支持拖动交换或点按钮调整顺序及「移出」；不影响当前会话的原地回复。' },
+          h(Row, { label: '主人的主账号与接收优先级', hint: '这里管理的是主人的账号，不是她的账号。固定主账号锁定在第一位（不可拖动、调序或移除）；可在下方列表点「设为主账号」指定首选账号，或切换为「未单独指定 / 跟随最近」。其余账号支持拖动交换或点按钮调整顺序及「移出」；不影响当前会话的原地回复。' },
             h('div', { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 8 } },
               h('div', { className: 'ab-flex', style: { gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
                 h(Btn, {
@@ -2865,11 +2865,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                   title: '跟随主人最近一次主动发起私聊的在线平台',
                   onClick: () => onSelectPrimary('__recent__'),
                 }, '跟随最近私聊平台（recent）'),
-                selectValue !== '__default__' && selectValue !== '__recent__'
-                  ? h('span', { className: cx('ab-badge', selectValue === '__orphan__' ? 'err' : 'mine') },
-                    selectValue === '__orphan__'
-                      ? ('配置主账号待更新：' + ownerPrimaryLabel(pref))
-                      : ('当前固定主账号：' + ownerPrimaryLabel(pref)))
+                selectValue === '__orphan__'
+                  ? h('span', { className: 'ab-badge err' }, '配置主账号待更新：' + ownerPrimaryLabel(pref))
                   : null,
                 h(Btn, { small: true, disabled: testSending, onClick: testSend }, testSending ? '发送中…' : '测试发送给主人主账号'),
               ),
@@ -2959,7 +2956,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                     h('span', { className: 'ab-badge' }, '#' + (idx + 1)),
                     h('div', { className: 'ab-prio-main' },
                       h('span', null, '主人 · ' + platformLabel(o.platform) + instPart + ' · ' + o.account),
-                      isPrimaryItem ? h('span', { className: 'ab-badge mine', title: '固定主账号锁定在第一位，不可拖动、调序或移除' }, '当前主账号（首选 · 固定首位）') : null,
+                      isPrimaryItem ? h('span', { className: 'ab-badge mine', title: '固定主账号锁定在第一位，不可拖动、调序或移除' }, '当前主账号') : null,
                       h('span', { className: cx('ab-badge', badge.cls) }, badge.text),
                     ),
                     h('div', { className: 'ab-prio-actions' },
@@ -3020,7 +3017,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                 : null,
               fallbackPreviewNode,
             )),
-          h(Row, { label: '主人主账号不可用时，允许普通主动聊天改发其他在线平台', hint: '默认关闭。仅针对「固定主账号」模式：关闭时若固定主账号离线或未绑定，ta 会暂停主动搭话、汇报等普通主动消息，绝不串发；开启时按上方接收优先级顺序改发。' }, f.sw('ownerPrimary.fallback')),
+          h(Row, { label: '主人主账号不可用时，允许普通主动聊天改发其他在线平台', hint: '默认关闭。仅针对「固定主账号」模式：关闭时若固定主账号离线或未绑定，她会暂停主动搭话、汇报等普通主动消息，绝不串发；开启时按「接收优先级」顺序改发。' }, f.sw('ownerPrimary.fallback')),
           h(Row, { label: '主人主账号不可用时，允许系统重要通知与自测提醒改发其他在线平台（不含无会话危险操作）', hint: '默认开启。仅针对「固定主账号」模式，影响系统提醒与「测试发送给主人主账号」；无归属会话的危险操作与授权仍按原地 fail-closed 处理。' }, f.sw('ownerPrimary.noticeFallback')),
           h(Row, { label: '主人 QQ 号（可选）', hint: '仅在使用 QQ 网关或兼容旧 QQ 功能时填写；纯飞书 / QQ 官方机器人 / 通用桥主人认主后可留空。修改此项会重置当前敏感命令授权代次。' }, f.text('ownerQQ', { placeholder: ownerPersonId ? '纯非 QQ 平台可留空' : '例如 123456789' })),
           h(Row, { label: 'ta怎么称呼你' }, f.text('ownerName', { placeholder: '主人' })),
