@@ -203,7 +203,7 @@ export function apply(ctx) {
     for (const [instName, raw] of Object.entries(conf?.platforms || {})) {
       if (!raw || typeof raw !== 'object') continue
       const plat = String(raw.platform || String(instName).split('#')[0] || instName).trim()
-      const selfAcc = raw.selfId ?? raw.selfOpenId ?? raw.selfOpenid ?? raw.account ?? raw.selfAccount ?? raw.self?.account ?? ''
+      const selfAcc = raw.selfId ?? raw.selfOpenId ?? raw.selfOpenid ?? raw.selfAccount ?? raw.self?.account ?? ''
       if (selfAcc) {
         out.push({ instance: instName, platform: plat, self: { account: String(selfAcc) } })
       }

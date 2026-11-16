@@ -2816,11 +2816,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
                   h('div', { className: 'ab-small ab-muted', style: { marginBottom: 2 } }, '未加入优先排序的账号（自定义顺位生效中，将严格跳过以下账号）：'),
                   excludedOptions.map((o) => {
                     const rowKey = ownerOptionKey(o)
+                    const isPrimaryItem = pref.mode !== 'recent' && Boolean(pref.platform || pref.instance) && isOwnerOptionSelected(pref, o)
                     const badge = fallbackStatusBadge(o)
                     const instPart = (o.multiInstance || (o.instance && o.instance !== o.platform)) ? ` · ${o.instance}` : ''
                     return h('div', { key: 'ex:' + (o.key || rowKey), className: 'ab-prio-excluded-item', 'data-prio-excluded-key': rowKey },
                       h('div', { className: 'ab-prio-main' },
                         h('span', null, '主人 · ' + platformLabel(o.platform) + instPart + ' · ' + o.account),
+                        isPrimaryItem ? h('span', { className: 'ab-badge mine', title: '固定主账号仍然实际最优先，移出列表仅影响主账号以外顺位' }, '当前主账号（首选，仍优先于列表）') : null,
                         h('span', { className: cx('ab-badge', badge.cls) }, badge.text),
                       ),
                       h(Btn, { small: true, kind: 'ghost', onClick: () => includePriorityItem(o) }, '加入排序'),

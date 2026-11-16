@@ -1150,6 +1150,7 @@ test('P1-12：启动期清理 stale 与机器人自身账号、全失效列表�
     ownerQQ: '10001',
     platforms: {
       bridge: { enabled: false, selfId: 'b_bot_self' },
+      feishu: { enabled: false, account: 'ou_keep' },
     },
     ownerPrimary: {
       mode: 'fixed',

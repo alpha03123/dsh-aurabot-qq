@@ -790,6 +790,25 @@ test('P3-5: 前端 client.js 注册 TAB_KEYS.access、GlobalAccess 主账号与�
     const singleRemoveBtn = collectNodes(singleRow[0], (n) => n.type?.name === 'Btn' && textOf(n.children) === '移出')[0]
     assert.equal(singleRemoveBtn.props.disabled, true, '仅剩 1 个排序账号时必须禁用「移出」')
 
+    // 若把当前固定主账号也移出排序，excluded 行仍须标注「当前主账号（首选，仍优先于列表）」（复审 §2.2）
+    hook = 0
+    refs.length = 0
+    const excludedPrimaryTree = vmExport.panelTest.GlobalAccess({
+      st: prioSt,
+      draft: {
+        ...prioCfg,
+        ownerPrimary: {
+          ...prioCfg.ownerPrimary,
+          fallbackOrder: [{ platform: 'qq', instance: 'qq', account: '10001' }],
+        },
+      },
+      setDraft: (d) => { draftState = d },
+      toast() {},
+    })
+    const excludedPrimaryRows = collectNodes(excludedPrimaryTree, (n) => n.props && n.props['data-prio-excluded-key'] === 'bridge\x00bridge#2\x00b_acc')
+    assert.equal(excludedPrimaryRows.length, 1)
+    assert.match(textOf(excludedPrimaryRows[0]), /当前主账号（首选，仍优先于列表）/)
+
     // 验证 3 项完整排序下拖拽（onDragStart + onDragOver + onDrop）结果
     draftState = JSON.parse(JSON.stringify({
       ...prioCfg,
