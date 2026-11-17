@@ -38,7 +38,7 @@ import { parseCommand, runCommand, createMutes, commandList } from './chat/comma
 import { ownerPrivateChatIds } from './chat/access.js'
 import { changePermissions, changePrivateWhitelist, privatePermissionCatalog } from './chat/permission-policy.js'
 import { canUseDelegatedCommand, delegatedCommandKey, runPersonalModelCommand } from './chat/delegated-commands.js'
-import { listPersonas, readPersona, savePersona, deletePersona, currentPersonaText, rulesText, seedPersonas } from './persona/personas.js'
+import { listPersonas, readPersona, savePersona, deletePersona, currentPersonaText, rulesText, qqSessionRulesText, seedPersonas } from './persona/personas.js'
 import { createModules, API_VERSION } from './core/modules.js'
 import { createCommunity, REGISTRY_URL, GITEE_MIRROR } from './core/community.js'
 import { createApprovalRelay } from './security/approval.js'
@@ -370,7 +370,7 @@ export function apply(ctx) {
 
   // ---------- 人格与规则：通过提示词变量注入到 Aurabot 的两个 preset ----------
   const variable = (n, fn) => ctx.effect(() => ctx.systemPrompt.variable(n, (...args) => captureSystemPrompt(n, cleanText(fn(...args)))), `aurabot: 变量 ${n}`)
-  const rulesOpts = (kind) => ({ ...(mods ? { off: mods.builtinOff(), extra: mods.rules(kind) } : {}), identity })
+  const rulesOpts = (kind) => ({ ...(mods ? { off: mods.builtinOff(), extra: mods.rules(kind), activePlatforms: mods.activePlatforms?.() } : {}), identity })
   // 扩展模块能整段改写人格和规则（同步：提示词变量不能等）
   const rewrite = (event, text, ...args) => { const r = mods ? mods.filterSync(event, text, ...args) : text; return typeof r === 'string' ? r : r === null ? '' : text }
   variable('aurabot_persona', () => rewrite('persona', currentPersonaText(cfg.persona.current)))
@@ -1189,7 +1189,17 @@ export function apply(ctx) {
     buildTools: (where) => mods.buildTools(where),
     // 模块声明的能力（module.json capabilities）：子智能体委派这类要本机权限的能力靠它把关（一审 #177）
     capabilitiesOf: (id) => (typeof mods.capabilitiesOf === 'function' ? mods.capabilitiesOf(id) : []),
-    contextProviders: [(args) => mods.contextFor(args)],
+    contextProviders: [
+      (args) => mods.contextFor(args),
+      ({ chat }) => {
+        if (!chat || chat.kind === 'system' || !mods) return ''
+        const active = mods.activePlatforms?.() || []
+        if (active.length <= 1 && active.includes('qq')) return ''
+        const plat = chat.platform || parseChatId(chat.chatId)?.platform || ''
+        if (plat !== 'qq') return ''
+        return qqSessionRulesText(getConfig(), { off: mods.builtinOff() })
+      },
+    ],
     onActivity: (a) => mods.emit('activity', a),
     // 群聊话题和她的记忆有多相关（插话判断用）
     memoryScore: (text) => use('memory')?.topicScore?.(text) ?? 0,
@@ -1198,13 +1208,15 @@ export function apply(ctx) {
     // 主人命令（模块加的命令优先；按当前对话平台和 L2 能力过滤）
     onCommand: async (msg, markSensitive, ownerStillCurrent) => {
       const commands = mods.commands({ platform: msg.platform, chatId: msg.chatId })
-      const cmd = parseCommand(msg.text, commands)
+      const msgPlat = msg.platform || parseChatId(msg.chatId)?.platform || 'qq'
+      const hidden = msgPlat !== 'qq' ? new Set(['diary']) : null
+      const cmd = parseCommand(msg.text, commands, { hidden })
       if (!cmd) return null
       if (!ownerStillCurrent()) {
         const key = delegatedCommandKey(cmd)
         if (!canUseDelegatedCommand(getConfig(), msg, key)) return '你没有使用这个命令的权限，请联系主人设置。'
         if (key === 'help') {
-          const list = commandList(commands).filter((item) => canUseDelegatedCommand(getConfig(), msg, delegatedCommandKey(parseCommand('/' + item.name, commands))))
+          const list = commandList(commands, { hidden }).filter((item) => canUseDelegatedCommand(getConfig(), msg, delegatedCommandKey(parseCommand('/' + item.name, commands, { hidden }))))
           return '你可以使用的命令：\n' + list.map((item) => {
             const desc = item.name === 'model' ? '查看或切换当前私聊模型' : item.desc
             return `/${item.name}  ${desc}`
@@ -1217,7 +1229,7 @@ export function apply(ctx) {
         return String((await cmd.ext.run(cmd.arg, msg)) ?? '')
       }
       if (cmd.name === 'permissions' && !markSensitive(cmd.name)) return ''
-      return runCommand(cmd, msg, { getConfig, setConfig, mutes, hub, identity, mood: use('mood'), memory: use('memory'), qzone: use('diary'), song: use('song'), listModels, reasoningFor: (provider, model) => modelReasoning(ctx, provider, model, { refresh: true }), defaultModel: () => defaultModel(ctx, { model: {} }), extraCommands: commands })
+      return runCommand(cmd, msg, { getConfig, setConfig, mutes, hub, identity, mood: use('mood'), memory: use('memory'), qzone: use('diary'), song: use('song'), listModels, reasoningFor: (provider, model) => modelReasoning(ctx, provider, model, { refresh: true }), defaultModel: () => defaultModel(ctx, { model: {} }), extraCommands: commands, hidden })
     },
     isMuted: (chatId) => mutes.muted(chatId),
     moodEffects: () => use('mood')?.effects?.() ?? null,
@@ -3893,8 +3905,10 @@ export function apply(ctx) {
     const msg = { ...chat, sender: { person: owner ? identity.owner() : null, isOwner: owner }, nickname: owner ? cfg.ownerName || '主人' : '路人', role: '', messageId: 'sim', text, mentioned: Boolean(b.mentioned), replyId: '', images: [], stickers: [], records: [], forwards: [], raw: { simulated: true } }
     const { sent } = await hub.capture(async () => {
       if (text) {
+        const simPlat = chat.platform || parseChatId(chat.chatId)?.platform || 'qq'
+        const hidden = simPlat !== 'qq' ? new Set(['diary']) : null
         const cmd = (owner || chat.kind === 'private') && /^\s*[/／]/.test(text)
-          ? parseCommand(text, mods.commands({ platform: chat.platform, chatId: chat.chatId }))
+          ? parseCommand(text, mods.commands({ platform: chat.platform, chatId: chat.chatId }), { hidden })
           : null
         if (cmd && !owner && !canUseDelegatedCommand(cfg, msg, delegatedCommandKey(cmd))) {
           steps.push('这个私聊对象没有使用该命令的权限')

@@ -1452,11 +1452,12 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
           try {
             if (getConfig().chat?.replyMarker?.enabled === true) parts.push(markerInstruction())
             // 贴代码要加围栏：guard 对 ``` 整段豁免，模型得知道包起来才不会被当成超长思考。
-            if (getConfig().chat?.thinkingGuard?.enabled !== false) parts.push(codeFenceInstruction())
+            const canPoke = chatPlatform(chat) === defaultPlatform() && gateway?.caps?.(chat.chatId)?.poke !== false
+            if (getConfig().chat?.thinkingGuard?.enabled !== false) parts.push(codeFenceInstruction({ poke: canPoke }))
           } catch (error) {}
           for (const p of contextProviders || []) {
             try {
-              const t = p({ chat, sessionId: sid })
+              const t = p({ chat, level, sessionId: sid })
               if (t) parts.push(t)
             } catch (error) {}
           }

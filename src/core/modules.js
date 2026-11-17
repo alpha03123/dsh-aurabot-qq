@@ -1885,7 +1885,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     capabilitiesOf,
     emit, claim, filter, filterSync, buildTools,
     // 插件核心自己听事件（不属于任何模块，不会被撤掉）
-    listen: (event, fn) => { const item = { id: '@core', fn }; listeners.set(event, [...(listeners.get(event) || []), item]); return () => listeners.set(event, (listeners.get(event) || []).filter((x) => x !== item)) }, contextFor, rules, commands, dshTools, builtinOff, handle,
+    listen: (event, fn) => { const item = { id: '@core', fn }; listeners.set(event, [...(listeners.get(event) || []), item]); return () => listeners.set(event, (listeners.get(event) || []).filter((x) => x !== item)) }, contextFor, rules, commands, dshTools, builtinOff, activePlatforms: () => [...activePlatforms()], handle,
     hasRoute: (path) => routes.has(path),
     routeAccess: (path) => routes.get(path)?.access || null,
     dir: userDir,

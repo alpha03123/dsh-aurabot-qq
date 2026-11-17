@@ -10,10 +10,11 @@ import { sameChat } from '../gateway/address.js'
  * 解析命令：「/silent 30」→ { name: 'silent', arg: '30' }。不是命令返回 null。支持全角斜杠和中文别名。
  * extra：扩展模块加的命令 [{ name, aliases, desc, run }]，命中时返回 { name, arg, ext }；和内置同名时扩展的优先。
  */
-export function parseCommand(text, extra = []) {
+export function parseCommand(text, extra = [], opts = {}) {
   const m = String(text || '').trim().match(/^[/／]\s*([A-Za-z0-9一-龥_-]+)\s*([\s\S]*)$/)
   if (!m) return null
   const word = m[1].toLowerCase()
+  const hidden = opts?.hidden
   // 权限管理是保留命令，扩展模块不能抢占。
   if (word === '权限' || word === 'permissions' || word === 'perms') return { name: 'permissions', arg: m[2].trim() }
   for (const c of extra) {
@@ -24,10 +25,11 @@ export function parseCommand(text, extra = []) {
     if (pre) return { name: c.name, arg: (m[1].slice(pre.length) + ' ' + m[2]).trim(), ext: c }
   }
   const name = ALIASES[word] || word
-  if (COMMANDS[name]) return { name, arg: m[2].trim() }
+  if (COMMANDS[name]) return hidden?.has?.(name) ? null : { name, arg: m[2].trim() }
   // 中文命令后面不加空格直接跟内容：「/记住我不吃香菜」
   const pre = Object.keys(ALIASES).filter((k) => /[一-龥]/.test(k) && word.startsWith(k)).sort((a, b) => b.length - a.length)[0]
-  return pre ? { name: ALIASES[pre], arg: (m[1].slice(pre.length) + ' ' + m[2]).trim() } : null
+  const preName = pre ? ALIASES[pre] : ''
+  return pre && (!hidden?.has?.(preName)) ? { name: preName, arg: (m[1].slice(pre.length) + ' ' + m[2]).trim() } : null
 }
 
 const ALIASES = {
@@ -61,19 +63,24 @@ const COMMANDS = {
   mood: '看她现在的心情',
   diary: '马上写一篇空间日记',
   remember: '让她记住一件事，如 /remember 我不吃香菜',
-  speak: '管主动搭话白名单：/speak 看名单，/speak add QQ 号 加人，/speak del QQ 号 移除',
+  speak: '管主动搭话白名单：/speak 看名单，/speak add 对象地址 加人，/speak del 对象地址 移除',
   reset: '这个聊天重新开始（旧的对话在 DSH 侧栏里还能找回）',
   on: '打开总开关',
   off: '关掉总开关（之后除了命令什么都不回）',
 }
 
-export const commandList = (extra = []) => [
-  ...Object.entries(COMMANDS).map(([name, desc]) => ({ name, desc, aliases: Object.keys(ALIASES).filter((k) => ALIASES[k] === name && /[一-龥]/.test(k)) })),
+export const commandList = (extra = [], opts = {}) => [
+  ...Object.entries(COMMANDS)
+    .filter(([name]) => !opts?.hidden?.has?.(name))
+    .map(([name, desc]) => ({ name, desc, aliases: Object.keys(ALIASES).filter((k) => ALIASES[k] === name && /[一-龥]/.test(k)) })),
   ...extra.map((c) => ({ name: c.name, desc: c.desc || '', aliases: c.aliases || [], module: c.module || '' })),
 ]
 
-export function helpText(extra = []) {
-  return '主人命令（也可以用中文，如 /闭嘴 /说话）：\n' + Object.entries(COMMANDS).map(([k, v]) => `/${k}  ${v}`).join('\n')
+export function helpText(extra = [], opts = {}) {
+  return '主人命令（也可以用中文，如 /闭嘴 /说话）：\n' + Object.entries(COMMANDS)
+    .filter(([k]) => !opts?.hidden?.has?.(k))
+    .map(([k, v]) => `/${k}  ${v}`)
+    .join('\n')
     + (extra.length ? '\n扩展模块加的：\n' + extra.map((c) => `/${c.name}  ${c.desc || ''}`).join('\n') : '')
 }
 
@@ -123,7 +130,7 @@ export async function runCommand(cmd, msg, deps) {
     case 'permissions':
       return runPermissionsCommand(cmd.arg, msg, deps)
     case 'help':
-      return helpText(deps.extraCommands || [])
+      return helpText(deps.extraCommands || [], { hidden: deps.hidden })
     case 'bind': {
       if (!deps.identity) return '身份库还没准备好'
       if (msg.kind !== 'private') return '绑定口令只能在私聊里取'
