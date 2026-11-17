@@ -197,7 +197,7 @@ export const CAPS_FEISHU = {
   features: {
     'media.fetch': true,
     'sticker.collect': true,
-    'message.quote.read': false, // Step 1A 实现 fetch('message') 后开启
+    'message.quote.read': true, // Step 1A：已实现 GET /open-apis/im/v1/messages/:id
     'message.reaction': false,
     'chat.member.read': false,
     'sticker.sync.native': false,
@@ -1365,6 +1365,33 @@ export function createFeishuAdapter(options = {}) {
     return sendError('unknown', errCode || code, instance, `飞书请求失败：${message}`)
   }
 
+  async function requestAuthedGet(url, failLabel) {
+    const requestOnce = async (forceToken = false) => {
+      const token = await tenantToken({ force: forceToken })
+      return httpClient.request({
+        method: 'GET',
+        url,
+        headers: { authorization: `Bearer ${token}` },
+        timeoutMs: timeoutMsOf(),
+      })
+    }
+    let r = await requestOnce(false)
+    let apiCode = r?.json && r.json.code !== undefined ? Number(r.json.code) : 0
+    if (r?.status === 401 || TOKEN_INVALID_CODES.has(String(apiCode))) {
+      tokenCache = { token: '', expiresAt: 0 }
+      r = await requestOnce(true)
+      apiCode = r?.json && r.json.code !== undefined ? Number(r.json.code) : 0
+    }
+    const status = Number(r?.status) || 200
+    if (status >= 400 || (Number.isFinite(apiCode) && apiCode > 0)) {
+      const codeStr = Number.isFinite(apiCode) && apiCode > 0 ? String(apiCode) : String(status)
+      const certainty = (status >= 400 && status < 500) || NOT_SENT_CODES.has(codeStr) ? 'not-sent' : 'unknown'
+      const msg = r?.json?.msg || r?.json?.message || ''
+      throw sendError(certainty, codeStr, instance, `${failLabel}（HTTP ${status}${apiCode > 0 ? ` / ${apiCode}` : ''}）${msg ? '：' + msg : ''}`)
+    }
+    return r
+  }
+
   // ───────────────────────── 平台端契约 ─────────────────────────
 
   const adapter = {
@@ -1578,8 +1605,54 @@ export function createFeishuAdapter(options = {}) {
       return { messageId: lastMessageId }
     },
 
-    /** 取媒体字节：官方 GET /im/v1/messages/:message_id/resources/:file_key?type=image|file */
+    /** 取媒体字节或读取单条消息 */
     async fetch(request) {
+      if (request?.kind === 'message') {
+        const messageId = String(request.messageId || '').trim()
+        if (!messageId) throw sendError('not-sent', 'bad-fetch-request', instance, '飞书取消息需要 messageId')
+        const url = `${baseUrl()}/open-apis/im/v1/messages/${encodeURIComponent(messageId)}`
+        const r = await requestAuthedGet(url, '飞书读取消息失败')
+        const item = r?.json?.data?.items?.[0]
+        if (!item || typeof item !== 'object') {
+          throw sendError('not-sent', 'message-not-found', instance, `飞书未返回消息内容（${messageId}）`)
+        }
+        const rawTime = Number(item.create_time)
+        const at = Number.isFinite(rawTime) && rawTime > 0 ? (rawTime < 1e12 ? rawTime * 1000 : rawTime) : undefined
+        const selfOpenId = String(self?.account || '')
+        let sender
+        if (item.sender && typeof item.sender === 'object') {
+          const idTypeRaw = String(item.sender.id_type || '').trim()
+          const idType = idTypeRaw === 'open_id' || idTypeRaw === 'union_id' || idTypeRaw === 'user_id' ? idTypeRaw : undefined
+          const account = String(item.sender.id ?? '')
+          const senderType = String(item.sender.sender_type || '')
+          const isBot = senderType === 'app' || senderType === 'bot' || ((!idType || idType === 'open_id') && Boolean(selfOpenId && account === selfOpenId))
+          sender = {
+            account,
+            isBot,
+            ...(idType ? { idType } : {}),
+          }
+        }
+        const resolvedId = String(item.message_id || messageId)
+        if (item.deleted === true) {
+          return {
+            messageId: resolvedId,
+            ...(at ? { at } : {}),
+            ...(sender ? { sender } : {}),
+            parts: [{ type: 'other', text: '[该消息已撤回]' }],
+            deleted: true,
+          }
+        }
+        const parts = toParts(item.msg_type, item.body?.content, item.mentions, {
+          selfOpenId,
+          messageId: resolvedId,
+        })
+        return {
+          messageId: resolvedId,
+          ...(at ? { at } : {}),
+          ...(sender ? { sender } : {}),
+          parts: parts.length ? parts : [{ type: 'other', text: '[空消息]' }],
+        }
+      }
       if (request?.kind !== 'media') throw new Error(`飞书平台端不支持这种 fetch：${request?.kind}`)
       const media = request.media || {}
       const key = String(media.id || '')
@@ -1588,30 +1661,7 @@ export function createFeishuAdapter(options = {}) {
       if (!messageId) throw new Error('飞书取媒体需要 media.messageId（官方接口要消息 ID 才能定位资源）')
       const type = /^img_/.test(key) || String(media.mime || '').startsWith('image/') ? 'image' : 'file'
       const url = `${baseUrl()}/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(key)}?type=${type}`
-      const requestOnce = async (forceToken = false) => {
-        const token = await tenantToken({ force: forceToken })
-        return httpClient.request({
-          method: 'GET',
-          url,
-          headers: { authorization: `Bearer ${token}` },
-          timeoutMs: timeoutMsOf(),
-        })
-      }
-      let r = await requestOnce(false)
-      let apiCode = r?.json && r.json.code !== undefined ? Number(r.json.code) : 0
-      if (r?.status === 401 || TOKEN_INVALID_CODES.has(String(apiCode))) {
-        tokenCache = { token: '', expiresAt: 0 }
-        r = await requestOnce(true)
-        apiCode = r?.json && r.json.code !== undefined ? Number(r.json.code) : 0
-      }
-      const status = Number(r?.status) || 200
-      if (status >= 400 || (Number.isFinite(apiCode) && apiCode > 0)) {
-        const codeStr = Number.isFinite(apiCode) && apiCode > 0 ? String(apiCode) : String(status)
-        const certainty = (status >= 400 && status < 500) || NOT_SENT_CODES.has(codeStr) ? 'not-sent' : 'unknown'
-        const msg = r?.json?.msg || r?.json?.message || ''
-        throw sendError(certainty, codeStr, instance, `飞书拉取媒体失败（HTTP ${status}${apiCode > 0 ? ` / ${apiCode}` : ''}）${msg ? '：' + msg : ''}`)
-      }
-      return r
+      return requestAuthedGet(url, '飞书拉取媒体失败')
     },
 
     /** 上传媒体换 key（外部拿到字节后让平台端上传；本端不主动下载） */

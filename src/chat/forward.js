@@ -1,6 +1,7 @@
 // 合并转发：把聊天记录展开成文字，顺带收集里面的图片。转发里可以再套转发，所以按层往下拉。
 
 import { parseMessageEvent } from './inbound.js'
+import { renderParts } from '../gateway/render.js'
 
 export const MAX_FORWARD_DEPTH = 5 // 最多展开几层
 export const MAX_FORWARD_LINES = 200 // 一条消息里所有层加起来最多几行
@@ -53,6 +54,47 @@ export function applyForwardBodies(text, bodies) {
     out += parts[i]
   }
   return out
+}
+
+/** 将网关归一化的 FetchedMessage[] 展平为 { lines, images, stickers }（不读 raw）。 */
+export function formatFetchedForward(messages, { limit = MAX_FORWARD_LINES, maxImages = MAX_FORWARD_IMAGES } = {}) {
+  const st = { count: 0, lines: [], images: [], stickers: [] }
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (!m || st.count >= limit) break
+    st.count++
+    const who = m.sender?.name || m.sender?.account || '某人'
+    const rendered = renderParts(m.parts).text || '（图片/表情）'
+    st.lines.push(`  ${who}：${rendered.slice(0, MAX_LINE)}`)
+    for (const part of Array.isArray(m.parts) ? m.parts : []) {
+      if (st.images.length + st.stickers.length >= maxImages) break
+      if (part?.type === 'image') {
+        st.images.push({
+          type: 'image',
+          data: {
+            url: part.media?.url,
+            file: part.media?.id || part.media?.url || '',
+            mediaId: part.media?.id,
+            mime: part.media?.mime,
+            messageId: m.messageId,
+          },
+        })
+      } else if (part?.type === 'sticker') {
+        st.stickers.push({
+          type: 'image',
+          data: {
+            sub_type: 1,
+            summary: part.label,
+            url: part.media?.url,
+            file: part.media?.id || part.media?.url || '',
+            mediaId: part.media?.id,
+            mime: part.media?.mime,
+            messageId: m.messageId,
+          },
+        })
+      }
+    }
+  }
+  return st
 }
 
 /** 拼成交给她的文字。 */

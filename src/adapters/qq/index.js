@@ -427,6 +427,26 @@ export function createQqAdapter(options = {}) {
 
   // ───────────────────────── fetch ─────────────────────────
 
+  function toFetchedMessage(rawMsg, fallbackId = '') {
+    const s = rawMsg?.sender || {}
+    const rawUid = s.user_id ?? rawMsg?.user_id
+    const hasSender = rawUid !== undefined && rawUid !== null && String(rawUid) !== ''
+    const account = hasSender ? String(rawUid) : ''
+    const senderName = String(s.card || s.nickname || account || '')
+    const selfAcc = String(selfId || config().selfId || config().account || '')
+    const rawTime = Number(rawMsg?.time)
+    const at = Number.isFinite(rawTime) && rawTime > 0 ? (rawTime < 1e12 ? rawTime * 1000 : rawTime) : undefined
+    const { parts } = segmentsToParts(rawMsg?.message ?? rawMsg?.raw_message ?? rawMsg?.content ?? [], { selfId, faceName: options.faceName })
+    return {
+      messageId: String(rawMsg?.message_id ?? rawMsg?.id ?? fallbackId),
+      ...(at ? { at } : {}),
+      ...(hasSender
+        ? { sender: { account, ...(senderName ? { name: senderName } : {}), isBot: Boolean(selfAcc && account === selfAcc) } }
+        : {}),
+      parts,
+    }
+  }
+
   async function fetch(request = {}) {
     if (!running || !client || !connected) throw makeSendError('not-sent', 'offline', instance, 'QQ 网关未连接')
     const chat = request.chat || {}
@@ -444,11 +464,17 @@ export function createQqAdapter(options = {}) {
           const r = await call(action, record ? { file, out_format: 'wav' } : { file }, { timeoutMs: 30000 })
           return { url: r?.url ? String(r.url) : undefined, path: r?.file ? String(r.file) : undefined, base64: r?.base64 || undefined }
         }
+        case 'message': {
+          const mid = String(request.messageId ?? '').trim()
+          if (!mid) throw makeSendError('not-sent', 'bad-fetch-request', instance, 'QQ fetch(message) 缺少 messageId')
+          const m = await call('get_msg', { message_id: Number(mid) || mid }, { timeoutMs: 8000 })
+          return toFetchedMessage(m, mid)
+        }
         case 'forward': {
           const r = await call('get_forward_msg', { id: String(request.id ?? '') }, { timeoutMs: 20000 })
-          // 转成 parts 数组返回：网关不认识 OneBot 的 node 结构
+          // 按 Step 1A 契约统一返回 FetchedForwardResult ({ messages: FetchedMessage[] })
           const nodes = Array.isArray(r?.messages) ? r.messages : []
-          return { messages: nodes.map((n) => segmentsToParts(n?.message ?? n?.content ?? [], { selfId, faceName: options.faceName })) }
+          return { messages: nodes.map((n, idx) => toFetchedMessage(n, `fwd-${idx}`)) }
         }
         case 'history': {
           const count = Math.max(1, Math.min(100, Number(request.count) || 20))

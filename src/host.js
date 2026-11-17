@@ -1258,6 +1258,15 @@ export function apply(ctx) {
     const offFlushed = gw.onFlushed((message, result) => {
       try { hub?.onGatewayFlushed?.(message, result) } catch (error) { logger.child('gateway').debug?.('补发留痕出错：', error?.message || error) }
     })
+    const offEvent = gw.onEvent?.((ev) => {
+      if (!ev) return
+      if (ev.type === 'recall' && ev.messageId) {
+        hub?.onGatewayRecall?.(ev.chatId || '', ev.messageId)
+      } else if (ev.type === 'native' && ev.name === 'im.message.recalled_v1') {
+        const mid = ev.raw?.event?.message_id
+        if (mid) hub?.onGatewayRecall?.('', mid)
+      }
+    })
     const offState = gw.onState?.(() => {
       const curOwner = identity.owner() || ''
       const curAccs = curOwner ? (identity.accountsOf(curOwner) || []) : []
@@ -1275,7 +1284,7 @@ export function apply(ctx) {
     gw.sync().catch((error) => logger.child('gateway').warn('网关首次同步失败：', error?.message || error))
     return () => {
       if (capsRemountTimer) { clearTimeout(capsRemountTimer); capsRemountTimer = null }
-      offCapsChanged?.(); offMsg?.(); offFlushed?.(); offState?.()
+      offCapsChanged?.(); offEvent?.(); offMsg?.(); offFlushed?.(); offState?.()
     }
   }
   let gatewayOff = null

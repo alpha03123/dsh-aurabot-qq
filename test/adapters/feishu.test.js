@@ -936,7 +936,7 @@ test('Step 0B：CAPS_FEISHU.features 与 fetch(media) 的 4xx/5xx 检查及 401 
   const caps = adapter.caps()
   assert.equal(caps.features['media.fetch'], true)
   assert.equal(caps.features['sticker.collect'], true)
-  assert.equal(caps.features['message.quote.read'], false, 'Step 0B 暂不提前开 message.quote.read，留待 Step 1A')
+  assert.equal(caps.features['message.quote.read'], true, 'Step 1A 开启 message.quote.read')
 
   await assert.rejects(
     () => adapter.fetch({ kind: 'media', media: { id: 'img_1', messageId: 'om_1' } }),
@@ -952,5 +952,134 @@ test('Step 0B：CAPS_FEISHU.features 与 fetch(media) 的 4xx/5xx 检查及 401 
   resourceMode = '401-then-ok'
   const ok = await adapter.fetch({ kind: 'media', media: { id: 'img_1', messageId: 'om_1' } })
   assert.deepEqual(ok.bytes, Buffer.from([1, 2, 3]))
+  await adapter.stop()
+})
+
+test('Step 1A：fetch(message) 解析文本/图片/app机器人/deleted/230027/403 与非 open_id 边界', async () => {
+  const client = makeFakeClient()
+  const baseRequest = client.request.bind(client)
+  let msgMode = 'user-text'
+  client.request = async (req) => {
+    if (req.url.includes('/open-apis/im/v1/messages/')) {
+      client.calls.push({ ...req })
+      if (msgMode === 'user-text') {
+        return {
+          status: 200,
+          json: {
+            code: 0,
+            data: {
+              items: [{
+                message_id: 'om_u1',
+                create_time: '1700000000000',
+                msg_type: 'text',
+                body: { content: JSON.stringify({ text: 'quoted hello' }) },
+                sender: { id: 'ou_sender1', id_type: 'open_id', sender_type: 'user' },
+              }],
+            },
+          },
+        }
+      }
+      if (msgMode === 'app-image') {
+        return {
+          status: 200,
+          json: {
+            code: 0,
+            data: {
+              items: [{
+                message_id: 'om_bot1',
+                create_time: '1700000005000',
+                msg_type: 'image',
+                body: { content: JSON.stringify({ image_key: 'img_q1' }) },
+                sender: { id: 'cli_app_x', id_type: 'app_id', sender_type: 'app' },
+              }],
+            },
+          },
+        }
+      }
+      if (msgMode === 'union-same-id') {
+        return {
+          status: 200,
+          json: {
+            code: 0,
+            data: {
+              items: [{
+                message_id: 'om_u2',
+                create_time: '1700000006000',
+                msg_type: 'text',
+                body: { content: JSON.stringify({ text: 'same union id' }) },
+                sender: { id: 'ou_bot_1', id_type: 'union_id', sender_type: 'user' },
+              }],
+            },
+          },
+        }
+      }
+      if (msgMode === 'deleted') {
+        return {
+          status: 200,
+          json: {
+            code: 0,
+            data: {
+              items: [{
+                message_id: 'om_del',
+                deleted: true,
+                create_time: '1700000007000',
+                msg_type: 'text',
+                body: { content: JSON.stringify({ text: 'This message was recalled' }) },
+                sender: { id: 'ou_sender1', id_type: 'open_id', sender_type: 'user' },
+              }],
+            },
+          },
+        }
+      }
+      if (msgMode === '230027') return { status: 403, json: { code: 230027, msg: 'no permission im:message:readonly' } }
+      return { status: 403, json: { msg: 'forbidden' } }
+    }
+    return baseRequest(req)
+  }
+
+  const adapter = createFeishuAdapter({ client })
+  adapter.__feishu.setConfig(CFG)
+  const ctx = makeCtx(adapter)
+  await adapter.start(ctx)
+  adapter.__feishu.setSelf({ account: 'ou_bot_1', name: '飞书测试Bot' })
+
+  const m1 = await adapter.fetch({ kind: 'message', messageId: 'om_u1' })
+  assert.equal(m1.messageId, 'om_u1')
+  assert.equal(m1.at, 1700000000000)
+  assert.equal(m1.sender?.account, 'ou_sender1')
+  assert.equal(m1.sender?.idType, 'open_id')
+  assert.equal(m1.sender?.isBot, false)
+  assert.deepEqual(m1.parts, [{ type: 'text', text: 'quoted hello' }])
+  assert.equal('raw' in m1, false, 'FetchedMessage 不回传 raw')
+
+  msgMode = 'app-image'
+  const m2 = await adapter.fetch({ kind: 'message', messageId: 'om_bot1' })
+  assert.equal(m2.sender?.isBot, true)
+  assert.equal(m2.parts[0]?.type, 'image')
+  assert.equal(m2.parts[0]?.media?.id, 'img_q1')
+  assert.equal(m2.parts[0]?.media?.messageId, 'om_bot1')
+
+  msgMode = 'union-same-id'
+  const m3 = await adapter.fetch({ kind: 'message', messageId: 'om_u2' })
+  assert.equal(m3.sender?.idType, 'union_id')
+  assert.equal(m3.sender?.isBot, false, '非 open_id 不得与实例 self.account 相等比对')
+
+  msgMode = 'deleted'
+  const m4 = await adapter.fetch({ kind: 'message', messageId: 'om_del' })
+  assert.equal(m4.deleted, true)
+  assert.match(m4.parts[0]?.text || '', /撤回/)
+
+  msgMode = '230027'
+  await assert.rejects(
+    () => adapter.fetch({ kind: 'message', messageId: 'om_perm' }),
+    (e) => e.certainty === 'not-sent' && e.code === '230027',
+  )
+
+  msgMode = '403'
+  await assert.rejects(
+    () => adapter.fetch({ kind: 'message', messageId: 'om_403' }),
+    (e) => e.certainty === 'not-sent' && e.code === '403',
+  )
+
   await adapter.stop()
 })

@@ -380,3 +380,72 @@ test('native：转发到 OneBot 扩展动作（空间/收藏表情等）', async
   }
   await adapter.stop()
 })
+
+test('Step 1A：fetch(message) 与 fetch(forward) 统一输出归一化 FetchedMessage / FetchedForwardResult', async () => {
+  const h = makeHarness()
+  const adapter = h.makeAdapter()
+  const ctx = makeCtx(adapter)
+  await adapter.start(ctx)
+
+  const origCall = adapter.__fakeClient.call
+  adapter.__fakeClient.call = async (action, params, opts) => {
+    if (action === 'get_msg') {
+      if (String(params.message_id) === '2001') {
+        return {
+          status: 'ok', retcode: 0,
+          data: {
+            message_id: 2001,
+            time: 1700000100,
+            user_id: 10000,
+            sender: { user_id: 10000, nickname: '假机器人' },
+            message: [{ type: 'text', data: { text: '我自己发的话' } }],
+          },
+        }
+      }
+      return {
+        status: 'ok', retcode: 0,
+        data: {
+          message_id: 2002,
+          time: 1700000200,
+          user_id: 20001,
+          sender: { user_id: 20001, card: '群友A' },
+          message: [{ type: 'text', data: { text: '别人发的话' } }],
+        },
+      }
+    }
+    if (action === 'get_forward_msg') {
+      return {
+        status: 'ok', retcode: 0,
+        data: {
+          messages: [
+            { message_id: 'fn1', time: 1700000300, sender: { user_id: 20001, card: '张三' }, message: [{ type: 'text', data: { text: '第一句' } }] },
+            { message_id: 'fn2', time: 1700000301, sender: { user_id: 10000, nickname: '假机器人' }, message: [{ type: 'image', data: { file: 'abc.png', url: 'https://img.example/1.png' } }] },
+          ],
+        },
+      }
+    }
+    return origCall(action, params, opts)
+  }
+
+  const selfMsg = await adapter.fetch({ kind: 'message', messageId: '2001' })
+  assert.equal(selfMsg.messageId, '2001')
+  assert.equal(selfMsg.at, 1700000100000)
+  assert.equal(selfMsg.sender?.account, '10000')
+  assert.equal(selfMsg.sender?.isBot, true)
+  assert.deepEqual(selfMsg.parts, [{ type: 'text', text: '我自己发的话' }])
+
+  const otherMsg = await adapter.fetch({ kind: 'message', messageId: '2002' })
+  assert.equal(otherMsg.sender?.isBot, false)
+  assert.equal(otherMsg.sender?.name, '群友A')
+
+  const fwd = await adapter.fetch({ kind: 'forward', id: 'fwd-42' })
+  assert.equal(fwd.messages.length, 2)
+  assert.equal(fwd.messages[0].messageId, 'fn1')
+  assert.equal(fwd.messages[0].sender?.name, '张三')
+  assert.equal(fwd.messages[0].sender?.isBot, false)
+  assert.deepEqual(fwd.messages[0].parts, [{ type: 'text', text: '第一句' }])
+  assert.equal(fwd.messages[1].sender?.isBot, true)
+  assert.equal(fwd.messages[1].parts[0]?.type, 'image')
+
+  await adapter.stop()
+})
