@@ -612,6 +612,11 @@ test('Step 1B 审阅 P1：传统 QQ 直连与 G3 caps=null 下收集本机路径
 
   const gotLegacy = await legacyRig.hub.mediaBytes('private:10000001', { type: 'image', data: { file: localPngPath, sub_type: 1 } })
   assert.deepEqual(gotLegacy, legacyPng, '传统 QQ 无网关应允许读取本机缓存路径')
+  await assert.rejects(
+    () => legacyRig.hub.mediaBytes('invalid-chat-id', { type: 'image', data: { file: localPngPath, sub_type: 1 } }),
+    /不认识的地址|没有可用的地址/,
+    'Step 1B 复审 6.3：非规范地址 (!addr) 不得默认放行本机路径',
+  )
 
   // 注入一条含本地路径的表情，分别测 qq_collect_sticker（工具路径）与 stickers.collect（自动收集路径）
   await legacyRig.hub.onMessage({

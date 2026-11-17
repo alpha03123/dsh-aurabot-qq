@@ -2881,7 +2881,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     }
     const legacyAllowLocal = allowLocal !== undefined
       ? Boolean(allowLocal)
-      : (!gateway || !addr || gateway.caps?.(normCid) === null) && Boolean(onebot)
+      : (Boolean(addr) && (!gateway || gateway.caps?.(normCid) === null)) && Boolean(onebot)
     return segmentBytes(seg, onebot, { maxBytes: limit, allowLocal: legacyAllowLocal, timeoutMs })
   }
 
