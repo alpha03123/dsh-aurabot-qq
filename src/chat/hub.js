@@ -882,7 +882,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
           if (!raw) return raw
           let l
           try { l = JSON.parse(raw) } catch (error) { return raw }
-          const own = l.chatId === `private:${qq}` || (String(l.chatId).startsWith('group:') && String(l.uid || '') === String(qq))
+          const own = sameChat(l.chatId, String(qq)) || sameChat(l.chatId, `private:${qq}`) || (parseChatId(l.chatId)?.kind === 'group' && String(l.uid || '') === String(qq))
           if (!own || l.forgottenAt || (query && !matchesMemoryKeyword(l.text, query))) return raw
           l.forgottenAt = Date.now()
           changed = true
