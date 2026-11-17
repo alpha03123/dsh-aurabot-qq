@@ -117,18 +117,18 @@ export function currentPersonaText(currentId) {
 }
 
 /** Aurabot 自己的规则（输出格式、安全边界），拼在人格后面。 */
-function qqOnlyRuleLines(cfg, off) {
+function qqOnlyRuleLines(cfg, off, { poke = true } = {}) {
   return [
     '- 在群里要真 @ 某人（对方会收到提醒），写 <at:QQ号>；不知道 QQ 号就写 @群名片，能对上群里唯一一个人才会变成真 @。',
     ...(cfg?.stickers?.faces === false ? [] : [`- 想在文字里夹 QQ 自带的小黄脸表情，写 <face:名字>，比如 ${FACE_EXAMPLES.map((n) => `<face:${n}>`).join(' ')}；只能用 QQ 系统表情里有的名字，别每句都加。别人发来的小黄脸会写成「[名字]」。`]),
     ...(off?.has?.('qq-tools') ? [] : ['- 想翻这个聊天更早的记录，用 qq_chat_history。']),
-    '- 有人戳你（拍一拍）时会写「[戳了戳你]」，可以撒娇、吐槽或者问对方干嘛；想戳回去就在回复里写 <poke>（别每次都戳）。',
+    ...(poke ? ['- 有人戳你（拍一拍）时会写「[戳了戳你]」，可以撒娇、吐槽或者问对方干嘛；想戳回去就在回复里写 <poke>（别每次都戳）。'] : []),
   ]
 }
 
 /** 多平台共存时按会话动态补回给 QQ 会话的专属规则，避免写入共享 preset 泄漏给非 QQ 平台。 */
-export function qqSessionRulesText(cfg, { off = new Set() } = {}) {
-  return ['【当前是 QQ 会话】', ...qqOnlyRuleLines(cfg, off)].join('\n')
+export function qqSessionRulesText(cfg, { off = new Set(), poke = true } = {}) {
+  return ['【当前是 QQ 会话】', ...qqOnlyRuleLines(cfg, off, { poke })].join('\n')
 }
 
 /**

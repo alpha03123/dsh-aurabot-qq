@@ -226,4 +226,39 @@ test('PR-2D: purpose 朋友状态支持飞书安全文件名 + 旧 friends/20000
   // engine buildPurposePrompt 默认不再含 reserved2 / qq_send_private_message
   const built = engine.buildPurposePrompt({ now, ownerUin: 'ou_x', ownerName: '测试' })
   assert.doesNotMatch(built, /qq_send_private_message|不会发到 QQ|QQ·/)
+
+  // P2-1: 显式规范键（qq:private:20000010）已在上面验证读入旧文件并在保存时迁移删除；
+  // 而仅配旧裸数字 allow（20000022）时，保留既有 friends/20000022.json 只读兼容策略（不强制重写文件名），确保旧测试与历史习惯不断裂。
+  const legacyFriend = '20000022'
+  const legacyPath = join(friendsDir, `${legacyFriend}.json`)
+  const canonicalPath = join(friendsDir, 'qq~private~20000022.json')
+  writeFileSync(legacyPath, JSON.stringify({
+    ...engine.createPurposeState(now),
+    countToday: 1,
+    nextFireAt: now - 1000,
+    lastPurpose: '旧裸号兼容状态',
+  }))
+  const cfgLegacy = {
+    enabled: true, ownerQQ: '10000001', ownerName: '主人',
+    speakUp: { allow: [legacyFriend], awakeFrom: 0, awakeTo: 24, idleMinutes: 30, minIntervalMinutes: 5, maxIntervalMinutes: 5, maxPerDay: 10, nudge: false },
+    ext: { purpose: { enabled: true, initialDelayMinutes: 1, minMaterials: 0 } },
+  }
+  const pLegacy = createPurpose({
+    getConfig: () => cfgLegacy,
+    hub: {
+      ...hub,
+      chatLogOf: () => [{ t: now - 3600_000, chatId: `qq:private:${legacyFriend}`, who: '老友', uid: legacyFriend, text: '我准备周末去爬山' }],
+    },
+    identity,
+    routeOwner: identity.routeOwner,
+    log: { info() {}, warn() {}, debug() {} },
+    isMuted: () => false,
+    mood: () => null,
+    personaText: () => '',
+    memory: () => ({ list: () => [{ id: 'mf-leg', text: '喜欢爬山', about: legacyFriend, importance: 0.7, at: now }], profiles: () => [] }),
+  })
+  await pLegacy.tick()
+  assert.equal(existsSync(legacyPath), true, '旧裸数字白名单沿用 legacy 状态文件')
+  assert.equal(existsSync(canonicalPath), false, '旧裸数字白名单不破坏现有文件路径')
+  assert.equal(JSON.parse(readFileSync(legacyPath, 'utf8')).countToday, 2)
 })

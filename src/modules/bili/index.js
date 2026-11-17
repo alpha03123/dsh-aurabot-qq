@@ -144,7 +144,7 @@ export default {
             if (pick) {
               try {
                 const buf = typeof hub.mediaBytes === 'function'
-                  ? await hub.mediaBytes(pick.seg, { maxBytes: 10 * 1024 * 1024 }, chatId)
+                  ? await hub.mediaBytes(chatId, pick.seg, { maxBytes: 10 * 1024 * 1024 })
                   : await segmentBytes(pick.seg, null, { maxBytes: 10 * 1024 * 1024 })
                 if (buf && buf.length) return bili.setAvatar(buf)
               } catch (error) { /* 退回网址 */ }

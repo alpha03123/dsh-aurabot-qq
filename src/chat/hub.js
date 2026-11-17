@@ -51,6 +51,7 @@ import { normalizeChatId, parseChatId, sameChat, formatChatId } from '../gateway
 // 没填就用环境变量 AURABOT_WORKSPACE，再没有：老安装沿用 C:\Aurabot\qq-chats，新安装放在用户目录下（不用往 C 盘根目录写）
 const LEGACY_WORKSPACE = 'C:\\Aurabot\\qq-chats'
 const MAX_IMAGE_BYTES = 1024 * 1024 * 1024 // 图片大小不设实际限制，只防把内存撑爆
+const MAX_AUDIO_BYTES = 30 * 1024 * 1024 // 语音拉取与转码上限（独立于图片上限）
 const MODEL_IMAGE_BYTES = 8 * 1024 * 1024 // 超过这个大小先缩小再给模型
 const MAX_MESSAGE_IMAGES = 8 // 一条消息最多给她看几张，合并转发里的图算在内
 const QUOTE_FORWARD_MAX_CHARS = 1200 // 引用里套的合并转发：正文本身就是那条消息，比普通引用的 300 字放宽；普通引用仍走 300
@@ -110,6 +111,17 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
   const ownerRef = () => identity
   const ownerId = () => identity?.owner?.() || null
   const defaultPlatform = () => parseChatId('private:0')?.platform || ''
+  /** 判断会话是否归属默认协议实例（非默认平台与同平台多实例如 qq#2 均走各自网关，不得落回默认通道）。 */
+  const isDefaultInstanceChat = (chatId, explicitPlatform = '') => {
+    const def = defaultPlatform()
+    if (explicitPlatform && explicitPlatform !== def) return false
+    const raw = String(chatId || '').trim()
+    if (!raw) return !explicitPlatform
+    const norm = normalizeChatId(raw) || raw
+    const addr = parseChatId(norm)
+    if (!addr || addr.platform !== def) return false
+    return !addr.instance || addr.instance === def
+  }
   const platformLabelOf = (platform) => {
     if (typeof platformLabelInjected === 'function') {
       try { const label = platformLabelInjected(platform); if (label) return String(label) } catch (error) {}
@@ -292,30 +304,36 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     })().finally(() => { friendsPending = null })
     return friendsPending
   }
+  const VOICE_TTL = 30 * 60_000
   const recentVoices = new Map() // chatId → 最近收到的入站语音
   function rememberInboundVoice(msg) {
     if (!msg?.records?.length) return
     const cid = normalizeChatId(msg.chatId) || String(msg.chatId || '')
     if (!cid) return
+    const now = Date.now()
     const plat = msg.platform || parseChatId(cid)?.platform || defaultPlatform()
-    const list = (recentVoices.get(cid) || []).slice(-7)
-    list.push({
+    const fresh = (recentVoices.get(cid) || []).filter((item) => now - item.at <= VOICE_TTL).slice(-7)
+    fresh.push({
       chatId: cid,
       platform: plat,
       userId: String(msg.userId || ''),
       messageId: String(msg.messageId || ''),
       seg: msg.records[msg.records.length - 1],
-      at: Date.now(),
+      at: now,
     })
-    recentVoices.set(cid, list)
+    recentVoices.set(cid, fresh)
   }
   function lastInboundVoice({ chatId = '', userId = '' } = {}) {
+    const cutoff = Date.now() - VOICE_TTL
     const norm = chatId ? (normalizeChatId(chatId) || String(chatId)) : ''
     const uid = String(userId || '').trim()
-    const pools = norm ? [recentVoices.get(norm) || []] : [...recentVoices.values()]
+    const keys = norm ? (recentVoices.has(norm) ? [norm] : []) : [...recentVoices.keys()]
     let best = null
-    for (const list of pools) {
-      for (const item of list) {
+    for (const key of keys) {
+      const fresh = (recentVoices.get(key) || []).filter((item) => item.at >= cutoff)
+      if (!fresh.length) { recentVoices.delete(key); continue }
+      recentVoices.set(key, fresh)
+      for (const item of fresh) {
         if (uid && item.userId !== uid) continue
         if (!best || item.at >= best.at) best = item
       }
@@ -425,8 +443,9 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       const reactCid = msg?.chatId ? (normalizeChatId(msg.chatId) || String(msg.chatId)) : ''
       const reactAddr = reactCid ? parseChatId(reactCid) : null
       const reactPlat = msg?.platform || reactAddr?.platform || defaultPlatform()
-      const useGwReact = Boolean(gateway && (reactPlat !== defaultPlatform() || gateway.caps?.(reactCid) !== null || !onebot))
-      if (!useGwReact && reactPlat !== defaultPlatform()) return
+      const isDefInst = isDefaultInstanceChat(reactCid, reactPlat)
+      const useGwReact = Boolean(gateway && (!isDefInst || gateway.caps?.(reactCid) !== null || !onebot))
+      if (!useGwReact && !isDefInst) return
       if (useGwReact && !gateway.features?.(reactCid)?.['message.reaction']) return
       // 注意：此处不是通用 message.reaction 实现，Phase 1A 仅保留 QQ/OneBot 专有动作 set_msg_emoji_like；
       // 其他平台的通用 reaction 能力将在后续适配补充统一契约后再放行。
@@ -1452,7 +1471,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
           try {
             if (getConfig().chat?.replyMarker?.enabled === true) parts.push(markerInstruction())
             // 贴代码要加围栏：guard 对 ``` 整段豁免，模型得知道包起来才不会被当成超长思考。
-            const canPoke = chatPlatform(chat) === defaultPlatform() && gateway?.caps?.(chat.chatId)?.poke !== false
+            const canPoke = isDefaultInstanceChat(chat.chatId, chatPlatform(chat)) && gateway?.caps?.(chat.chatId)?.poke !== false
             if (getConfig().chat?.thinkingGuard?.enabled !== false) parts.push(codeFenceInstruction({ poke: canPoke }))
           } catch (error) {}
           for (const p of contextProviders || []) {
@@ -1946,7 +1965,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     const cfg = getConfig()
     const norm = normalizeChatId(chatId) || String(chatId || '')
     const addr = parseChatId(norm)
-    if (!addr || addr.platform !== defaultPlatform()) return
+    if (!addr || !isDefaultInstanceChat(norm)) return
     const caps = gateway?.caps?.(norm)
     if (caps && caps.poke === false) return
     if (typeof onebot?.call !== 'function') return
@@ -2036,7 +2055,8 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     }
     if (!cfg.enabled) { log.info(`总开关关着，没发 → ${chatId}：[文件] ${label}`); return null }
     if (cfg.dryRun) { log.info(`试运行（没真发）→ ${chatId}：[文件] ${label}`); return null }
-    const useGateway = Boolean(gateway && (addr.platform !== defaultPlatform() || gateway.caps?.(normId) !== null || !onebot))
+    const isDefInst = isDefaultInstanceChat(normId)
+    const useGateway = Boolean(gateway && (!isDefInst || gateway.caps?.(normId) !== null || !onebot))
     if (useGateway) {
       const caps = gateway.caps?.(normId)
       if (caps && caps.file === false) {
@@ -2052,7 +2072,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       }
       return await sendParts(normId, [{ type: 'file', media }], `[文件] ${label}`, { timeoutMs: FILE_TIMEOUT_MS, throwOnError: true })
     }
-    if (addr.platform !== defaultPlatform() || !/^\d+$/.test(tgt.id) || typeof onebot?.call !== 'function') {
+    if (!isDefInst || !/^\d+$/.test(tgt.id) || typeof onebot?.call !== 'function') {
       throw new Error(`当前会话（${normId}）没有可用的文件发送通道`)
     }
     const action = tgt.kind === 'group' ? 'upload_group_file' : 'upload_private_file'
@@ -3023,22 +3043,21 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     if (suppliedWav) return await audioToMono16k(suppliedWav)
     const rawCid = msg?.chatId || ''
     const normCid = rawCid ? (normalizeChatId(rawCid) || String(rawCid)) : ''
-    const addr = normCid ? parseChatId(normCid) : null
-    const plat = msg?.platform || addr?.platform || defaultPlatform()
-    const useGw = Boolean(gateway && normCid && (plat !== defaultPlatform() || gateway.caps?.(normCid) !== null || !onebot))
+    const isDefInst = isDefaultInstanceChat(normCid, msg?.platform)
+    const useGw = Boolean(gateway && normCid && (!isDefInst || gateway.caps?.(normCid) !== null || !onebot))
     if (useGw) {
       const feats = gateway.features?.(normCid)
       if (feats && feats['media.fetch'] === false) {
         throw new Error('当前平台实例不支持拉取语音媒体')
       }
-      const raw = await gatewayMediaBytes(normCid, rec?.data || {}, msg?.messageId, { maxBytes: 30 * 1024 * 1024, timeoutMs: 30000 })
+      const raw = await gatewayMediaBytes(normCid, rec?.data || {}, msg?.messageId, { maxBytes: MAX_AUDIO_BYTES, timeoutMs: 30000 })
       return await audioToMono16k(raw)
     }
-    if (plat !== defaultPlatform() || typeof onebot?.call !== 'function') {
+    if (!isDefInst || typeof onebot?.call !== 'function') {
       throw new Error('当前平台没有可用的语音拉取通道')
     }
     const info = await onebot.call('get_record', { file: rec?.data?.file, out_format: 'wav' }, { timeoutMs: 30000 })
-    const raw = info?.base64 ? Buffer.from(info.base64, 'base64') : await fetchImage(info?.file || info?.url, { maxBytes: 30 * 1024 * 1024 })
+    const raw = info?.base64 ? Buffer.from(info.base64, 'base64') : await fetchImage(info?.file || info?.url, { maxBytes: MAX_AUDIO_BYTES })
     return await audioToMono16k(raw)
   }
 
@@ -3072,8 +3091,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       const viaQq = async () => {
         if (suppliedWav) return '' // 外部输入没有 QQ 消息编号，复用本地/云端/DSH 识别。
         const normCid = msg?.chatId ? (normalizeChatId(msg.chatId) || String(msg.chatId)) : ''
-        const plat = msg?.platform || (normCid ? parseChatId(normCid)?.platform : '') || defaultPlatform()
-        if (plat !== defaultPlatform() || typeof onebot?.call !== 'function') return ''
+        if (!isDefaultInstanceChat(normCid, msg?.platform) || typeof onebot?.call !== 'function') return ''
         if (!msg?.messageId) return ''
         try {
           const r = await onebot.call('fetch_ptt_text', { message_id: Number(msg.messageId) || msg.messageId }, { timeoutMs: 20000 })
@@ -3145,9 +3163,10 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
   }
 
   const MAX_GATEWAY_MEDIA_BYTES = 50 * 1024 * 1024
+  const MAX_MEDIA_BYTES = Math.max(MAX_IMAGE_BYTES, MAX_AUDIO_BYTES)
   async function gatewayMediaBytes(chatId, data = {}, fallbackMessageId = '', { maxBytes = MAX_GATEWAY_MEDIA_BYTES, timeoutMs = 20000 } = {}) {
     if (!gateway || typeof gateway.fetch !== 'function') throw new Error('网关未就绪，无法拉取媒体')
-    const limit = Math.min(Math.max(1, Number(maxBytes) || MAX_GATEWAY_MEDIA_BYTES), MAX_IMAGE_BYTES)
+    const limit = Math.min(Math.max(1, Number(maxBytes) || MAX_GATEWAY_MEDIA_BYTES), MAX_MEDIA_BYTES)
     const media = {
       id: String(data?.mediaId || data?.file || ''),
       messageId: String(data?.messageId || fallbackMessageId || ''),
@@ -3800,8 +3819,9 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     if (disposed) return
     const rawCid = ev?.chatId ? String(ev.chatId) : ''
     const evAddr = rawCid ? parseChatId(normalizeChatId(rawCid) || rawCid) : null
+    const evInst = ev?.instance || ev?.__gateway?.instance || evAddr?.instance || ''
     const evPlat = ev?.platform || evAddr?.platform || defaultPlatform()
-    if (evPlat !== defaultPlatform()) return
+    if (evPlat !== defaultPlatform() || (evInst && evInst !== defaultPlatform())) return
     const self = String(ev.self_id || selfId || getConfig().botQQ)
     if (String(ev.target_id) !== self) return
     if (hooks?.poke) {
@@ -3813,9 +3833,10 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     if (!poker || poker === self) return
     if ((group && !/^\d+$/.test(group)) || !/^\d+$/.test(poker)) return
     const chatId = rawCid ? (normalizeChatId(rawCid) || rawCid) : (group ? `group:${group}` : `private:${poker}`)
+    if (!isDefaultInstanceChat(chatId, evPlat)) return
     const caps = gateway?.caps?.(chatId)
     if (caps && caps.poke === false) return
-    if (group && await titleFilter.shouldIgnore({ group_id: group, user_id: poker })) return
+    if (group && await titleFilter.shouldIgnore({ ...ev, group_id: group, user_id: poker })) return
     if (disposed) return
     lastPoker.set(chatId, poker)
     if (Date.now() - (pokeAt.get(chatId) || 0) < 20_000) return
@@ -4210,8 +4231,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     if (chat.kind !== 'private' || !cfg.enabled || cfg.dryRun || typing.has(key)) return
     const cid = normalizeChatId(chat.chatId) || String(chat.chatId || '')
     const addr = cid ? parseChatId(cid) : null
-    const plat = chat.platform || addr?.platform || defaultPlatform()
-    if (plat !== defaultPlatform()) return
+    if (!isDefaultInstanceChat(cid, chat.platform)) return
     const caps = gateway?.caps?.(cid)
     if (caps && caps.typing === false) return
     const feats = caps !== null ? gateway?.features?.(cid) : null
@@ -4266,9 +4286,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       if (!cfg.enabled || cfg.dryRun) return content
       if (!cfg.chat?.seedHistory) return content
       const cid = normalizeChatId(chat.chatId) || String(chat.chatId || '')
-      const addr = cid ? parseChatId(cid) : null
-      const plat = chat.platform || addr?.platform || defaultPlatform()
-      if (plat !== defaultPlatform() || typeof onebot?.call !== 'function') return content
+      if (!isDefaultInstanceChat(cid, chat.platform) || typeof onebot?.call !== 'function') return content
       const caps = gateway?.caps?.(cid)
       if (caps !== null) {
         const feats = gateway?.features?.(cid)
@@ -5038,6 +5056,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     sentIdsByScope.clear()
     busy.clear()
     running.clear()
+    recentVoices.clear()
     recentMedia.dispose()
   }
 

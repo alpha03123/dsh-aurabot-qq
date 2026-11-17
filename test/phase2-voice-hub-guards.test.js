@@ -226,6 +226,36 @@ test('PR-2F: /voice/asr-last 优先读取最近入站语音，无缓存时按平
   assert.equal(okRes.source, 'inbound-cache')
   assert.equal(okRes.platform, 'feishu')
   assert.equal(okRes.heard, '飞书最近语音转写')
+
+  // 5) P2-5: 无缓存且无在线网关实例时，如传统 standalone onebot 已连，仍可走 legacy history 兜底自检
+  lastVoice = null
+  instances = []
+  const routesLegacy = new Map()
+  voiceModule.setup({
+    config: () => ({ voice: {} }),
+    route: (path, fn) => routesLegacy.set(path, fn),
+    every() {},
+    core: {
+      dsh: { get: (k) => (k === 'speechToText' ? sttReady : null) },
+      hub: {
+        lastInboundVoice: () => null,
+        localTranscribe: async (_seg, _wav, msg) => (msg?.platform === 'qq' ? '传统直连历史语音' : ''),
+      },
+      gateway: { instances: () => [] },
+      onebot: {
+        state: 'connected',
+        call: async (action) => (action === 'get_friend_msg_history'
+          ? { messages: [{ user_id: 10000001, time: 1700000000, message_id: 77, message: [{ type: 'record', data: { file: 'a.silk' } }] }] }
+          : {}),
+      },
+      identity: makeTestIdentity('10000001', 'qq'),
+      http: { body: async () => ({}) },
+    },
+  })
+  const legRes = await routesLegacy.get('/voice/asr-last')({})
+  assert.equal(legRes.ok, true)
+  assert.equal(legRes.source, 'legacy-qq-history')
+  assert.equal(legRes.heard, '传统直连历史语音')
 })
 
 test('§3.1 守卫：title-filter / refreshFriends / onPoke / sendFile / maybeReact 跨平台隔离与网关路由', async (t) => {
@@ -390,4 +420,124 @@ test('§3.1 守卫：title-filter / refreshFriends / onPoke / sendFile / maybeRe
   await new Promise((r) => setTimeout(r, 40))
   const badCalls = calls2.filter((c) => ['send_poke', 'set_input_status', 'get_friend_msg_history', 'set_msg_emoji_like'].includes(c.action))
   assert.deepEqual(badCalls, [])
+})
+
+test('同平台多实例隔离（qq + qq#2）与 lastInboundVoice TTL/dispose 清理', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'aurabot-multi-inst-'))
+  const prevData = process.env.AURABOT_DATA_DIR
+  const prevWs = process.env.AURABOT_WORKSPACE
+  process.env.AURABOT_DATA_DIR = join(root, 'data')
+  process.env.AURABOT_WORKSPACE = join(root, 'ws')
+  mkdirSync(join(root, 'ws'), { recursive: true })
+
+  const { createHub } = await import('../src/chat/hub.js')
+  const { normalize } = await import('../src/core/config.js')
+
+  // title-filter 也不应为 qq#2 调默认 onebot
+  const tfCalls = []
+  const tf = createTitleFilter({
+    getConfig: () => ({ titleFilter: { enabled: true, groups: ['888888'], title: '机器人' } }),
+    onebot: { call: async (a, p) => { tfCalls.push({ a, p }); return { title: '机器人' } } },
+    log: { debug() {}, warn() {} },
+  })
+  assert.equal(await tf.shouldIgnore({ chatId: 'qq#2:group:888888', instance: 'qq#2', platform: 'qq', group_id: '888888', user_id: '999999' }), false)
+  assert.deepEqual(await tf.titlesIn(['qq#2:group:888888']), { titles: [], failed: [] })
+  assert.deepEqual(tfCalls, [])
+
+  const cfg = normalize({
+    enabled: true,
+    dryRun: false,
+    setupDone: true,
+    ownerQQ: '10000001',
+    botQQ: '20000002',
+    allow: { groups: ['qq#2:group:888888'], private: ['qq#2:private:10000001', '10000001'] },
+    merge: { enabled: false },
+    chat: { seedHistory: true },
+    voice: { enabled: true, asr: false },
+    stickers: { enabled: false, collect: false, reactChance: 0 },
+  })
+  const fake = createFakeDsh({ brain: async () => '<poke>收到' })
+  const identity = makeTestIdentity('10000001', 'qq')
+  const onebotCalls = []
+  const gwSends = []
+  const gateway = {
+    selfAccount: (cid) => (String(cid).startsWith('qq#2') ? '20000099' : '20000002'),
+    caps: () => ({ image: true, voice: 'native', file: true, poke: true, typing: true, history: true }),
+    features: () => ({ 'chat.typing': true, 'message.history.read': true, 'media.fetch': true }),
+    send: async (out) => { gwSends.push(out); return { messageId: 'm_' + gwSends.length } },
+    noteSeen() {},
+  }
+  const hub = createHub({
+    dsh: fake.ctx,
+    getConfig: () => cfg,
+    identity,
+    routeOwner: identity.routeOwner,
+    defaultPlatform: 'qq',
+    gateway,
+    log: { info() {}, warn() {}, error() {}, debug() {} },
+    onebot: {
+      connected: true,
+      call: async (action, params) => {
+        onebotCalls.push({ action, params })
+        return { message_id: onebotCalls.length }
+      },
+    },
+  })
+  const off = fake.ctx.on('session/event', hub.onSessionEvent)
+  t.after(() => {
+    hub.dispose(); off(); fake.dispose()
+    if (prevData === undefined) delete process.env.AURABOT_DATA_DIR
+    else process.env.AURABOT_DATA_DIR = prevData
+    if (prevWs === undefined) delete process.env.AURABOT_WORKSPACE
+    else process.env.AURABOT_WORKSPACE = prevWs
+  })
+
+  // 1) qq#2 入站（带语音以便同时测 lastInboundVoice，后测 dispose 清理）
+  await hub.onPoke({ instance: 'qq#2', platform: 'qq', chatId: 'qq#2:private:10000001', target_id: '20000099', user_id: '10000001', sender_id: '10000001' })
+  await hub.onGatewayMessage({
+    id: 'evt-qq2',
+    platform: 'qq',
+    instance: 'qq#2',
+    chatId: 'qq#2:private:10000001',
+    kind: 'private',
+    chat: { id: '10000001', kind: 'private', name: '主人' },
+    sender: { account: '10000001', name: '主人', isOwner: true, person: identity.owner() },
+    messageId: 'qq2_m1',
+    at: Date.now(),
+    text: '你好',
+    parts: [{ type: 'text', text: '你好' }, { type: 'voice', media: { id: 'v_qq2', mime: 'audio/wav' } }],
+  })
+  await until(() => fake.turns.length >= 1)
+  await new Promise((r) => setTimeout(r, 40))
+
+  // qq#2 会话 context 不得出现「<poke>（会变成 QQ 的戳一戳）」提示
+  assert.doesNotMatch(fake.turns[0].ctxText, /会变成 QQ 的戳一戳/)
+  // 默认 onebot 不应收到 set_input_status / get_friend_msg_history / send_poke / get_stranger_info
+  const leaked = onebotCalls.filter((c) => ['set_input_status', 'get_friend_msg_history', 'get_group_msg_history', 'send_poke', 'get_stranger_info', 'get_group_member_info'].includes(c.action))
+  assert.deepEqual(leaked, [], `qq#2 不得调用默认 onebot：${JSON.stringify(leaked)}`)
+
+  // 2) lastInboundVoice 正常命中；30 分钟过期或 dispose 后自动失效
+  const hit = hub.lastInboundVoice({ chatId: 'qq#2:private:10000001' })
+  assert.ok(hit)
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 31 * 60_000 })
+  assert.equal(hub.lastInboundVoice({ chatId: 'qq#2:private:10000001' }), null, '超过 30 分钟应自动过期清理')
+  t.mock.timers.reset()
+
+  // 再注入一条验证 dispose() 清理
+  await hub.onGatewayMessage({
+    id: 'evt-qq2-2',
+    platform: 'qq',
+    instance: 'qq#2',
+    chatId: 'qq#2:private:10000001',
+    kind: 'private',
+    chat: { id: '10000001', kind: 'private', name: '主人' },
+    sender: { account: '10000001', name: '主人', isOwner: true, person: identity.owner() },
+    messageId: 'qq2_m2',
+    at: Date.now(),
+    text: '',
+    parts: [{ type: 'voice', media: { id: 'v_qq2_2', mime: 'audio/wav' } }],
+  })
+  assert.ok(hub.lastInboundVoice({ chatId: 'qq#2:private:10000001' }))
+  hub.dispose()
+  assert.equal(hub.lastInboundVoice({ chatId: 'qq#2:private:10000001' }), null)
 })

@@ -128,7 +128,7 @@ export function isOwnerChatMuted(identity, isMuted) {
  * 非 QQ 平台的默认值是关闭：只能通过主人、规范 ChatId 或 PersonId 放行。
  * 旧 QQ 白名单仍接受裸 QQ 号，行为不变。
  */
-function allowMatches(list, msg, kind) {
+export function allowMatches(list, msg, kind) {
   const entries = (list || []).map((x) => String(x).trim()).filter(Boolean)
   if (!entries.length) return false
   const platform = String(msg.platform || parseChatId(msg.chatId)?.platform || '').trim()

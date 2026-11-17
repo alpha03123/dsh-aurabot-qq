@@ -54,7 +54,7 @@ import { setSsrpMode, assertPublicUrl, fetchGuarded } from './core/net.js'
 import { BUILTINS } from './modules/index.js'
 import { createOutboundPolicy } from './chat/outbound-policy.js'
 import { createPurposePolicy, createSpeakupPolicy, createSharedBudget } from './features/proactive-policy.js'
-import { parseChatId, formatChatId } from './gateway/address.js'
+import { parseChatId, normalizeChatId, formatChatId } from './gateway/address.js'
 import { createIdentity } from './gateway/identity.js'
 import { createGateway } from './gateway/index.js'
 import { createQqAdapter } from './adapters/qq/index.js'
@@ -1195,9 +1195,12 @@ export function apply(ctx) {
         if (!chat || chat.kind === 'system' || !mods) return ''
         const active = mods.activePlatforms?.() || []
         if (active.length <= 1 && active.includes('qq')) return ''
-        const plat = chat.platform || parseChatId(chat.chatId)?.platform || ''
+        const addr = parseChatId(normalizeChatId(chat.chatId) || String(chat.chatId || ''))
+        const plat = chat.platform || addr?.platform || ''
         if (plat !== 'qq') return ''
-        return qqSessionRulesText(getConfig(), { off: mods.builtinOff() })
+        const isDefInst = !addr?.instance || addr.instance === 'qq'
+        const poke = isDefInst && platformGateway?.caps?.(chat.chatId)?.poke !== false
+        return qqSessionRulesText(getConfig(), { off: mods.builtinOff(), poke })
       },
     ],
     onActivity: (a) => mods.emit('activity', a),

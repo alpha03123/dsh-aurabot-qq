@@ -5,7 +5,7 @@
 // 头衔优先用消息事件里带的 sender.title；没带就查一次群成员信息（缓存 60 秒）。
 // 查询出错时这条先不回（缓存 5 秒）：宁可漏回一条，也别让两个机器人对上。接口压根不返回头衔字段，就当没有头衔。
 
-import { parseChatId } from '../gateway/address.js'
+import { normalizeChatId, parseChatId } from '../gateway/address.js'
 
 const OK_TTL = 60_000
 const ERR_TTL = 5_000
@@ -47,11 +47,16 @@ export function createTitleFilter({ getConfig, onebot, log, now = Date.now }) {
     return task
   }
 
-  /** 这条群消息 / 戳一戳要不要直接忽略。仅对默认平台纯数字群启用。 */
+  /** 这条群消息 / 戳一戳要不要直接忽略。仅对默认平台且默认实例的纯数字群启用。 */
   async function shouldIgnore(event) {
     if (!onebot || typeof onebot.call !== 'function') return false
-    const evPlat = event?.__gateway?.platform || event?.platform || (event?.chatId ? parseChatId(String(event.chatId))?.platform || '' : '')
-    if (evPlat && evPlat !== defaultPlatform()) return false
+    const defPlat = defaultPlatform()
+    const rawCid = event?.__gateway?.chatId || event?.chatId || ''
+    const cidAddr = rawCid ? parseChatId(normalizeChatId(String(rawCid)) || String(rawCid)) : null
+    const evPlat = event?.__gateway?.platform || event?.platform || cidAddr?.platform || ''
+    const evInst = event?.__gateway?.instance || event?.instance || cidAddr?.instance || ''
+    if (evPlat && evPlat !== defPlat) return false
+    if (evInst && evInst !== defPlat) return false
     const gid = String(event?.group_id || '')
     const uid = String(event?.user_id ?? event?.sender?.user_id ?? '')
     if (!/^\d+$/.test(gid) || !/^\d+$/.test(uid) || !applies(gid)) return false
@@ -76,7 +81,7 @@ export function createTitleFilter({ getConfig, onebot, log, now = Date.now }) {
     const failed = []
     for (const rawGid of groupIds) {
       const parsed = String(rawGid).includes(':') ? parseChatId(String(rawGid)) : null
-      if (parsed && parsed.platform !== defPlat) continue
+      if (parsed && (parsed.platform !== defPlat || (parsed.instance && parsed.instance !== defPlat))) continue
       const gid = parsed ? parsed.id : String(rawGid)
       if (!/^\d+$/.test(gid)) continue
       let rows

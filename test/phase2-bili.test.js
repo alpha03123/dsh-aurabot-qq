@@ -157,18 +157,18 @@ test('PR-2B: groupShare 兼容飞书群发送 + 旧数字 groupId 按 qq:group:<
   assert.equal(sent.some((x) => x.chatId === 'feishu:private:ou_owner_fs'), true)
 })
 
-test('PR-2B: bili_set_avatar(last) 在飞书通过 hub.mediaBytes 拉网关字节并校验 hub.groupName 不调 onebot', async () => {
+test('PR-2B: bili_set_avatar(last) 使用真实 (chatId, seg, opts) 签名拉网关字节；含端到端 hub.mediaBytes 与 sendShot null 回执', async (t) => {
   const cfg = normalize({ enabled: true, dryRun: true, bili: { enabled: true } })
   const identity = makeTestIdentity('ou_owner_fs', 'feishu')
   const builders = []
-  let fetchedSeg = null
+  let fetchedArgs = null
   const recentImgSeg = { type: 'image', data: { file: 'img_v2_feishu_abc' } }
   const hub = {
     turnSendersAllOwner: () => true,
     chatOfSession: () => 'feishu:private:ou_owner_fs',
     recentMedia: () => [{ seg: recentImgSeg, userId: 'ou_owner_fs', sticker: false }],
-    mediaBytes: async (seg, opts, chatId) => {
-      fetchedSeg = { seg, opts, chatId }
+    mediaBytes: async (chatId, seg, opts) => {
+      fetchedArgs = { chatId, seg, opts }
       return PNG
     },
     groupName: async () => '飞书群',
@@ -191,6 +191,83 @@ test('PR-2B: bili_set_avatar(last) 在飞书通过 hub.mediaBytes 拉网关字�
   const r = await avatarTool.execute({ image: 'last' })
   assert.equal(r.ok, true, r.message)
   assert.match(r.message, /试运行/)
-  assert.equal(fetchedSeg?.chatId, 'feishu:private:ou_owner_fs')
-  assert.deepEqual(fetchedSeg?.seg, recentImgSeg)
+  assert.equal(fetchedArgs?.chatId, 'feishu:private:ou_owner_fs')
+  assert.deepEqual(fetchedArgs?.seg, recentImgSeg)
+  assert.equal(fetchedArgs?.opts?.maxBytes, 10 * 1024 * 1024)
+
+  // 真实 createHub.mediaBytes 端到端（入站只有 mediaId、无 url、不碰 onebot，走 gateway.fetch）
+  const { createHub } = await import('../src/chat/hub.js')
+  const { createFakeDsh } = await import('./helpers/fake-dsh.js')
+  const fake = createFakeDsh({ brain: async () => 'ok' })
+  const fetchCalls = []
+  const realHub = createHub({
+    dsh: fake.ctx,
+    getConfig: () => normalize({ enabled: true, dryRun: true, allow: { private: ['feishu:private:ou_owner_fs'], groups: [] } }),
+    identity,
+    routeOwner: identity.routeOwner,
+    defaultPlatform: 'qq',
+    gateway: {
+      selfAccount: () => 'cli_bot',
+      caps: () => ({ image: true, file: true }),
+      features: () => ({ 'media.fetch': true }),
+      fetch: async (cid, req) => {
+        fetchCalls.push({ cid, req })
+        return { bytes: PNG }
+      },
+      send: async () => ({ messageId: 'm1' }),
+    },
+    log: { info() {}, warn() {}, error() {}, debug() {} },
+    onebot: null,
+  })
+  t.after(() => { realHub.dispose(); fake.dispose() })
+  await realHub.onGatewayMessage({
+    id: 'evt-gw-last',
+    platform: 'feishu',
+    instance: 'feishu',
+    chatId: 'feishu:private:ou_owner_fs',
+    kind: 'private',
+    chat: { id: 'ou_owner_fs', kind: 'private', name: '主人' },
+    sender: { account: 'ou_owner_fs', name: '主人', isOwner: true, person: identity.owner() },
+    messageId: 'om_gw_only_1',
+    at: Date.now(),
+    text: '',
+    parts: [{ type: 'image', media: { id: 'img_gw_only_99', mime: 'image/png' } }],
+  })
+  const realBuilders = []
+  biliModule.setup({
+    config: () => cfg,
+    lazy: () => null,
+    log: { info() {}, debug() {}, warn() {} },
+    on() {},
+    tool: (fn) => realBuilders.push(fn),
+    every() {},
+    route() {},
+    dataDir: (...parts) => store.dataDir('modules-data', 'bili-real', ...parts),
+    onDispose() {},
+    core: { hub: { ...realHub, turnSendersAllOwner: () => true }, identity, routeOwner: identity.routeOwner },
+  })
+  const realAvatar = realBuilders[1]({ chat, sessionId: 's-real' }).find((t) => t.name === 'bili_set_avatar')
+  const fetchesBefore = fetchCalls.length
+  const rReal = await realAvatar.execute({ image: 'last' })
+  assert.equal(rReal.ok, true, rReal.message)
+  assert.equal(fetchCalls.length - fetchesBefore, 1)
+  assert.equal(fetchCalls.at(-1).req.media.id, 'img_gw_only_99')
+
+  // P2-2: sendShot 对 null / '' / queued 回执判失败
+  const shotsDir = store.dataDir('bili-shots')
+  mkdirSync(shotsDir, { recursive: true })
+  writeFileSync(join(shotsDir, '0123456789ab.jpg'), PNG)
+  writeFileSync(join(shotsDir, 'index.json'), JSON.stringify({ items: [{ file: '0123456789ab.jpg', title: '测试截图', bvid: 'BV1xx', sec: 10, note: '' }] }))
+  for (const ret of [{ message_id: null }, { message_id: '' }, { queued: true }]) {
+    const biliDuty = duty.createBili({
+      getConfig: () => normalize({ enabled: true, dryRun: false, bili: { enabled: true } }),
+      hub: { sendImage: async () => ret, chatLogOf: () => [], logChat() {} },
+      identity,
+      routeOwner: identity.routeOwner,
+      log: { info() {}, warn() {}, debug() {} },
+    })
+    const resShot = await biliDuty.sendShot({ chatId: 'feishu:private:ou_owner_fs' })
+    assert.equal(resShot.ok, false, `回执 ${JSON.stringify(ret)} 不应算发送成功`)
+    assert.equal(resShot.sent, false)
+  }
 })

@@ -160,25 +160,31 @@ export default {
 
       const insts = gw?.instances?.() || []
       const connected = insts.filter((s) => s?.enabled && s.caps !== null && s.state === 'connected')
-      if (!gw || !connected.length) {
+      const legacyOb = api.core.onebot
+      const hasLegacyQq = Boolean(legacyOb && legacyOb.state === 'connected' && typeof legacyOb.call === 'function')
+      if ((!gw || !connected.length) && !hasLegacyQq) {
         return { ok: false, degraded: true, reason: 'offline', message: '当前没有已连接的聊天网关（启用并连上网关后可自检）' }
       }
       const qqInst = connected.find((s) => s?.platform === 'qq')
-      if (!qqInst) {
+      if (!qqInst && !hasLegacyQq) {
         return { ok: false, degraded: true, reason: 'no-history-support', message: '当前平台不支持回溯历史记录，请先发一条语音消息后再点自检' }
       }
       const ownerPerson = api.core.identity?.owner?.()
       const ownerQq = ownerPerson ? api.core.identity?.accountOn?.(ownerPerson, 'qq') : ''
       const uid = Number(b.userId || ownerQq || 0)
       if (!uid) return { ok: false, message: '请先绑定主人 QQ 账号（或先发一条语音后再点自检）' }
-      const qqChatId = formatChatId({ instance: qqInst.instance, kind: 'private', id: String(uid) }) || `qq:private:${uid}`
-      const qqFeats = gw.features?.(qqChatId)
-      if (qqFeats && !qqFeats['message.history.read']) {
-        return { ok: false, degraded: true, reason: 'unsupported-history', message: '当前 QQ 网关未开放历史消息读取，请先发一条语音后再点自检' }
+      const qqChatId = formatChatId({ instance: qqInst?.instance || 'qq', kind: 'private', id: String(uid) }) || `qq:private:${uid}`
+      if (qqInst) {
+        const qqFeats = gw.features?.(qqChatId)
+        if (qqFeats && !qqFeats['message.history.read']) {
+          return { ok: false, degraded: true, reason: 'unsupported-history', message: '当前 QQ 网关未开放历史消息读取，请先发一条语音后再点自检' }
+        }
       }
       let h
       try {
-        h = await gw.native(qqInst.instance, 'get_friend_msg_history', { user_id: uid, count: 30 })
+        h = qqInst
+          ? await gw.native(qqInst.instance, 'get_friend_msg_history', { user_id: uid, count: 30 })
+          : await legacyOb.call('get_friend_msg_history', { user_id: uid, count: 30 }, { timeoutMs: 15000 })
       } catch (error) {
         return { ok: false, message: error?.code === 'unsupported-action' ? '当前 QQ 网关不支持读取聊天记录' : (error?.message || '读取聊天记录失败') }
       }
@@ -188,7 +194,7 @@ export default {
       try {
         const t = Date.now()
         const text = await hub.localTranscribe(last.seg, undefined, { chatId: qqChatId, platform: 'qq', messageId: last.mid ? String(last.mid) : '' })
-        return { ok: Boolean(text), source: 'qq-history', platform: 'qq', heard: text, at: new Date(last.time * 1000).toLocaleString(), ms: Date.now() - t }
+        return { ok: Boolean(text), source: qqInst ? 'qq-history' : 'legacy-qq-history', platform: 'qq', heard: text, at: new Date(last.time * 1000).toLocaleString(), ms: Date.now() - t }
       } catch (error) {
         return { ok: false, message: error?.message || '语音识别失败' }
       }

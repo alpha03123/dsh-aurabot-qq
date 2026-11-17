@@ -200,7 +200,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     }
     const mid = r?.message_id ?? r?.messageId
     if (String(mid || '').startsWith('sim-')) return { ok: true, sent: false, simulated: true, message: '模拟发送：未实际发送' }
-    if (mid === undefined) return { ok: false, sent: false, message: '图没发出去或未收到消息回执，看日志' }
+    if (!reallySent(r)) return { ok: false, sent: false, message: '图没发出去或未收到消息回执，看日志' }
     const st = load()
     record(st, { kind: 'shot', title: it.title, bvid: it.bvid, text: `第 ${clockOf(it.sec)} 的截图` })
     save(st)
