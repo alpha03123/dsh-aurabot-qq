@@ -277,6 +277,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
   let friendsAt = 0
   let friendsPending = null
   function refreshFriends() {
+    if (typeof onebot?.call !== 'function') return Promise.resolve()
     if (friendsPending) return friendsPending
     if (Date.now() - friendsAt < 300_000) return Promise.resolve()
     friendsAt = Date.now()
@@ -290,6 +291,36 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       } catch (error) { log.debug?.('暂时取不到 QQ 好友列表：', error.message) }
     })().finally(() => { friendsPending = null })
     return friendsPending
+  }
+  const recentVoices = new Map() // chatId → 最近收到的入站语音
+  function rememberInboundVoice(msg) {
+    if (!msg?.records?.length) return
+    const cid = normalizeChatId(msg.chatId) || String(msg.chatId || '')
+    if (!cid) return
+    const plat = msg.platform || parseChatId(cid)?.platform || defaultPlatform()
+    const list = (recentVoices.get(cid) || []).slice(-7)
+    list.push({
+      chatId: cid,
+      platform: plat,
+      userId: String(msg.userId || ''),
+      messageId: String(msg.messageId || ''),
+      seg: msg.records[msg.records.length - 1],
+      at: Date.now(),
+    })
+    recentVoices.set(cid, list)
+  }
+  function lastInboundVoice({ chatId = '', userId = '' } = {}) {
+    const norm = chatId ? (normalizeChatId(chatId) || String(chatId)) : ''
+    const uid = String(userId || '').trim()
+    const pools = norm ? [recentVoices.get(norm) || []] : [...recentVoices.values()]
+    let best = null
+    for (const list of pools) {
+      for (const item of list) {
+        if (uid && item.userId !== uid) continue
+        if (!best || item.at >= best.at) best = item
+      }
+    }
+    return best
   }
   const privateSources = new Map() // 私聊 QQ 号 → 最近一次临时会话的来源群
   const recentMedia = createRecentMedia({ log }) // 最近发来的图片和表情，短期落盘恢复
@@ -1912,9 +1943,18 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
    */
   async function pokeBack(chatId) {
     const cfg = getConfig()
-    const group = chatId.startsWith('group:') ? chatId.slice(6) : ''
-    const target = group ? lastPoker.get(chatId) || lastSpeaker.get(chatId) : chatId.slice(8)
-    if (!target) return
+    const norm = normalizeChatId(chatId) || String(chatId || '')
+    const addr = parseChatId(norm)
+    if (!addr || addr.platform !== defaultPlatform()) return
+    const caps = gateway?.caps?.(norm)
+    if (caps && caps.poke === false) return
+    if (typeof onebot?.call !== 'function') return
+    const group = addr.kind === 'group' ? addr.id : ''
+    const legacyKey = group ? `group:${group}` : ''
+    const target = group
+      ? (lastPoker.get(chatId) || lastPoker.get(norm) || lastPoker.get(legacyKey) || lastSpeaker.get(chatId) || lastSpeaker.get(norm) || lastSpeaker.get(legacyKey))
+      : addr.id
+    if (!target || !/^\d+$/.test(String(target)) || (group && !/^\d+$/.test(group))) return
     if (!cfg.enabled || cfg.dryRun) return log.info(`试运行（没真戳）→ ${chatId}：戳了戳 ${target}`)
     try {
       await onebot.call('send_poke', { user_id: Number(target), ...(group ? { group_id: Number(group) } : {}) }, { timeoutMs: 10000 })
@@ -1975,11 +2015,13 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     return { src, external, size, maxBytes }
   }
 
-  /** 把一个文件当文件发到 QQ（OneBot upload_private_file / upload_group_file）。file 可以是本机绝对路径、网址或 base64://。 */
+  /** 发送文件：走网关统一 file Part（多平台）或默认协议原生上传。file 可以是本机绝对路径、网址或 base64://。 */
   async function sendFile(chatId, file, name) {
     if (disposed) return null
     const cfg = getConfig()
-    const tgt = targetOf(chatId)
+    const normId = normalizeChatId(chatId) || String(chatId || '')
+    const addr = parseChatId(normId)
+    const tgt = addr && (addr.kind === 'private' || addr.kind === 'group') ? { kind: addr.kind, id: addr.id } : null
     if (!tgt) return null
     if (!cfg.files?.enabled) throw new Error('发文件没打开（面板「聊天」页 → 发文件），打开后才能发')
     const { src, external, size, maxBytes } = checkSendableFile(cfg, file)
@@ -1993,6 +2035,25 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     }
     if (!cfg.enabled) { log.info(`总开关关着，没发 → ${chatId}：[文件] ${label}`); return null }
     if (cfg.dryRun) { log.info(`试运行（没真发）→ ${chatId}：[文件] ${label}`); return null }
+    const useGateway = Boolean(gateway && (addr.platform !== defaultPlatform() || gateway.caps?.(normId) !== null || !onebot))
+    if (useGateway) {
+      const caps = gateway.caps?.(normId)
+      if (caps && caps.file === false) {
+        throw new Error(`当前平台实例（${addr.platform}）不支持发送文件`)
+      }
+      let media
+      if (src.startsWith('base64://')) {
+        media = { bytes: Buffer.from(src.slice(9), 'base64'), name: label }
+      } else if (/^https?:\/\//i.test(src)) {
+        media = { url: src, name: label }
+      } else {
+        media = { path: src, name: label }
+      }
+      return await sendParts(normId, [{ type: 'file', media }], `[文件] ${label}`, { timeoutMs: FILE_TIMEOUT_MS, throwOnError: true })
+    }
+    if (addr.platform !== defaultPlatform() || !/^\d+$/.test(tgt.id) || typeof onebot?.call !== 'function') {
+      throw new Error(`当前会话（${normId}）没有可用的文件发送通道`)
+    }
     const action = tgt.kind === 'group' ? 'upload_group_file' : 'upload_private_file'
     const params = tgt.kind === 'group'
       ? { group_id: Number(tgt.id), file: src, name: label }
@@ -2933,12 +2994,51 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     return Boolean(q && q.ok && q.isBot)
   }
 
-  /** QQ 语音是 silk：让网关转成 wav，再统一成 16kHz 单声道 PCM16。 */
-  async function recordWav(rec, suppliedWav) {
-    if (suppliedWav) return toMono16k(suppliedWav)
-    const info = await onebot.call('get_record', { file: rec.data?.file, out_format: 'wav' }, { timeoutMs: 30000 })
+  /** 把任意音频字节统一转成 16kHz 单声道 PCM16 WAV；非 WAV 格式依赖本机 ffmpeg 转码。 */
+  async function audioToMono16k(raw) {
+    try {
+      return toMono16k(raw)
+    } catch (wavErr) {
+      const cfg = getConfig()
+      const ffmpeg = findFfmpeg(String(cfg.tools?.ffmpeg?.path || cfg.bili?.ffmpegPath || ''))
+      if (!ffmpeg) throw new Error(`音频不是 WAV 且未找到 ffmpeg，无法转码识别（${wavErr?.message || wavErr}）`)
+      const dir = mkdtempSync(join(tmpdir(), 'aurabot-asr-'))
+      const src = join(dir, 'in.audio')
+      const dst = join(dir, 'out.wav')
+      try {
+        writeFileSync(src, raw)
+        await runFfmpeg(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', src, '-vn', '-f', 'wav', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', dst])
+        const out = readFileSync(dst)
+        if (!out.length) throw new Error('ffmpeg 转码结果为空')
+        return out
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  }
+
+  /** 拉取语音并转成 16kHz 单声道 PCM16 WAV：网关渠道走 gatewayMediaBytes，默认平台回退协议取音频。 */
+  async function recordWav(rec, suppliedWav, msg = null) {
+    if (suppliedWav) return await audioToMono16k(suppliedWav)
+    const rawCid = msg?.chatId || ''
+    const normCid = rawCid ? (normalizeChatId(rawCid) || String(rawCid)) : ''
+    const addr = normCid ? parseChatId(normCid) : null
+    const plat = msg?.platform || addr?.platform || defaultPlatform()
+    const useGw = Boolean(gateway && normCid && (plat !== defaultPlatform() || gateway.caps?.(normCid) !== null || !onebot))
+    if (useGw) {
+      const feats = gateway.features?.(normCid)
+      if (feats && feats['media.fetch'] === false) {
+        throw new Error('当前平台实例不支持拉取语音媒体')
+      }
+      const raw = await gatewayMediaBytes(normCid, rec?.data || {}, msg?.messageId, { maxBytes: 30 * 1024 * 1024, timeoutMs: 30000 })
+      return await audioToMono16k(raw)
+    }
+    if (plat !== defaultPlatform() || typeof onebot?.call !== 'function') {
+      throw new Error('当前平台没有可用的语音拉取通道')
+    }
+    const info = await onebot.call('get_record', { file: rec?.data?.file, out_format: 'wav' }, { timeoutMs: 30000 })
     const raw = info?.base64 ? Buffer.from(info.base64, 'base64') : await fetchImage(info?.file || info?.url, { maxBytes: 30 * 1024 * 1024 })
-    return toMono16k(raw)
+    return await audioToMono16k(raw)
   }
 
   async function transcribe(msg, suppliedWav) {
@@ -2946,7 +3046,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       // 本地接口接管：用用户自己的识别服务（最先试）
       if (localApi?.active('asr')) {
         try {
-          const wav = await recordWav(rec, suppliedWav)
+          const wav = await recordWav(rec, suppliedWav, msg)
           const { writeFileSync, mkdirSync } = await import('node:fs')
           const { join } = await import('node:path')
           const dir = localApi.dir() + '/out'
@@ -2963,13 +3063,17 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       const voiceCfg = getConfig().voice
       const viaCloud = async () => {
         if (!asrConfigured(voiceCfg)) return ''
-        try { return await transcribeAudio(await recordWav(rec, suppliedWav), voiceCfg, log) } catch (error) {
+        try { return await transcribeAudio(await recordWav(rec, suppliedWav, msg), voiceCfg, log) } catch (error) {
           log.debug('云端语音识别失败：', error.message)
           return ''
         }
       }
       const viaQq = async () => {
         if (suppliedWav) return '' // 外部输入没有 QQ 消息编号，复用本地/云端/DSH 识别。
+        const normCid = msg?.chatId ? (normalizeChatId(msg.chatId) || String(msg.chatId)) : ''
+        const plat = msg?.platform || (normCid ? parseChatId(normCid)?.platform : '') || defaultPlatform()
+        if (plat !== defaultPlatform() || typeof onebot?.call !== 'function') return ''
+        if (!msg?.messageId) return ''
         try {
           const r = await onebot.call('fetch_ptt_text', { message_id: Number(msg.messageId) || msg.messageId }, { timeoutMs: 20000 })
           return String(r?.text || '').trim()
@@ -2993,7 +3097,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
         if (text) return `[语音] ${text}`
       }
       try {
-        const text = await localTranscribe(rec, suppliedWav)
+        const text = await localTranscribe(rec, suppliedWav, msg)
         if (text) return `[语音] ${text}`
       } catch (error) {
         log.debug('本地语音识别失败：', error.message)
@@ -3007,7 +3111,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
    * DSH 自带识别（SenseVoice）：resolve({audio}) → transcribe(spec, signal)，音频必须是 16kHz 单声道 PCM16 WAV。
    * QQ 语音是 silk：先让网关 get_record 转成 wav，再重采样。
    */
-  async function localTranscribe(rec, suppliedWav) {
+  async function localTranscribe(rec, suppliedWav, msg = null) {
     const stt = dsh.get('speechToText')
     if (!stt || typeof stt.resolve !== 'function' || typeof stt.transcribe !== 'function') throw new Error('DSH 没开启语音输入')
     // 模型还没下载好：顺手开始准备（下载一次，之后常驻），这一条先算没听清
@@ -3018,7 +3122,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       try { stt.prepare(pid) } catch (error) {}
       throw new Error(`识别模型还在准备（${prov.preparation.phase}）`)
     }
-    const spec = stt.resolve({ audio: new Uint8Array(await recordWav(rec, suppliedWav)) })
+    const spec = stt.resolve({ audio: new Uint8Array(await recordWav(rec, suppliedWav, msg)) })
     const r = await stt.transcribe(spec, AbortSignal.timeout(60000))
     const text = typeof r === 'string' ? r : r?.text || r?.transcript
     return text ? String(text).trim() : ''
@@ -3157,7 +3261,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
         case 'image': segments.push({ type: 'image', data: { file: part.media?.id || part.media?.url || '', url: part.media?.url, sub_type: 0, mediaId: part.media?.id, mime: part.media?.mime, messageId: m.messageId } }); break
         case 'sticker': segments.push({ type: 'image', data: { file: part.media?.id || part.media?.url || '', url: part.media?.url, sub_type: 1, summary: part.label, mediaId: part.media?.id, mime: part.media?.mime, messageId: m.messageId } }); break
         case 'face': segments.push({ type: 'face', data: { raw: part.value, id: part.name } }); break
-        case 'voice': segments.push({ type: 'record', data: { file: part.media?.id || part.media?.url || '', url: part.media?.url } }); break
+        case 'voice': segments.push({ type: 'record', data: { file: part.media?.id || part.media?.url || '', url: part.media?.url, mediaId: part.media?.id, mime: part.media?.mime, messageId: m.messageId } }); break
         case 'video': segments.push({ type: 'video', data: { file: part.media?.id || part.media?.url || '', url: part.media?.url } }); break
         case 'file': segments.push({ type: 'file', data: { file: part.media?.id || part.media?.url || '', name: part.media?.name, url: part.media?.url } }); break
         case 'forward': segments.push({ type: 'forward', data: { id: part.id } }); break
@@ -3420,6 +3524,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
         groupEntry.forwardExpanded = true
       }
     }
+    if (msg.records?.length) rememberInboundVoice(msg)
     // 文件先记着，她要读的时候用 qq_read_file 取
     if (msg.files.length) {
       const list = (recentFiles.get(msg.chatId) || []).concat(msg.files.map((f) => ({ ...f, userId: msg.userId, at: now })))
@@ -3692,26 +3797,35 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
 
   async function onPoke(ev) {
     if (disposed) return
+    const rawCid = ev?.chatId ? String(ev.chatId) : ''
+    const evAddr = rawCid ? parseChatId(normalizeChatId(rawCid) || rawCid) : null
+    const evPlat = ev?.platform || evAddr?.platform || defaultPlatform()
+    if (evPlat !== defaultPlatform()) return
     const self = String(ev.self_id || selfId || getConfig().botQQ)
     if (String(ev.target_id) !== self) return
     if (hooks?.poke) {
       try { if (await hooks.poke(ev)) return } catch (error) {}
     }
     if (disposed) return
-    const group = ev.group_id ? String(ev.group_id) : ''
-    const poker = String(group ? ev.user_id : ev.sender_id ?? ev.user_id)
+    const group = ev.group_id ? String(ev.group_id) : (evAddr?.kind === 'group' ? evAddr.id : '')
+    const poker = String(group ? ev.user_id : ev.sender_id ?? ev.user_id ?? (evAddr?.kind === 'private' ? evAddr.id : ''))
     if (!poker || poker === self) return
+    if ((group && !/^\d+$/.test(group)) || !/^\d+$/.test(poker)) return
+    const chatId = rawCid ? (normalizeChatId(rawCid) || rawCid) : (group ? `group:${group}` : `private:${poker}`)
+    const caps = gateway?.caps?.(chatId)
+    if (caps && caps.poke === false) return
     if (group && await titleFilter.shouldIgnore({ group_id: group, user_id: poker })) return
     if (disposed) return
-    const chatId = group ? `group:${group}` : `private:${poker}`
     lastPoker.set(chatId, poker)
     if (Date.now() - (pokeAt.get(chatId) || 0) < 20_000) return
     pokeAt.set(chatId, Date.now())
     let nickname = poker
-    try {
-      const info = group ? await onebot.call('get_group_member_info', { group_id: Number(group), user_id: Number(poker) }, { timeoutMs: 5000 }) : await onebot.call('get_stranger_info', { user_id: Number(poker) }, { timeoutMs: 5000 })
-      nickname = info?.card || info?.nickname || poker
-    } catch (error) {}
+    if (typeof onebot?.call === 'function') {
+      try {
+        const info = group ? await onebot.call('get_group_member_info', { group_id: Number(group), user_id: Number(poker) }, { timeoutMs: 5000 }) : await onebot.call('get_stranger_info', { user_id: Number(poker) }, { timeoutMs: 5000 })
+        nickname = info?.card || info?.nickname || poker
+      } catch (error) {}
+    }
     if (disposed) return
     log.info(`${chatId}：${nickname} 戳了戳她`)
     await onMessage({
@@ -4093,10 +4207,17 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     if (disposed) return
     const cfg = getConfig()
     if (chat.kind !== 'private' || !cfg.enabled || cfg.dryRun || typing.has(key)) return
-    const caps = gateway?.caps?.(chat.chatId)
+    const cid = normalizeChatId(chat.chatId) || String(chat.chatId || '')
+    const addr = cid ? parseChatId(cid) : null
+    const plat = chat.platform || addr?.platform || defaultPlatform()
+    if (plat !== defaultPlatform()) return
+    const caps = gateway?.caps?.(cid)
     if (caps && caps.typing === false) return
-    if (typeof onebot?.call !== 'function') return
-    const ping = () => { if (!disposed) onebot.call('set_input_status', { user_id: Number(chat.userId), event_type: 1 }, { timeoutMs: 5000 }).catch(() => {}) }
+    const feats = caps !== null ? gateway?.features?.(cid) : null
+    if (feats && !feats['chat.typing']) return
+    const uid = String(chat.userId || addr?.id || '')
+    if (!/^\d+$/.test(uid) || typeof onebot?.call !== 'function') return
+    const ping = () => { if (!disposed) onebot.call('set_input_status', { user_id: Number(uid), event_type: 1 }, { timeoutMs: 5000 }).catch(() => {}) }
     ping()
     const started = Date.now()
     const t = setInterval(() => {
@@ -4143,9 +4264,19 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       const cfg = getConfig()
       if (!cfg.enabled || cfg.dryRun) return content
       if (!cfg.chat?.seedHistory) return content
+      const cid = normalizeChatId(chat.chatId) || String(chat.chatId || '')
+      const addr = cid ? parseChatId(cid) : null
+      const plat = chat.platform || addr?.platform || defaultPlatform()
+      if (plat !== defaultPlatform() || typeof onebot?.call !== 'function') return content
+      const caps = gateway?.caps?.(cid)
+      if (caps !== null) {
+        const feats = gateway?.features?.(cid)
+        if (feats && feats['message.history.read'] === false) return content
+        if (caps && caps.history === false) return content
+      }
       const count = Math.min(50, Math.max(1, Number(cfg.chat?.seedHistoryCount) || 20))
       const tgt = targetOf(chat.chatId)
-      if (!tgt) return content
+      if (!tgt || !/^\d+$/.test(tgt.id)) return content
       const r = tgt.kind === 'group'
         ? await onebot.call('get_group_msg_history', { group_id: Number(tgt.id), count }, { timeoutMs: 8000 })
         : await onebot.call('get_friend_msg_history', { user_id: Number(tgt.id), count }, { timeoutMs: 8000 })
@@ -5008,6 +5139,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     speakersOf: (sessionId) => turnState.get(sessionKey(sessionId))?.speakers || [],
     logChat, chatLogRevision: () => chatLogRevision, refreshFriends, isFriend: (qq) => friendIds.has(String(qq)),
     localTranscribe,
+    lastInboundVoice,
     ensureWorkspace,
     chatLogOf,
     forgetChatLog,
