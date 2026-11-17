@@ -76,7 +76,7 @@ export default {
   version: '0.1.0',           // 你自己的版本号，随便写
   api: 3,                     // 按哪一版扩展接口写的（现在是 {{API}}；v1 / v2 仍兼容）
   platforms: ['*'],           // 可选：支持的平台，如 ['*']（平台无关）或 ['qq', 'feishu']；不写默认 ['qq']
-  features: { required: ['message.quote.read'], optional: ['chat.typing'] }, // 可选：能力申报（方案 A，仅展示提示，不阻断加载）
+  features: { required: ['message.quote.read'], optional: ['chat.typing'] }, // 可选：能力申报（仅限 14 个标准 Feature 键；方案 A 仅展示提示，不阻断加载）
   description: '一句话说明',
   defaults: { city: '北京' }, // 设置的默认值
   settings: [                 // 面板自动生成设置表单（见「面板」）
@@ -120,10 +120,10 @@ export default {
 | `api.sendImage(chatId, 图片路径或网址)` | 发图 |
 | `api.sendFile(chatId, 文件路径或网址, 文件名?)` | 把文件（文档、压缩包、音频、视频……）当文件发过去。要先在面板「聊天」页打开「发文件」；本机文件给**绝对路径**，而且只能在 QQ 工作区或主人在面板里加的目录里；单个文件有大小上限（默认 50 MB）。网关在别的机器 / 容器里看不到本机路径时，小文件会自动改用 base64 再试一次 |
 | `api.sendVoiceFile(chatId, 音频文件, 日志备注?)` | 把本机一个音频文件当语音条发出去（不走「念文字」） |
-| `api.sendParts(chatId, parts, opts?)` | **推荐**：发跨平台标准化 `Part[]` 消息段（`text`、`image`、`voice`、`video`、`file`、`mention`、`reply`……），自动走网关降级与出站策略 |
+| `api.sendParts(chatId, parts, opts?)` | **推荐**：发跨平台标准化 `Part[]` 消息段（`text`、`image`、`voice`、`video`、`file`、`mention`、`reply`……），自动走网关降级与出站策略；无网关回退通道下 `card` 与 `forward` 会降级为可读纯文本（如 `[合并转发 #id]`），不产生原生合并转发卡片 |
 | `api.platformOf(chatId)` | 从 `chatId` 解析所属平台（如 `'qq'`、`'feishu'`），无法识别返回 `''` |
 | `api.caps(chatId)` | 查询该聊天所在平台实例的当前 L1 能力表（`Caps`），未就绪返回 `null` |
-| `api.features(chatId?)` | 查询该聊天（缺省默认实例）当前 14 项 L2 能力布尔表；断线/未配置时全 `false`。注意 `sticker.sync.native = true` 仅表示读探测通过且乐观允许写动作，首次遇到底层 `unsupported` 时会运行时降级 |
+| `api.features(chatId?)` | 查询目标聊天的 14 项 L2 能力布尔表；省略 `chatId` 时依次取当前触发平台上下文、模块唯一声明平台或唯一启用实例，若无上下文且存在多个已启用实例则保守返回全 `false`。断线/未配置时全 `false`；无网关传统 QQ 回退路径仅推导带 L1 映射的能力（其余未探测 L2 能力保持 `false`）。注意 `sticker.sync.native = true` 仅表示读探测通过且乐观允许写动作，首次遇到底层 `unsupported` 时会运行时降级 |
 | `api.can(feature, chatId?)` | 快捷检查单项 L2 能力是否可用（返回 `boolean`） |
 | `api.require(feature, chatId?)` | 若目标聊天不具备该 L2 能力则抛出 `FeatureUnavailableError`（`error.reason` 为 `'offline'` / `'disabled-by-config'` / `'unsupported'`） |
 | `api.ownerRoute({ purpose? })` | 查询主人主账号路由的结构化结果 `{ chatId, blocked, reason, target, fallbackUsed }`；受阻或无路由时 `chatId` 为 `''` 且不会静默回退 QQ |
@@ -157,8 +157,8 @@ export default {
 |---|---|
 | `api.on(事件, fn)` | 听事件（见下一节） |
 | `api.emit(事件, ...参数)` | 发事件给别的模块 |
-| `api.tool(fn 或 工具)` | 给她加工具（见「工具」） |
-| `api.defineTool({ name, description, properties, required, execute })` | 做一个工具 |
+| `api.tool(fn 或 工具)` | 给她加工具（见「工具」）；支持给函数、工具或数组元素附加 `platforms` / `features` 进行会话级自动过滤 |
+| `api.defineTool({ name, description, properties, required, platforms, features, execute })` | 做一个工具（支持可选 `platforms` / `features` 元数据） |
 | `api.context(({ chat, sessionId }) => '文字')` | 每轮聊天前塞进她上下文的话（比如「现在北京 20 度」）；返回空串就不塞 |
 | `api.rule((kind, cfg) => '一条规则')` | 补一条她的规则（会放进系统提示词；kind 是 `private` 主人私聊 / `social` 群聊和别人）。告诉她「你会查天气，用 xxx 工具」就写在这里。可以直接给字符串、也可以返回多条（数组）；函数**每一轮都会重新调用**，所以里面可以拼当前设置 |
 | `api.command({ name, aliases, desc, delegatable, run(arg, msg) })` | 主人可在 QQ 私聊或白名单群里发送命令。默认仅主人可用。只有显式设置 `delegatable: true` 的命令，主人才能授权给私聊白名单中的 QQ 用户。此时 `run` 会收到实际发送者的消息，模块应自行限制命令的操作范围。返回的文字回到发命令的聊天。名字可以是中文，中文命令后面可以不加空格；`arg` 已去掉首尾空格。和内置命令同名时模块命令优先 |

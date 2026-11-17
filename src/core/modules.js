@@ -176,8 +176,11 @@ export function modulePlatforms(def) {
 
 function normalizeFeaturesDecl(decl) {
   if (!decl || typeof decl !== 'object' || Array.isArray(decl)) return null
-  const required = Array.isArray(decl.required) ? decl.required.filter((f) => typeof f === 'string' && f.trim()).map((f) => f.trim()) : []
-  const optional = Array.isArray(decl.optional) ? decl.optional.filter((f) => typeof f === 'string' && f.trim()).map((f) => f.trim()) : []
+  const filterKnown = (arr) => (Array.isArray(arr)
+    ? arr.filter((f) => typeof f === 'string' && f.trim()).map((f) => f.trim()).filter((f) => ALL_FEATURE_SET.has(f))
+    : [])
+  const required = filterKnown(decl.required)
+  const optional = filterKnown(decl.optional)
   if (!required.length && !optional.length) return null
   return { required, optional }
 }
@@ -218,8 +221,14 @@ export function checkDef(def, id) {
       return '模块 features 要是对象（例如 { required: [], optional: [] }）'
     }
     for (const key of ['required', 'optional']) {
-      if (def.features[key] !== undefined && (!Array.isArray(def.features[key]) || def.features[key].some((f) => typeof f !== 'string' || !f.trim()))) {
-        return `模块 features.${key} 要是字符串数组`
+      if (def.features[key] !== undefined) {
+        if (!Array.isArray(def.features[key]) || def.features[key].some((f) => typeof f !== 'string' || !f.trim())) {
+          return `模块 features.${key} 要是字符串数组`
+        }
+        const unknown = def.features[key].map((f) => f.trim()).filter((f) => !ALL_FEATURE_SET.has(f))
+        if (unknown.length) {
+          return `模块 features.${key} 包含未知能力键：${unknown.join('、')}`
+        }
       }
     }
   }
@@ -737,19 +746,10 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     }
     return null
   }
-  const deriveQqFallbackFeatures = () => {
-    const baseCaps = {
-      ...QQ_FALLBACK_CAPS,
-      features: {
-        'message.quote.read': true,
-        'message.reaction': true,
-        'media.fetch': true,
-        'chat.member.read': true,
-        'sticker.collect': true,
-        'sticker.sync.native': true,
-      },
-    }
-    const merged = mergeCapsWithFeatures(baseCaps, getConfig()?.platforms?.qq?.caps, 'qq', log)
+  const deriveQqFallbackFeatures = (chatIdOrInstance = 'qq') => {
+    const instance = parseChatId(chatIdOrInstance)?.instance || String(chatIdOrInstance || 'qq')
+    const userCaps = getConfig()?.platforms?.[instance]?.caps
+    const merged = mergeCapsWithFeatures({ ...QQ_FALLBACK_CAPS }, userCaps, instance, log)
     return { ...emptyFeatures(), ...(merged.features || {}) }
   }
   const resolveChatTarget = (chatId, modPlatforms = null) => {
@@ -784,12 +784,12 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
       const hasGwCaps = typeof gw.caps === 'function' ? gw.caps(norm) !== null : true
       if (hasGwCaps) return { ...emptyFeatures(), ...(gw.features(norm) || {}) }
       if (addr?.platform === 'qq' && qqEnabled() && core.onebot?.state === 'connected') {
-        return deriveQqFallbackFeatures()
+        return deriveQqFallbackFeatures(norm)
       }
       return { ...emptyFeatures(), ...(gw.features(norm) || {}) }
     }
     if (addr?.platform === 'qq' && qqEnabled() && core.onebot && (!gw || core.onebot.state === 'connected')) {
-      return deriveQqFallbackFeatures()
+      return deriveQqFallbackFeatures(norm)
     }
     return emptyFeatures()
   }
@@ -1767,13 +1767,26 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
   }
   function toolNames(rec) {
     const names = []
-    const probeFeatures = featuresFor('private:0')
+    const active = activePlatforms()
+    const modPlats = Array.isArray(rec.platforms) ? rec.platforms : []
+    const firstActive = core.gateway?.instances?.()?.find?.((st) => st?.enabled && (modPlats.includes('*') || modPlats.includes(st.platform)))
+    const probePlat = firstActive?.platform
+      || modPlats.find((p) => p !== '*' && (!active.size || active.has(p)))
+      || (active.size === 1 ? [...active][0] : '')
+    const probeCid = firstActive?.instance || (probePlat ? `${probePlat}:private:0` : '')
+    const probeFeatures = featuresFor(probeCid)
+    const filter = { platform: probePlat, features: probeFeatures }
     for (const b of rec.tools) {
+      if (!matchesFilter(b, filter)) continue
       try {
         const r = typeof b === 'function'
-          ? b({ chat: { chatId: 'private:0', kind: 'private', userId: '0' }, level: 'full', sessionId: '', features: probeFeatures })
+          ? b({ chat: { chatId: probeCid || 'private:0', kind: 'private', ...(probePlat ? { platform: probePlat } : {}), userId: '0' }, level: 'full', sessionId: '', features: probeFeatures })
           : b
-        for (const t of [].concat(r || [])) if (t?.name) names.push(t.name)
+        for (const t of [].concat(r || [])) {
+          if (!t?.name) continue
+          if (!matchesFilter(t, filter)) continue
+          names.push(t.name)
+        }
       } catch (error) {}
     }
     return names

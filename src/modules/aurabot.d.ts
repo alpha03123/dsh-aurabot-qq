@@ -216,6 +216,8 @@ export interface Tool {
   description: string
   parameters: any
   output: any
+  platforms?: (Platform | '*')[]
+  features?: Feature[]
   execute(args: any, exec?: any): Promise<any>
 }
 
@@ -225,6 +227,10 @@ export interface ToolSpec {
   /** 参数（JSON Schema 的 properties） */
   properties?: Record<string, any>
   required?: string[]
+  /** 可选：限制该工具仅在匹配平台挂载 */
+  platforms?: (Platform | '*')[]
+  /** 可选：限制该工具仅在目标聊天具备全部指定 L2 能力时挂载 */
+  features?: Feature[]
   /** 返回 { ok, message }：message 是给她看的结果 */
   execute(args: any, exec?: any): any | Promise<any>
 }
@@ -414,7 +420,7 @@ export interface Api {
   platformOf(chatId: ChatId | string): Platform | ''
   /** 查询当前聊天所属平台实例的能力表，实例未启动或不支持返回 null */
   caps(chatId: ChatId | string): Caps | null
-  /** 查询当前聊天或实例的 14 项 L2 能力布尔表（断线或未配时全为 false） */
+  /** 查询目标聊天的 14 项 L2 能力布尔表；省略 chatId 时优先取当前平台上下文，其次取模块唯一平台/唯一启用实例；若无上下文且存在多个启用实例或断线时全为 false */
   features(chatId?: ChatId | string): FeatureMap
   /** 便捷判断某项 L2 能力在目标聊天是否可用 */
   can(feature: Feature, chatId?: ChatId | string): boolean

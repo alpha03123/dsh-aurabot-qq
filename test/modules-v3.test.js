@@ -112,6 +112,8 @@ test('API_VERSION = 3 与 def.features 校验；方案 A 不因能力未满足�
   assert.equal(checkDef({ id: 'okv3', api: 3, platforms: ['*'], features: { required: ['message.quote.read'], optional: ['chat.typing'] }, setup() {} }), '')
   assert.match(checkDef({ id: 'badf1', api: 3, platforms: ['*'], features: ['message.recall'], setup() {} }), /features/)
   assert.match(checkDef({ id: 'badf2', api: 3, platforms: ['*'], features: { required: 'message.recall' }, setup() {} }), /required/)
+  assert.match(checkDef({ id: 'badf3', api: 3, platforms: ['*'], features: { required: ['not.a.feature'] }, setup() {} }), /未知能力键/)
+  assert.match(checkDef({ id: 'badf4', api: 3, platforms: ['*'], features: { optional: ['typo.key'] }, setup() {} }), /未知能力键/)
   assert.match(checkDef({ id: 'badv4', api: 4, platforms: ['*'], setup() {} }), /v4/)
 
   let setups = 0
@@ -282,7 +284,11 @@ test('api.features / api.can / api.require 与 FeatureUnavailableError (offline 
       && e.instance === 'qq#2',
   )
 
-  // 3) offline（断线后触发 offline 且 features 全 false）
+  // 3) 多实例且无当前平台上下文时省略 chatId 保守返回全 false（P2-3）
+  const omittedMulti = capturedApi.features()
+  assert.equal(Object.values(omittedMulti).every((v) => v === false), true)
+
+  // 4) offline（断线后触发 offline 且 features 全 false）
   started.get('qq').disconnect()
   assert.equal(capturedApi.can('message.recall', 'qq:private:1'), false)
   assert.throws(
@@ -293,18 +299,43 @@ test('api.features / api.can / api.require 与 FeatureUnavailableError (offline 
       && e.instance === 'qq',
   )
 
-  // 4) G3 旧 QQ 共存回退：gateway.caps === null 且 core.onebot.state === 'connected'
+  // 5) G3 旧 QQ 共存回退（P1-2 / P1-3）：按实例读 platforms[instance].caps，且无 L1 键的 6 项保持 false
   let legacyApi = null
-  const legacyGw = { instances: () => [{ instance: 'qq', platform: 'qq', enabled: true, state: 'stopped', caps: null }], caps: () => null, features: () => ({}) }
+  const legacyGw = {
+    instances: () => [
+      { instance: 'qq', platform: 'qq', enabled: true, state: 'stopped', caps: null },
+      { instance: 'qq#2', platform: 'qq', enabled: true, state: 'stopped', caps: null },
+    ],
+    caps: () => null,
+    features: () => ({}),
+  }
   const hLegacy = makeHarness(t, {
-    cfgPatch: { platforms: { qq: { enabled: true, caps: { features: { 'message.recall': false } } } } },
+    cfgPatch: {
+      platforms: {
+        qq: { enabled: true },
+        'qq#2': { enabled: true, caps: { features: { 'message.recall': false } } },
+      },
+    },
     builtins: [{ id: 'legacy-probe', api: 3, platforms: ['qq'], setup(api) { legacyApi = api } }],
     onebot: { state: 'connected', call: async () => ({}) },
     gateway: legacyGw,
   })
   await hLegacy.mods.boot()
   assert.equal(legacyApi.can('message.quote.send', 'private:1'), true)
-  assert.equal(legacyApi.can('message.recall', 'private:1'), false, 'G3 回退也应叠加 platforms.qq.caps 裁剪')
+  assert.equal(legacyApi.can('message.recall', 'qq:private:1'), true)
+  assert.equal(legacyApi.can('message.recall', 'qq#2:private:1'), false, 'qq#2 应按自身实例读取 platforms["qq#2"].caps')
+  assert.throws(
+    () => legacyApi.require('message.recall', 'qq#2:private:1'),
+    (e) => e instanceof FeatureUnavailableError && e.reason === 'disabled-by-config' && e.instance === 'qq#2',
+  )
+  assert.equal(legacyApi.can('chat.member.read', 'private:1'), true, 'G3 回退按 Step 1 deriveFeatures 从 memberList 推导 chat.member.read')
+  for (const unprobed of ['message.quote.read', 'message.reaction', 'media.fetch', 'sticker.collect', 'sticker.sync.native']) {
+    assert.equal(legacyApi.can(unprobed, 'private:1'), false, `G3 回退无 L1 映射项 ${unprobed} 应保持 false`)
+  }
+  assert.throws(
+    () => legacyApi.require('sticker.sync.native', 'private:1'),
+    (e) => e instanceof FeatureUnavailableError && e.reason === 'unsupported' && e.instance === 'qq',
+  )
 })
 
 test('全表面过滤：api.tool / api.context / api.command 按实例 L2 能力与平台过滤，mods.commands() 全量目录不变', async (t) => {
@@ -348,6 +379,20 @@ test('全表面过滤：api.tool / api.context / api.command 按实例 L2 能力
               ? api.defineTool({ name: 'v3_recall', description: '撤回', execute: async () => ({ ok: true }) })
               : []
           })
+          // 静态 defineTool 透传 platforms / features（P2-1 / P2-2）
+          api.tool(api.defineTool({
+            name: 'static_qq_recall',
+            description: '静态QQ撤回',
+            platforms: ['qq'],
+            features: ['message.recall'],
+            execute: async () => ({ ok: true }),
+          }))
+          api.tool(api.defineTool({
+            name: 'static_feishu_only',
+            description: '静态仅飞书',
+            platforms: ['feishu'],
+            execute: async () => ({ ok: true }),
+          }))
           api.context({
             platforms: ['qq', 'feishu'],
             features: ['message.quote.read'],
@@ -362,17 +407,17 @@ test('全表面过滤：api.tool / api.context / api.command 按实例 L2 能力
   })
   await mods.boot()
 
-  // status() 中的 toolNames 不应因 { features } 解构而抛错
+  // status() 中的 toolNames 应执行 matchesFilter 过滤（探测实例为 qq：包含 v3_recall + static_qq_recall，不含 static_feishu_only）
   const statusRow = mods.status().find((m) => m.id === 'surface-v3')
-  assert.ok(Array.isArray(statusRow.tools))
+  assert.deepEqual(statusRow.tools, ['v3_recall', 'static_qq_recall'])
 
-  // 同平台不同实例（qq vs qq#2）L2 能力隔离
+  // 同平台不同实例（qq vs qq#2）L2 能力隔离，且 defineTool 透传 platforms/features 生效
   const qqTools = mods.buildTools({ chat: { chatId: 'qq:group:1', kind: 'group', platform: 'qq' }, level: 'social', sessionId: 's1' })
   const qq2Tools = mods.buildTools({ chat: { chatId: 'qq#2:group:1', kind: 'group', platform: 'qq' }, level: 'social', sessionId: 's2' })
   const feishuTools = mods.buildTools({ chat: { chatId: 'feishu:group:oc1', kind: 'group', platform: 'feishu' }, level: 'social', sessionId: 's3' })
-  assert.deepEqual(qqTools.map((x) => x.name), ['v3_recall'])
+  assert.deepEqual(qqTools.map((x) => x.name), ['v3_recall', 'static_qq_recall'])
   assert.deepEqual(qq2Tools.map((x) => x.name), [])
-  assert.deepEqual(feishuTools.map((x) => x.name), [])
+  assert.deepEqual(feishuTools.map((x) => x.name), ['static_feishu_only'])
 
   // api.context 过滤 + features 注入
   assert.equal(mods.contextFor({ chat: { chatId: 'qq:group:1', kind: 'group', platform: 'qq' }, sessionId: 's1' }), 'ctx:qq:group:1:true')

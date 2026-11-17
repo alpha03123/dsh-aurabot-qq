@@ -1,5 +1,5 @@
-// 跨模块共用的 Part ↔ OneBot 消息段回退转换（仅供无网关或 legacy QQ 回退路径使用）。
-// 覆盖 contracts.d.ts 全部 12 种 Part，同时向下兼容历史模块直接传入的 url / file / base64 / userId / all / reply 形态。
+// 跨模块共用的 Part ↔ 平台消息段回退转换（仅供无网关或默认回退路径使用）。
+// 覆盖契约全部 12 种 Part，同时向下兼容历史模块直接传入的 url / file / base64 / userId / all / reply 形态。
 
 import { isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -42,7 +42,7 @@ function formatCardText(part) {
   return [head, summary, url].filter(Boolean).join(' ')
 }
 
-/** 将契约 Part[]（或兼容旧模块简写 Part[]）转换为 OneBot 消息段数组。 */
+/** 将契约 Part[]（或兼容旧模块简写 Part[]）转换为平台消息段数组。 */
 export function partsToSegmentsFallback(parts = [], { faceIdOf } = {}) {
   if (!Array.isArray(parts)) return []
   const out = []
@@ -138,7 +138,7 @@ function mediaFromSegFallback(d = {}) {
   return media
 }
 
-/** 将 OneBot 消息段数组还原为标准化 Part[]（缺少平台 adapter.toParts 时的兜底）。 */
+/** 将平台消息段数组还原为标准化 Part[]（缺少平台 adapter.toParts 时的兜底）。 */
 export function segmentsToPartsFallback(segs = []) {
   if (!Array.isArray(segs)) return []
   const out = []
