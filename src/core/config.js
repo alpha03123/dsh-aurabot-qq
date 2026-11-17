@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { normalizeChatEfforts } from '../chat/effort-command.js'
 import { dataDir, readJson, writeJson } from './store.js'
 import { DEFAULT_GROUP_POLICY } from '../chat/group-policy.js'
-import { LEVELS, PROFILE_PERM_KEYS, PROFILE_PERM_LEVELS, profilePermDefault } from '../chat/access.js'
+import { LEVELS, PROFILE_PERM_KEYS, PROFILE_PERM_LEVELS, profilePermDefault, resolveFriendTarget } from '../chat/access.js'
 import { normalizeChatModels } from '../chat/chat-model.js'
 import { normalizeChatId, parseChatId } from '../gateway/address.js'
 import { DELEGATED_COMMANDS, isDelegatedCommandKey } from '../chat/delegated-commands.js'
@@ -773,7 +773,12 @@ export function normalize(raw) {  const c = deepMerge(DEFAULTS, raw)
   c.speakUp.reminderEnabled = bool(c.speakUp.reminderEnabled, false)
   c.speakUp.reminderLimit = Math.min(10, Math.max(1, Math.round(num(c.speakUp.reminderLimit, 5, 1, 10))))
   c.speakUp.reminderRetry = bool(c.speakUp.reminderRetry, true)
-  c.speakUp.allow = [...new Set((Array.isArray(c.speakUp.allow) ? c.speakUp.allow : []).map((q) => String(q).trim()).filter((q) => /^\d{5,}$/.test(q)))]
+  c.speakUp.allow = [...new Set((Array.isArray(c.speakUp.allow) ? c.speakUp.allow : [])
+    .map((q) => {
+      const t = resolveFriendTarget(q)
+      return t ? (t.legacy ? t.raw : t.canon) : ''
+    })
+    .filter(Boolean))]
   const q = c.qzoneSocial
   q.enabled = bool(q.enabled, true)
   q.replyOwn = bool(q.replyOwn, true)

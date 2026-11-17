@@ -3,6 +3,8 @@
 import { runEffortCommand } from './effort-command.js'
 import { dataDir, readJson, writeJson } from '../core/store.js'
 import { runPermissionsCommand } from './permissions-command.js'
+import { resolveFriendTarget } from './access.js'
+import { sameChat } from '../gateway/address.js'
 
 /**
  * 解析命令：「/silent 30」→ { name: 'silent', arg: '30' }。不是命令返回 null。支持全角斜杠和中文别名。
@@ -152,18 +154,23 @@ export async function runCommand(cmd, msg, deps) {
       const c = getConfig()
       const [verb = '', target = ''] = String(cmd.arg || '').split(/\s+/)
       const list = c.speakUp.allow || []
-      if (!verb) return list.length ? `主动搭话白名单：${list.join('、')}` : '主动搭话白名单是空的，用 /speak add QQ 号 加人'
-      const qq = target.replace(/\D/g, '')
-      if (!/^\d{5,}$/.test(qq) || !/^(add|加|添加|del|rm|删|删除|移除)$/.test(verb)) return '用法：/speak add QQ 号，或 /speak del QQ 号'
-      if (/^(add|加|添加)$/.test(verb)) {
-        if (list.includes(qq)) return `${qq} 已经在白名单里了`
-        // 要能聊得上：顺手加进私聊白名单
-        setConfig({ ...c, speakUp: { ...c.speakUp, allow: [...list, qq] }, allow: { ...c.allow, private: [...new Set([...c.allow.private, qq])] } })
-        return `好，以后也会主动找 ${qq}（对方要是她的好友才发得出去）`
+      if (!verb) return list.length ? `主动搭话白名单：${list.join('、')}` : '主动搭话白名单是空的，用 /speak add 对象地址（或 QQ 号） 加人'
+      const resolved = resolveFriendTarget(target)
+      if (!resolved || !/^(add|加|添加|del|rm|删|删除|移除)$/.test(verb)) return '用法：/speak add 对象地址，或 /speak del 对象地址'
+      const entry = resolved.legacy ? resolved.raw : resolved.canon
+      const matched = (x) => {
+        const cur = resolveFriendTarget(x)
+        return cur ? sameChat(cur.canon, resolved.canon) : String(x) === entry
       }
-      if (!list.includes(qq)) return `${qq} 不在白名单里`
-      setConfig({ ...c, speakUp: { ...c.speakUp, allow: list.filter((x) => x !== qq) } })
-      return `好，不再主动找 ${qq} 了`
+      if (/^(add|加|添加)$/.test(verb)) {
+        if (list.some(matched)) return `${entry} 已经在白名单里了`
+        // 要能聊得上：顺手加进私聊白名单
+        setConfig({ ...c, speakUp: { ...c.speakUp, allow: [...list, entry] }, allow: { ...c.allow, private: [...new Set([...c.allow.private, entry])] } })
+        return `好，以后也会主动找 ${entry}（对方需要能在该平台私聊收信）`
+      }
+      if (!list.some(matched)) return `${entry} 不在白名单里`
+      setConfig({ ...c, speakUp: { ...c.speakUp, allow: list.filter((x) => !matched(x)) } })
+      return `好，不再主动找 ${entry} 了`
     }
     case 'chatty':
       if (!inGroup) return '这个命令要在群里用'

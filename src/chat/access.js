@@ -203,6 +203,52 @@ export function privateCapabilityAllowed(cfg, chat, capability) {
   return allowMatches(cfg.allow?.private, chat, 'private') && allowMatches(cfg.capabilityAllow?.[capability], chat, 'private')
 }
 
+const legacyPlatform = () => parseChatId('private:0')?.platform || ''
+
+export const safeFriendFileKey = (canon) => String(canon || '')
+  .replace(/:/g, '~')
+  .replace(/[^a-zA-Z0-9._~-]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+
+/**
+ * 解析主动搭话 / 朋友白名单条目：兼容旧纯数字编号与规范 ChatId（<platform>:private:<id>）。
+ * 非私聊地址或非法格式返回 null。
+ */
+export function resolveFriendTarget(raw) {
+  const s = String(raw ?? '').trim()
+  if (!s) return null
+  if (/^\d{5,}$/.test(s)) {
+    const plat = legacyPlatform()
+    const canon = normalizeChatId(`${plat}:private:${s}`)
+    if (!canon) return null
+    return {
+      raw: s,
+      legacy: true,
+      canon,
+      sendAs: `private:${s}`,
+      platform: plat,
+      instance: plat,
+      id: s,
+      legacyKey: s,
+      safeFileKey: safeFriendFileKey(canon),
+    }
+  }
+  const parsed = parseChatId(s)
+  if (!parsed || parsed.kind !== 'private' || !parsed.id) return null
+  const canon = normalizeChatId(s)
+  if (!canon) return null
+  return {
+    raw: s,
+    legacy: false,
+    canon,
+    sendAs: canon,
+    platform: parsed.platform,
+    instance: parsed.instance,
+    id: parsed.id,
+    legacyKey: parsed.platform === legacyPlatform() && /^\d{5,}$/.test(parsed.id) ? parsed.id : '',
+    safeFileKey: safeFriendFileKey(canon),
+  }
+}
+
 /** 改资料类操作（改昵称 / 签名 / 头像、改 B 站签名），以及处理好友申请、改白名单的三档权限。 */
 export const PROFILE_PERM_LEVELS = ['off', 'owner', 'all']
 export const DOUYIN_PERM_KEYS = ['douyinBrowse', 'douyinLike', 'douyinComment', 'douyinShareOwner', 'douyinDm']

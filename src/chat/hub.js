@@ -703,7 +703,21 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
   let lastChatAt = 0
   let lastOwnerChatAt = 0
   let lastOwnerChatId = ''
-  const lastPrivateAt = new Map() // 账号 id → 最后一次和这个人私聊的时间（主动搭话白名单用）
+  const lastPrivateAt = new Map() // ChatId / 旧账号 id → 最后一次和这个人私聊的时间（主动搭话白名单用）
+  const touchPrivateAt = (target, at = Date.now()) => {
+    const raw = String(target || '').trim()
+    if (!raw) return
+    const norm = normalizeChatId(raw)
+    if (norm) {
+      const parsed = parseChatId(norm)
+      if (parsed?.kind === 'private' && parsed.id) {
+        lastPrivateAt.set(norm, at)
+        if (parsed.platform === defaultPlatform()) lastPrivateAt.set(parsed.id, at)
+        return
+      }
+    }
+    lastPrivateAt.set(raw, at)
+  }
   const lastInbound = new Map() // chatId → { id, at }，被动回复平台用它填 inResponseTo
   const passivePending = new Map() // chatId → 已过回复窗口、等下一句带出的结果
   let lastBotToOwner = { at: 0, text: '' } // 她在主人私聊里最后说的话
@@ -2330,7 +2344,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     // 只记实际发出去的文本（sentTexts），且试运行（dryRun）没真发也不记——她没说出口的话不能算说过（#211 review）。
     if (!opts.own && sentTexts.length && !cfg.dryRun) saidElsewhere.set(chatId, [...(saidElsewhere.get(chatId) || []), { at: Date.now(), text: sentTexts.join(' ').slice(0, 300) }].slice(-5))
     lastChatAt = Date.now()
-    if (chatId.startsWith('private:')) lastPrivateAt.set(chatId.slice(8), Date.now())
+    if (parseChatId(chatId)?.kind === 'private') touchPrivateAt(chatId, lastChatAt)
     if (isOwnerPrivateChat(ownerRef(), chatId)) lastBotToOwner = { at: Date.now(), text: items.filter((i) => i.kind === 'text' || i.kind === 'voice').map((i) => i.value).join('\n') }
     onActivity?.({ kind: 'out', chatId, reply: text, userText: opts.userText || '' })
     return { missedAt, failed: failures.length, errors: failures, sent: sentTexts.join(' ') }
@@ -3623,7 +3637,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
         try { gateway?.noteSeen?.(msg.sender?.person || ownerId(), msg.chatId, now) } catch {}
       }
     }
-    if (msg.kind === 'private') lastPrivateAt.set(msg.userId, now)
+    if (msg.kind === 'private') touchPrivateAt(msg.chatId || (msg.platform ? `${msg.platform}:private:${msg.userId}` : `private:${msg.userId}`), now)
     onActivity?.({ kind: 'in', chatId: msg.chatId, userId: msg.userId, nickname: msg.nickname, text, direct: msg.kind === 'private' || msg.mentioned || mode === 'must', owner: msgIsOwner })
 
     enqueue({ chatId: msg.chatId, platform: msg.platform, kind: msg.kind, userId: msg.userId, groupId: msg.groupId, nickname: msg.nickname, sender: msg.sender }, content, msg.userId, wantsVoice(msg.text), mode, { stickerPick })
@@ -4340,7 +4354,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     }
     logChat(chatId, chat.nickname, text || '[图片]', senderAcc, { via: source, originId })
     lastChatAt = Date.now()
-    if (isOwnerPrivateChat(ownerRef(), chatId)) { lastOwnerChatAt = lastChatAt; lastOwnerChatId = chatId; lastPrivateAt.set(senderAcc, lastChatAt) }
+    if (isOwnerPrivateChat(ownerRef(), chatId)) { lastOwnerChatAt = lastChatAt; lastOwnerChatId = chatId; touchPrivateAt(chatId, lastChatAt) }
     onActivity?.({ kind: 'in', chatId, userId: senderAcc, nickname: chat.nickname, text, direct: true, owner: true })
     await pushToSession(chat, content, senderAcc, { queryText: text || '[图片]', steer: running.has(chatId), assertAuthorized: validate })
     return { ok: true }
@@ -5008,7 +5022,16 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     get lastOwnerChatAt() { return lastOwnerChatAt },
     ownerChat: resolveOwnerChat,
     isOwnerMuted: () => isOwnerChatMuted(ownerRef(), isMuted),
-    lastPrivateAt: (qq) => lastPrivateAt.get(String(qq)) || 0,
+    lastPrivateAt: (id) => {
+      const direct = lastPrivateAt.get(String(id))
+      if (direct) return direct
+      const norm = normalizeChatId(String(id))
+      if (!norm) return 0
+      const hit = lastPrivateAt.get(norm)
+      if (hit) return hit
+      const parsed = parseChatId(norm)
+      return parsed?.kind === 'private' && parsed.platform === defaultPlatform() ? (lastPrivateAt.get(parsed.id) || 0) : 0
+    },
     // 「别处说过」桥接的只读快照（测试/诊断用）：这个聊天待补进上下文的原话列表
     saidElsewhereOf: (chatId) => (saidElsewhere.get(String(chatId)) || []).map((x) => x.text),
     // 重启兜底的只读快照：从聊天流水里回捞「主动发出过」的最近几条（同进程内补过一次就空）
