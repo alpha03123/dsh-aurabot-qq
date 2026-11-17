@@ -2013,7 +2013,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     }
   }
 
-  async function sendSticker(chatId, query, replyId, userId) {
+  async function sendSticker(chatId, query, replyId, userId, opts = {}) {
     // 面板里把表情包关了：回复里的 <sticker:…>、工具、扩展模块要发的一律不发（#31）
     if (!getConfig().stickers.enabled) {
       log.debug(`表情包关着，「${typeof query === 'object' ? query?.name || '' : query}」不发`)
@@ -2024,12 +2024,41 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       log.debug(`没找到「${query}」这张表情，跳过`)
       return false
     }
-    const seg = stickers.segmentFor(item)
-    if (!seg) return false
-    await sendSegments(chatId, [...quote(replyId), ...mention(userId), seg], `[表情] ${item.name || item.md5.slice(0, 8)}`)
-    stickers.markUsed?.(item.md5)
-    bump('stickers')
-    return true
+    let part = typeof stickers.partFor === 'function' ? stickers.partFor(item) : null
+    if (!part && typeof stickers.segmentFor === 'function') {
+      const seg = stickers.segmentFor(item)
+      if (seg) {
+        const m = mediaFromSeg(seg.data || {})
+        part = {
+          type: 'sticker',
+          ...(Object.keys(m).length ? { media: m } : {}),
+          ...(seg.data?.summary ? { label: String(seg.data.summary) } : {}),
+          native: seg,
+        }
+      }
+    }
+    if (!part) return false
+    const parts = [
+      ...(userId ? [{ type: 'mention', account: String(userId) }] : []),
+      part,
+    ]
+    try {
+      const r = await sendParts(chatId, parts, {
+        replyTo: replyId,
+        replyId,
+        note: `[表情] ${item.name || item.md5.slice(0, 8)}`,
+        throwOnError: Boolean(opts.throwOnError),
+        quiet: Boolean(opts.quiet),
+      })
+      if (!r || (Array.isArray(r.degraded) && r.degraded.includes('sticker dropped'))) return false
+      stickers.markUsed?.(item.md5)
+      bump('stickers')
+      return true
+    } catch (error) {
+      if (opts.throwOnError) throw error
+      if (!opts.quiet) failStore.getStore()?.push(error?.message || String(error))
+      return false
+    }
   }
 
   /** 她回复里写的本机图片：主人私聊之外只认工作区、允许目录和插件数据目录，防止被人诱导发出电脑上的图。 */
@@ -2826,6 +2855,33 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     return got.map((x, i) => ({ type: 'image', data: x.data, mediaType: x.mediaType, name: `quote-${q.uid || 'x'}-${i + 1}` }))
   }
 
+  /** 多平台/传统 OneBot 统一取媒体字节：优先内联 base64，网关会话走 gatewayMediaBytes，纯 URL 走安全 fetchImage，无网关回退 segmentBytes。 */
+  async function mediaBytesForSegment(chatId, seg, { maxBytes = MAX_IMAGE_BYTES, timeoutMs = 20000 } = {}) {
+    const d = seg?.data || {}
+    const limit = Math.min(Math.max(1, Number(maxBytes) || MAX_IMAGE_BYTES), MAX_IMAGE_BYTES)
+    if (typeof d.file === 'string' && d.file.startsWith('base64://')) {
+      const buf = Buffer.from(d.file.slice('base64://'.length), 'base64')
+      if (!buf.length) throw new Error('内联媒体为空')
+      if (buf.length > limit) throw new Error(`媒体太大（超过 ${Math.round(limit / 1048576)}MB）`)
+      return buf
+    }
+    const normCid = chatId ? (normalizeChatId(String(chatId)) || String(chatId)) : ''
+    const addr = normCid ? parseChatId(normCid) : null
+    const useGatewayRef = Boolean(gateway && normCid && (addr?.platform !== defaultPlatform() || gateway.caps?.(normCid) !== null || !onebot))
+    if (useGatewayRef && (d.mediaId || (d.file && !d.url))) {
+      try {
+        return await gatewayMediaBytes(normCid, d, d.messageId, { maxBytes: limit, timeoutMs })
+      } catch (error) {
+        if (!d.url) throw error
+        return fetchImage(d.url, { maxBytes: limit, allowLocal: false, timeoutMs })
+      }
+    }
+    if (useGatewayRef && d.url) {
+      return fetchImage(d.url, { maxBytes: limit, allowLocal: false, timeoutMs })
+    }
+    return segmentBytes(seg, onebot, { maxBytes: limit, allowLocal: false, timeoutMs })
+  }
+
   /** 生图复用收到的媒体段和引用缓存，不接受工具传来的路径、URL 或任意消息 ID。 */
   async function referenceImage(chat, source = 'last') {
     if (disposed) throw disposedError()
@@ -2838,18 +2894,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       seg = recentMediaOf(chat.chatId).at(-1)?.seg
     }
     if (!seg) throw new Error(source === 'quote' ? '当前聊天没有可用的引用图片，请引用带图的消息再试' : '当前聊天最近半小时没有收到图片，请先发一张图')
-    const normCid = normalizeChatId(chat.chatId) || String(chat.chatId || '')
-    const addr = parseChatId(normCid)
-    const useGatewayRef = Boolean(gateway && (addr?.platform !== defaultPlatform() || gateway.caps?.(normCid) !== null || !onebot))
-    if (useGatewayRef && (seg.data?.mediaId || (seg.data?.file && !seg.data?.url))) {
-      try {
-        return await gatewayMediaBytes(normCid, seg.data, seg.data?.messageId)
-      } catch (error) {
-        if (!seg.data?.url) throw error
-        return fetchImage(seg.data.url, { maxBytes: MAX_IMAGE_BYTES, allowLocal: false })
-      }
-    }
-    return segmentBytes(seg, onebot, { maxBytes: MAX_IMAGE_BYTES, allowLocal: false })
+    return mediaBytesForSegment(chat.chatId, seg)
   }
 
   async function repliedToBot(replyId, msg) {
@@ -3307,7 +3352,11 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     //           真正能不能收由工具那边再按「这一轮说话的全是主人」把关
     let stickerPick = 0
     const collectMode = cfg.stickers.collectMode || 'auto'
-    if (allowed.allowed && msg.stickers.length && cfg.stickers.collect) {
+    const normInbCid = normalizeChatId(msg.chatId) || String(msg.chatId || '')
+    const inbAddr = parseChatId(normInbCid)
+    const useGatewayInb = Boolean(gateway && (inbAddr?.platform !== defaultPlatform() || gateway.caps?.(normInbCid) !== null || !onebot))
+    const canCollectSticker = !useGatewayInb || Boolean(gateway.features?.(normInbCid)?.['sticker.collect'])
+    if (allowed.allowed && msg.stickers.length && cfg.stickers.collect && canCollectSticker) {
       const okSrc = msg.kind === 'group' ? cfg.stickers.fromGroups : cfg.stickers.fromPrivate
       if (okSrc) {
         if (collectMode === 'auto') {
@@ -4652,8 +4701,13 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     return { result, sent }
   }
   /** 模拟测试：假装这个会话这一轮是谁在说话（工具里的「主人才能用」靠它判断）。 */
-  function simulateTurn(sessionId, senders) {
-    turnState.set(sessionKey(sessionId), { lastTurn: -1, text: '', senders: new Set(senders.map(String)) })
+  function simulateTurn(sessionId, senders, platform = '') {
+    turnState.set(sessionKey(sessionId), {
+      lastTurn: -1,
+      text: '',
+      senders: new Set(senders.map(String)),
+      ...(platform ? { platform: String(platform) } : {}),
+    })
   }
 
   /** 工具清单可能变了：把已挂载的会话重新挂一遍（DSH 会话窗口直接打字时也能用上新工具）。 */
@@ -4849,6 +4903,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     onGatewayRecall: (chatIdOrHint, messageId) => evictMessageCaches(chatIdOrHint, messageId),
     selfAccountFor,
     gatewayMediaBytes,
+    mediaBytes: mediaBytesForSegment,
     imagesOf,
     quotedInfo,
     repliedToBot,

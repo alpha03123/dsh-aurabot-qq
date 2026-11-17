@@ -1143,6 +1143,7 @@ export function apply(ctx) {
   const use = (id) => mods?.use(id) || null
   const stickers = {
     match: (q) => use('stickers')?.match?.(q) ?? null,
+    partFor: (it) => use('stickers')?.partFor?.(it) ?? null,
     segmentFor: (it) => use('stickers')?.segmentFor?.(it) ?? null,
     markUsed: (md5) => use('stickers')?.markUsed?.(md5),
     pickForReply: (t) => use('stickers')?.pickForReply?.(t) ?? null,
@@ -1565,6 +1566,33 @@ export function apply(ctx) {
     hub, onebot, snowluma, local, groupRoles, mutes, logger, bridge: null, identity, resolveOwnerRoute, routeOwner,
     proactHealth: () => lastBlockedRoute,
     get gateway() { return platformGateway },
+    stickerSync: (() => {
+      const ACTIONS = new Set(['fetch_custom_face', 'add_custom_face', 'modify_custom_face', 'delete_custom_face'])
+      const qqGwInsts = () => (platformGateway?.instances?.() || [])
+        .filter((st) => st?.enabled && st.platform === defaultPlatform && !(st.instance === defaultPlatform && legacyQqActive()))
+      const readyGwInst = () => qqGwInsts()
+        .find((st) => st.caps !== null && platformGateway.features?.(st.instance)?.['sticker.sync.native'])
+      return {
+        ready() {
+          const hit = readyGwInst()
+          if (hit) return true
+          if (qqGwInsts().some((st) => st.caps !== null)) return false
+          return Boolean(legacyQqActive() && onebotState === 'connected')
+        },
+        call(action, params, opts) {
+          if (!ACTIONS.has(action)) throw new Error(`不支持的表情同步动作：${action}`)
+          const hit = readyGwInst()
+          if (hit) return platformGateway.native(hit.instance, action, params, opts)
+          if (qqGwInsts().some((st) => st.caps !== null)) {
+            throw Object.assign(new Error('当前 QQ 网关未启用收藏表情同步（sticker.sync.native=false）'), { code: 'FEATURE_UNAVAILABLE' })
+          }
+          if (!legacyQqActive() || onebotState !== 'connected') {
+            throw Object.assign(new Error('QQ 网关未连接'), { code: 'FEATURE_UNAVAILABLE' })
+          }
+          return onebot.call(action, params, opts)
+        },
+      }
+    })(),
     root: ROOT,
     // 模块经 api.proactive 访问出站治理面（modules.js 里读它）
     outbound,

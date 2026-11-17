@@ -3801,13 +3801,26 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         s && s.enabled && ['ready', 'standby'].includes(s.phase) ? h(Btn, { small: true, onClick: async () => { toast('正在测试…'); const r = await post('/voice/asr-test', { text: '今天想吃白米饭' }); toast(r.ok ? '念的是「' + r.said + '」，听成了「' + r.heard + '」' : r.message) } }, '测试一下') : null)
     }
 
-    function Stickers({ draft, setDraft, toast }) {
+    function Stickers({ st, draft, setDraft, toast }) {
       const f = useField(draft, setDraft)
       const [items, setItems] = useState(null)
       const [hasMore, setHasMore] = useState(false)
       const [stickerTotal, setStickerTotal] = useState(0)
       const [moreBusy, setMoreBusy] = useState(false)
       const fileRef = useRef(null)
+      const platRows = Array.isArray(st && st.platforms) && st.platforms.length
+        ? st.platforms
+        : Object.entries((draft && draft.platforms) || {}).map(([k, p]) => ({
+          instance: k,
+          platform: (p && p.platform) || String(k).split('#')[0] || k,
+          enabled: Boolean(p && p.enabled !== false),
+          legacy: k === 'qq' && Boolean(draft && draft.enabled),
+        }))
+      const activePlats = platRows.filter((x) => x && (x.legacy || x.enabled !== false))
+      const qqPlats = activePlats.filter((x) => x.platform === 'qq')
+      const hasActiveQq = Boolean(qqPlats.length || (st && st.onebot && st.onebot.state === 'connected') || (draft && draft.enabled && draft.botQQ))
+      const canQqSync = hasActiveQq && (!qqPlats.some((x) => x.caps) || qqPlats.some((x) => !x.caps || !x.caps.features || x.caps.features['sticker.sync.native'] !== false))
+      const hasStickerImageFallback = activePlats.some((x) => x.platform !== 'qq' && (!x.caps || (x.caps.sticker === false && x.caps.image !== false)))
       const load = () => getCached('/stickers?limit=40&offset=0').then((r) => {
         setItems(r.items || []); setHasMore(Boolean(r.hasMore)); setStickerTotal(Number(r.total) || 0)
       })
@@ -3892,9 +3905,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const dropPicked = async () => {
         if (!picked.length) return
         const n = picked.length
-        const ask = dropQQ ? '删掉选中的 ' + n + ' 张表情？（QQ 收藏里也会一起删）' : '删掉选中的 ' + n + ' 张表情？（只删本地库，QQ 收藏保留）'
+        const syncQq = Boolean(canQqSync && dropQQ)
+        const ask = syncQq
+          ? '删掉选中的 ' + n + ' 张表情？（QQ 收藏里也会一起删）'
+          : (canQqSync ? '删掉选中的 ' + n + ' 张表情？（只删本地库，QQ 收藏保留）' : '删掉选中的 ' + n + ' 张表情？')
         if (!confirm(ask)) return
-        const r = await post('/sticker/delete-batch', { md5s: picked, fromQQ: dropQQ })
+        const r = await post('/sticker/delete-batch', { md5s: picked, fromQQ: syncQq })
         toast(r.message || (r.ok ? '删掉了 ' + n + ' 张' : '没删成'), r.ok ? 'ok' : 'err')
         if (r.ok) { removeStickers(picked); setPicked([]) }
       }
@@ -3925,27 +3941,28 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('span', { key: 'n', className: 'ab-muted ab-small' }, '已选 ' + picked.length + ' 张'),
           h(Btn, { key: 'all', small: true, kind: 'ghost', onClick: () => setPicked(allPicked ? [] : (items || []).map((i) => i.md5)) }, allPicked ? '全不选' : '全选'),
           h(Btn, { key: 'inv', small: true, kind: 'ghost', onClick: () => setPicked((items || []).map((i) => i.md5).filter((md5) => !picked.includes(md5))) }, '反选'),
-          h('label', { key: 'qq', className: 'ab-small ab-muted', title: '取消勾选就只删本地库，QQ 收藏里的表情留着' },
-            h('input', { type: 'checkbox', checked: dropQQ, onChange: (e) => setDropQQ(e.target.checked) }), ' 连 QQ 收藏一起删'),
+          canQqSync ? h('label', { key: 'qq', className: 'ab-small ab-muted', title: '取消勾选就只删本地库，QQ 收藏里的表情留着' },
+            h('input', { type: 'checkbox', checked: dropQQ, onChange: (e) => setDropQQ(e.target.checked) }), ' 连 QQ 收藏一起删') : null,
           h(Btn, { key: 'del', small: true, kind: 'danger', disabled: !picked.length, onClick: dropPicked }, '删除所选'),
           h(Btn, { key: 'end', small: true, kind: 'ghost', onClick: () => { setPicking(false); setPicked([]) } }, '取消多选'),
-        ]
+        ].filter(Boolean)
         : [
           h('input', { key: 'file', ref: fileRef, type: 'file', accept: 'image/*', multiple: true, style: { display: 'none' }, onChange: (e) => { upload(e.target.files); e.target.value = '' } }),
           h('input', { key: 'name', className: 'ab-input sm', style: { width: 140 }, placeholder: '名字（可不填）', value: newName, onChange: (e) => setNewName(e.target.value) }),
           h(Btn, { key: 'up', small: true, onClick: () => fileRef.current && fileRef.current.click() }, '＋ 上传'),
-          h(Btn, { key: 'imp', small: true, title: '把机器人号 QQ「我喜欢的」里已有的表情导进来', onClick: async () => { toast('正在从 QQ 收藏导入…'); const r = await post('/sticker/import-qq'); toast(r.message, r.ok === false ? 'err' : 'ok'); load() } }, '从 QQ 收藏导入'),
+          canQqSync ? h(Btn, { key: 'imp', small: true, title: '把机器人号 QQ「我喜欢的」里已有的表情导进来', onClick: async () => { toast('正在从 QQ 收藏导入…'); const r = await post('/sticker/import-qq'); toast(r.message, r.ok === false ? 'err' : 'ok'); load() } }, '从 QQ 收藏导入') : null,
           h(Btn, { key: 'ai', small: true, kind: 'primary', disabled: jobRunning, title: '用「起名用的模型」看图（默认跟随聊天模型），给还没有名字或标签的表情起名字、打标签（后台跑，可以关掉面板）', onClick: startCaption }, 'AI 补全标签'),
           h('label', { key: 'redo', className: 'ab-small ab-muted', title: '勾上以后连已经有名字的也重新起一遍（会重新花模型调用）' },
             h('input', { type: 'checkbox', checked: redoAll, onChange: (e) => setRedoAll(e.target.checked) }), ' 全部重做'),
           h(Btn, { key: 'pick', small: true, kind: 'ghost', onClick: () => { setPicking(true); setPicked([]) } }, '多选'),
           h(Btn, { key: 'reload', small: true, kind: 'ghost', onClick: () => { bustCache(); load() } }, '刷新'),
-        ]
+        ].filter(Boolean)
       return h('div', { className: 'ab-grid' },
         h(Card, { title: '表情包', right: f.sw('stickers.enabled'), desc: '回复里写 <sticker:名字> 就会发对应的表情；也会按概率自动配一张。' },
+          hasStickerImageFallback ? h('div', { className: 'ab-note', style: { marginBottom: 8 } }, '当前包含不支持原生表情包的平台（如飞书），发送表情包时会自动按图片降级发出。') : null,
           h(Row, { label: '自动配表情的概率' }, f.percent('stickers.autoChance')),
-          h(Row, { label: '夹 QQ 小黄脸', hint: '回复里能夹 QQ 自带的系统表情（/捂脸 /斜眼笑 这种），和文字在同一条消息里' }, f.sw('stickers.faces')),
-          h(Row, { label: '偷表情', hint: '别人发的表情包会被收藏（普通照片不收）。' }, f.sw('stickers.collect'), h('span', { className: 'ab-muted' }, '从群里'), f.sw('stickers.fromGroups'), h('span', { className: 'ab-muted' }, '从私聊'), f.sw('stickers.fromPrivate')),
+          hasActiveQq ? h(Row, { label: '夹 QQ 小黄脸', hint: '回复里能夹 QQ 自带的系统表情（/捂脸 /斜眼笑 这种），和文字在同一条消息里' }, f.sw('stickers.faces')) : null,
+          h(Row, { label: '偷表情', hint: hasActiveQq ? '别人发的表情包会被收藏（普通照片不收）。' : '收到兼容的表情图片时会收进本地库（普通照片不收）。' }, f.sw('stickers.collect'), h('span', { className: 'ab-muted' }, '从群里'), f.sw('stickers.fromGroups'), h('span', { className: 'ab-muted' }, '从私聊'), f.sw('stickers.fromPrivate')),
           draft.stickers.collect ? h(Row, { label: '怎么偷', hint: '「ta挑」只递给ta看，喜欢才收；「只听主人的」只在主人私聊 / 这一轮只有主人时ta才可自己收，有别人在场要主人发话' },
             f.choices('stickers.collectMode', [
               { value: 'auto', label: '全都偷', desc: '看到就收，不用ta同意（默认，保持原行为）' },
@@ -3953,7 +3970,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               { value: 'owner', label: '只听主人的', desc: '只有主人私聊 / 只有主人时ta才可自己收；别人在场要主人发话' },
             ])) : null,
           h(Row, { label: '每小时最多收' }, f.num('stickers.maxPerHour', { min: 0 }), h('span', { className: 'ab-muted' }, '张')),
-          h(Row, { label: '表情库最多存', hint: 'QQ 收藏表情有数量上限，满了就收不进去了。超过这个数会自动清掉最少用的偷来的表情（你自己加的不会动）' }, f.num('stickers.maxLibrary', { min: 20, max: 2000 }), h('span', { className: 'ab-muted' }, '张')),
+          h(Row, { label: '表情库最多存', hint: canQqSync ? 'QQ 收藏表情有数量上限，满了就收不进去了。超过这个数会自动清掉最少用的偷来的表情（你自己加的不会动）' : '超过这个数会自动清掉最少用的偷来的表情（你自己加的不会动）。' }, f.num('stickers.maxLibrary', { min: 20, max: 2000 }), h('span', { className: 'ab-muted' }, '张')),
           h(Row, { label: '看图起名', hint: '收下后让模型看图起个 12 字以内的备注；库里已有的名字可以点右边「AI 补全标签」批量补' }, f.sw('stickers.caption')),
           h(Row, { label: '起名用的模型', hint: 'AI 补全标签 / 看图起名都要看图：留空就用「模型」页那个聊天模型，也可以单独挑一个 DSH 里已经接好的视觉模型。' },
             h(Select, {
@@ -3980,13 +3997,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               ? h(Btn, { key: 'stop', small: true, kind: 'ghost', onClick: async () => { const r = await post('/sticker/caption-stop', {}); toast(r.message || '停了') } }, '停')
               : h(Btn, { key: 'ok', small: true, kind: 'ghost', onClick: () => setJob(null) }, '知道了'),
           ) : null,
-          items === null ? h(Empty, { icon: '⏳', text: '加载中…' }) : items.length === 0 ? h(Empty, { icon: '🐳', text: '表情库还是空的。别人在群里发表情包，ta会自己收；也可以点右上角上传，或者「从 QQ 收藏导入」机器人号已经收藏的表情。' }) :
+          items === null ? h(Empty, { icon: '⏳', text: '加载中…' }) : items.length === 0 ? h(Empty, { icon: '🐳', text: canQqSync ? '表情库还是空的。别人在群里发表情包，ta会自己收；也可以点右上角上传，或者「从 QQ 收藏导入」机器人号已经收藏的表情。' : '表情库还是空的。收到合适表情时 ta 会收进本地库；也可以点击右上角上传。' }) :
             h('div', { className: cx('ab-stickers', picking && 'picking') },
-              items.map((it) => h(StickerCell, { key: it.md5, it, onChanged: load, onDeleted: (md5) => removeStickers([md5]), onEdited: editSticker, toast, picking, selected: picked.includes(it.md5), onToggle: toggle }))),
+              items.map((it) => h(StickerCell, { key: it.md5, it, canQqSync, onChanged: load, onDeleted: (md5) => removeStickers([md5]), onEdited: editSticker, toast, picking, selected: picked.includes(it.md5), onToggle: toggle }))),
           hasMore ? h('div', { className: 'ab-flex', style: { marginTop: 8 } },
             h(Btn, { small: true, kind: 'ghost', disabled: moreBusy, onClick: loadMore }, moreBusy ? '加载中…' : `加载更多（已显示 ${items ? items.length : 0}/${stickerTotal}）`)) : null,
         ),
-        h(Card, {
+        hasActiveQq ? h(Card, {
           title: '贴表情',
           right: f.sw('stickers.react'),
           desc: '默认关。打开后看到谁的消息，就可能贴个表情——不一定回话，只在旁边看着也行。emoji 直接给 Unicode 码点（🍬 127852、👍 128077），QQ 老表情是另一套编号（❓ 10068），两种混着用都行。',
@@ -4017,8 +4034,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
               )
             })()),
           h(Row, { label: '每小时上限', hint: '每个会话单独算，免得在热闹的群里刷屏' }, f.range('stickers.reactMaxPerHour', 0, 60, 1, (v) => v + ' 次')),
-        ),
-        h(FaceMapCard, null),
+        ) : null,
+        hasActiveQq ? h(FaceMapCard, null) : null,
       )
     }
 
@@ -4026,7 +4043,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
      * 一张表情：名字（备注）和标签都能直接改，改完离开输入框就保存（#31：模型起的名字 / 标签不对时手动纠正）。
      * 多选模式下整张卡片就是勾选框，点一下就选中。
      */
-    function StickerCell({ it, onChanged, onDeleted, onEdited, toast, picking, selected, onToggle }) {
+    function StickerCell({ it, canQqSync, onChanged, onDeleted, onEdited, toast, picking, selected, onToggle }) {
       const [name, setName] = useState(it.name || '')
       const tagText = (it.tags || []).join(' ')
       const [tags, setTags] = useState(tagText)
@@ -4052,7 +4069,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           onBlur: () => { if (!picking && name !== (it.name || '')) save({ name }, '名字') } }),
         h('input', { className: 'tg', value: tags, placeholder: '加标签，空格隔开', title: '标签，空格或逗号隔开，最多 5 个', readOnly: Boolean(picking), tabIndex: picking ? -1 : undefined, onChange: (e) => setTags(e.target.value),
           onBlur: () => { if (!picking && tags.trim() !== tagText) save({ tags: tags.split(/[\s,，、#]+/).map((x) => x.trim()).filter(Boolean).slice(0, 5) }, '标签') } }),
-        picking ? null : h('button', { type: 'button', className: 'ab-btn sm danger x', title: '删除', onClick: async () => { if (!confirm('删掉这张表情？（QQ 收藏里也会删）')) return; const r = await post('/sticker/delete', { md5: it.md5 }); if (r.ok) { if (onDeleted) onDeleted(it.md5); else onChanged() } } }, '✕'),
+        picking ? null : h('button', { type: 'button', className: 'ab-btn sm danger x', title: '删除', onClick: async () => { if (!confirm(canQqSync ? '删掉这张表情？（QQ 收藏里也会删）' : '删掉这张表情？')) return; const r = await post('/sticker/delete', { md5: it.md5 }); if (r.ok) { if (onDeleted) onDeleted(it.md5); else onChanged() } } }, '✕'),
       )
     }
 
