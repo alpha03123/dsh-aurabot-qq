@@ -1194,9 +1194,9 @@ export function apply(ctx) {
     memoryScore: (text) => use('memory')?.topicScore?.(text) ?? 0,
     dislikes: (qq) => use('memory')?.dislikes?.(qq) ?? false,
     onMemoryCommand: (msg, text) => use('memory')?.handleCommand?.(msg, text),
-    // QQ 里的主人命令（模块加的命令优先）
+    // 主人命令（模块加的命令优先；按当前对话平台和 L2 能力过滤）
     onCommand: async (msg, markSensitive, ownerStillCurrent) => {
-      const commands = mods.commands()
+      const commands = mods.commands({ platform: msg.platform, chatId: msg.chatId })
       const cmd = parseCommand(msg.text, commands)
       if (!cmd) return null
       if (!ownerStillCurrent()) {
@@ -1216,7 +1216,7 @@ export function apply(ctx) {
         return String((await cmd.ext.run(cmd.arg, msg)) ?? '')
       }
       if (cmd.name === 'permissions' && !markSensitive(cmd.name)) return ''
-      return runCommand(cmd, msg, { getConfig, setConfig, mutes, hub, identity, mood: use('mood'), memory: use('memory'), qzone: use('diary'), song: use('song'), listModels, reasoningFor: (provider, model) => modelReasoning(ctx, provider, model, { refresh: true }), defaultModel: () => defaultModel(ctx, { model: {} }), extraCommands: mods.commands() })
+      return runCommand(cmd, msg, { getConfig, setConfig, mutes, hub, identity, mood: use('mood'), memory: use('memory'), qzone: use('diary'), song: use('song'), listModels, reasoningFor: (provider, model) => modelReasoning(ctx, provider, model, { refresh: true }), defaultModel: () => defaultModel(ctx, { model: {} }), extraCommands: commands })
     },
     isMuted: (chatId) => mutes.muted(chatId),
     moodEffects: () => use('mood')?.effects?.() ?? null,
@@ -1263,8 +1263,20 @@ export function apply(ctx) {
       const curAccs = curOwner ? (identity.accountsOf(curOwner) || []) : []
       syncOwnerFallbackOnAccountChange({ prevOwner: curOwner, prevAccounts: curAccs, allowAutoAppend: false })
     })
+    let capsRemountTimer = null
+    const offCapsChanged = gw.onCapsChanged?.(() => {
+      if (capsRemountTimer) clearTimeout(capsRemountTimer)
+      capsRemountTimer = setTimeout(() => {
+        capsRemountTimer = null
+        try { hub?.remountAll?.('平台能力变化') } catch (error) { logger.child('gateway').warn('能力变化重挂工具失败：', error?.message || error) }
+      }, 100)
+      capsRemountTimer.unref?.()
+    })
     gw.sync().catch((error) => logger.child('gateway').warn('网关首次同步失败：', error?.message || error))
-    return () => { offMsg?.(); offFlushed?.(); offState?.() }
+    return () => {
+      if (capsRemountTimer) { clearTimeout(capsRemountTimer); capsRemountTimer = null }
+      offCapsChanged?.(); offMsg?.(); offFlushed?.(); offState?.()
+    }
   }
   let gatewayOff = null
   if (platformGateway) gatewayOff = gatewayReady(platformGateway)
@@ -3844,7 +3856,9 @@ export function apply(ctx) {
     const msg = { ...chat, sender: { person: owner ? identity.owner() : null, isOwner: owner }, nickname: owner ? cfg.ownerName || '主人' : '路人', role: '', messageId: 'sim', text, mentioned: Boolean(b.mentioned), replyId: '', images: [], stickers: [], records: [], forwards: [], raw: { simulated: true } }
     const { sent } = await hub.capture(async () => {
       if (text) {
-        const cmd = (owner || chat.kind === 'private') && /^\s*[/／]/.test(text) ? parseCommand(text, mods.commands()) : null
+        const cmd = (owner || chat.kind === 'private') && /^\s*[/／]/.test(text)
+          ? parseCommand(text, mods.commands({ platform: chat.platform, chatId: chat.chatId }))
+          : null
         if (cmd && !owner && !canUseDelegatedCommand(cfg, msg, delegatedCommandKey(cmd))) {
           steps.push('这个私聊对象没有使用该命令的权限')
         } else if (cmd && cmd.ext) {

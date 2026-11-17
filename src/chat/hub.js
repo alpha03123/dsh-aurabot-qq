@@ -15,6 +15,7 @@ import { dataDir, readJson, writeJson } from '../core/store.js'
 import { isDefiniteFailure } from '../onebot/client.js'
 import { parseMessageEvent, gifFrames, segmentsOf } from './inbound.js'
 import { parseReply, bubbleDelay, wantsVoice, itemsToLine, cleanOutboundText, cleanOutboundSegments, clockLabel } from './reply.js'
+import { partsToSegmentsFallback } from './part-fallback.js'
 import { decideGroupReply, engagedHint, pickAutoReply, pickDirectRequester, policyFor, sameNameNote, topicRelevance } from './group-policy.js'
 import { checkAllowed, levelFor, presetFor, isOwner, isOwnerPrivateChat, isOwnerChatMuted, groupOwnerTools } from './access.js'
 import { fetchImage, segmentBytes } from '../core/net.js'
@@ -1534,35 +1535,6 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     return { parts, replyTo }
   }
 
-  function partsToSegmentsFallback(parts = []) {
-    const out = []
-    for (const p of parts) {
-      if (!p || typeof p !== 'object') continue
-      if (p.type === 'text') {
-        if (p.text) out.push({ type: 'text', data: { text: String(p.text) } })
-      } else if (p.type === 'mention') {
-        const qq = p.all ? 'all' : String(p.userId || '')
-        if (qq) out.push({ type: 'at', data: { qq } })
-      } else if (p.type === 'face') {
-        if (p.id != null) out.push({ type: 'face', data: { id: String(p.id) } })
-      } else if (p.type === 'reply') {
-        if (p.messageId != null) out.push({ type: 'reply', data: { id: String(p.messageId) } })
-      } else if (p.type === 'image' || p.type === 'voice' || p.type === 'video' || p.type === 'file') {
-        const file = p.url
-          ? String(p.url)
-          : p.file
-            ? (isAbsolute(String(p.file)) ? pathToFileURL(String(p.file)).href : String(p.file))
-            : p.base64
-              ? `base64://${p.base64}`
-              : ''
-        if (!file) continue
-        const segType = p.type === 'voice' ? 'record' : p.type
-        out.push({ type: segType, data: p.type === 'file' && p.name ? { file, name: String(p.name) } : { file } })
-      }
-    }
-    return out
-  }
-
   /**
    * 统一多平台出站发送：接收平台无关的 Part[]，经清洗与门闸后经 gateway.send（无网关时对默认平台退回 sendSegments）。
    */
@@ -1596,7 +1568,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     const defaultPlatform = parseChatId('private:0')?.platform
     const useGateway = Boolean(gateway && (addr.platform !== defaultPlatform || gateway.caps?.(normId) !== null || !onebot))
     if (!useGateway) {
-      const segs = partsToSegmentsFallback(cleaned)
+      const segs = partsToSegmentsFallback(cleaned, { faceIdOf: faces?.idOf })
       if (!segs.length) return settleOutboundFailed(verdict)
       const head = replyTo ?? replyId ? [{ type: 'reply', data: { id: String(replyTo ?? replyId) } }] : []
       const r = await sendSegments(chatId, [...head, ...segs], note, { ...opts, force, isCurrent, throwOnError, timeoutMs, quiet, queueKind, queueTtlMs, sensitive, outboundVerdict: verdict })
@@ -1605,7 +1577,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     const cfg = getConfig()
     const cap = captureStore.getStore()
     if (cap) {
-      cap.push({ chatId: normId, note, parts: cleaned, message: partsToSegmentsFallback(cleaned) })
+      cap.push({ chatId: normId, note, parts: cleaned, message: partsToSegmentsFallback(cleaned, { faceIdOf: faces?.idOf }) })
       if (outputScope.getStore()?.chatId === chatId || outputScope.getStore()?.chatId === normId) outputScope.getStore().sent++
       settleOutbound(verdict, 'sent')
       return { messageId: 'sim-' + cap.length, message_id: 'sim-' + cap.length }

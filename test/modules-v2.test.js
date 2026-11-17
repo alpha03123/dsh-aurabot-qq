@@ -110,16 +110,18 @@ function makeTestGateway(t, { platforms = {}, nativeHandlers = {}, ids = ['fake'
   return { gateway, adaptersOf: (id) => adaptersById.get(id) || [] }
 }
 
-test('API_VERSION = 2 且向后兼容 MIN_API_VERSION = 1；v1 模块默认 platforms = ["qq"]', () => {
-  assert.equal(API_VERSION, 2)
+test('API_VERSION = 3 且向后兼容 MIN_API_VERSION = 1；v1 模块默认 platforms = ["qq"]', () => {
+  assert.equal(API_VERSION, 3)
   assert.equal(MIN_API_VERSION, 1)
   assert.deepEqual(modulePlatforms({ id: 'old', setup() {} }), ['qq'])
   assert.deepEqual(modulePlatforms({ id: 'multi', api: 2, platforms: ['*', 'fake'], setup() {} }), ['*', 'fake'])
+  assert.deepEqual(modulePlatforms({ id: 'v3mod', api: 3, platforms: ['*'], setup() {} }), ['*'])
   assert.equal(checkDef({ id: 'old', api: 1, setup() {} }), '')
   assert.equal(checkDef({ id: 'new', api: 2, platforms: ['*'], setup() {} }), '')
+  assert.equal(checkDef({ id: 'v3mod', api: 3, platforms: ['*'], features: { required: ['message.quote.read'], optional: ['chat.typing'] }, setup() {} }), '')
   assert.match(checkDef({ id: 'bad', api: 2, platforms: [], setup() {} }), /platforms/)
   assert.match(checkDef({ id: 'bad2', api: 2, platforms: 'qq', setup() {} }), /platforms/)
-  assert.match(checkDef({ id: 'future', api: 3, setup() {} }), /v3/)
+  assert.match(checkDef({ id: 'future', api: 4, setup() {} }), /v4/)
 })
 
 test('内置模块平台声明完备，只开假平台时 QQ 模块跳过（「未启用对应平台」），[*] 模块全部正常运行', async (t) => {

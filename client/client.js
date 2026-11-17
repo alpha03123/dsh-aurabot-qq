@@ -7758,6 +7758,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       if (m.running === 'user') return { cls: 'mine', text: '在跑' }
       if (m.running === 'builtin' && m.fallback) return { cls: 'warn', text: '你的版本没加载成功，先用内置的' }
       if (m.running === 'builtin') return { cls: '', text: '在跑' }
+      if (!m.error && m.skipReason) return { cls: 'dim', text: m.skipReason }
       return { cls: 'err', text: m.error ? '没加载成功' : '没在跑' }
     }
 
@@ -7780,7 +7781,8 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         reload()
         return r
       }
-      const what = [m.tools.length ? '工具：' + m.tools.join('、') : '', m.commands.length ? '命令：' + m.commands.map((c) => '/' + c).join(' ') : ''].filter(Boolean).join('　')
+      const reqFeat = m.features?.required?.length ? '依赖能力：' + m.features.required.join('、') : ''
+      const what = [m.tools.length ? '工具：' + m.tools.join('、') : '', m.commands.length ? '命令：' + m.commands.map((c) => '/' + c).join(' ') : '', reqFeat].filter(Boolean).join('　')
       const errs = (m.error ? [{ label: '加载', message: m.error }] : []).concat(m.errors || [])
       return h('div', { className: 'ab-mod' },
         h('div', { className: 'main' },
