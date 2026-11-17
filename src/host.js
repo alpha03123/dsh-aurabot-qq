@@ -38,7 +38,7 @@ import { parseCommand, runCommand, createMutes, commandList } from './chat/comma
 import { ownerPrivateChatIds } from './chat/access.js'
 import { changePermissions, changePrivateWhitelist, privatePermissionCatalog } from './chat/permission-policy.js'
 import { canUseDelegatedCommand, delegatedCommandKey, runPersonalModelCommand } from './chat/delegated-commands.js'
-import { listPersonas, readPersona, savePersona, deletePersona, currentPersonaText, rulesText, qqSessionRulesText, seedPersonas } from './persona/personas.js'
+import { listPersonas, readPersona, savePersona, deletePersona, currentPersonaText, rulesText, qqSessionRulesText, QQ_POKE_RULE, seedPersonas } from './persona/personas.js'
 import { createModules, API_VERSION } from './core/modules.js'
 import { createCommunity, REGISTRY_URL, GITEE_MIRROR } from './core/community.js'
 import { createApprovalRelay } from './security/approval.js'
@@ -370,7 +370,34 @@ export function apply(ctx) {
 
   // ---------- 人格与规则：通过提示词变量注入到 Aurabot 的两个 preset ----------
   const variable = (n, fn) => ctx.effect(() => ctx.systemPrompt.variable(n, (...args) => captureSystemPrompt(n, cleanText(fn(...args)))), `aurabot: 变量 ${n}`)
-  const rulesOpts = (kind) => ({ ...(mods ? { off: mods.builtinOff(), extra: mods.rules(kind), activePlatforms: mods.activePlatforms?.() } : {}), identity })
+  const hasNonDefaultQqInstance = () => {
+    const plats = getConfig()?.platforms
+    if (plats && typeof plats === 'object') {
+      for (const [inst, v] of Object.entries(plats)) {
+        if (!v || v.enabled === false) continue
+        const p = String(v.platform || inst.split(':')[0].split('#')[0] || '').trim()
+        if (p === defaultPlatform && inst !== defaultPlatform) return true
+      }
+    }
+    const insts = platformGateway?.instances?.()
+    if (Array.isArray(insts)) {
+      for (const st of insts) {
+        if (st?.enabled && st.platform === defaultPlatform && st.instance !== defaultPlatform) return true
+      }
+    }
+    return false
+  }
+  const globalQqPokeAllowed = () => {
+    if (hasNonDefaultQqInstance()) return false
+    const qqCaps = platformGateway?.caps?.(defaultPlatform)
+    if (qqCaps && qqCaps.poke === false) return false
+    return true
+  }
+  const rulesOpts = (kind) => ({
+    ...(mods ? { off: mods.builtinOff(), extra: mods.rules(kind), activePlatforms: mods.activePlatforms?.() } : {}),
+    identity,
+    poke: globalQqPokeAllowed(),
+  })
   // 扩展模块能整段改写人格和规则（同步：提示词变量不能等）
   const rewrite = (event, text, ...args) => { const r = mods ? mods.filterSync(event, text, ...args) : text; return typeof r === 'string' ? r : r === null ? '' : text }
   variable('aurabot_persona', () => rewrite('persona', currentPersonaText(cfg.persona.current)))
@@ -1194,12 +1221,14 @@ export function apply(ctx) {
       ({ chat }) => {
         if (!chat || chat.kind === 'system' || !mods) return ''
         const active = mods.activePlatforms?.() || []
-        if (active.length <= 1 && active.includes('qq')) return ''
         const addr = parseChatId(normalizeChatId(chat.chatId) || String(chat.chatId || ''))
         const plat = chat.platform || addr?.platform || ''
-        if (plat !== 'qq') return ''
-        const isDefInst = !addr?.instance || addr.instance === 'qq'
+        if (plat !== defaultPlatform) return ''
+        const isDefInst = !addr?.instance || addr.instance === defaultPlatform
         const poke = isDefInst && platformGateway?.caps?.(chat.chatId)?.poke !== false
+        if (active.length <= 1 && active.includes(defaultPlatform)) {
+          return !globalQqPokeAllowed() && poke ? QQ_POKE_RULE : ''
+        }
         return qqSessionRulesText(getConfig(), { off: mods.builtinOff(), poke })
       },
     ],

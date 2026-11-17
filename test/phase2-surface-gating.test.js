@@ -244,3 +244,98 @@ test('PR-2G 场景2：QQ + Feishu 双平台共存下，全局 preset / Feishu �
     ['qqonlycmd', 'unicmd'],
   )
 })
+
+test('PR-2G 场景3：纯 qq#2（无默认 qq）与 qq+qq#2 双实例共存时，<poke> 仅对默认 qq 会话注入而不混入 qq#2', async (t) => {
+  // 3A) 纯 qq#2-only（qq.enabled=false，qq#2.enabled=true）
+  const pureQq2 = await bootHost(t, {
+    cfg: {
+      enabled: true,
+      dryRun: false,
+      setupDone: true,
+      ownerQQ: '10000001',
+      botQQ: '20000002',
+      ownerName: '阿白',
+      merge: { enabled: false },
+      allow: { private: ['qq#2:private:10000001', '10000001'], groups: [] },
+      platforms: { qq: { enabled: false }, 'qq#2': { enabled: true, platform: 'qq' } },
+      stickers: { enabled: true, faces: true },
+    },
+  })
+  await pureQq2.app.gateway.stopAll()
+  let qq2Adapter = null
+  pureQq2.app.gateway.register(() => (qq2Adapter = makeFakeAdapter({
+    id: 'qq',
+    self: { account: '20000099', name: '小鱼二号' },
+    caps: { image: true, file: true, voice: 'native', sticker: true, poke: false, history: true },
+  })))
+  await pureQq2.app.gateway.sync()
+
+  for (const varName of ['aurabot_rules_private', 'aurabot_rules_social', 'aurabot_rules_group_owner']) {
+    const text = pureQq2.fake.variables.get(varName)()
+    assert.doesNotMatch(text, /<poke>|想戳回去/, `纯 qq#2 下 ${varName} 不得写 <poke>`)
+    assert.match(text, /<face:|<at:QQ号>|qq_chat_history/, '纯 qq#2 仍保留通用 QQ 规则')
+  }
+  qq2Adapter.pushInbound({
+    chat: { id: '10000001', kind: 'private', name: '阿白' },
+    sender: { account: '10000001', name: '阿白', isOwner: true },
+    messageId: 'qq2_only_1',
+    at: Date.now(),
+    text: '在吗二号',
+    parts: [{ type: 'text', text: '在吗二号' }],
+  })
+  await until(() => pureQq2.fake.turns.length >= 1)
+  assert.doesNotMatch(pureQq2.fake.turns[0].ctxText, /<poke>|会变成 QQ 的戳一戳/)
+
+  // 3B) qq + qq#2 双实例共存：共享全局 preset 无 <poke>；默认 qq 会话拿 <poke>，qq#2 不拿
+  const dualQq = await bootHost(t, {
+    cfg: {
+      enabled: true,
+      dryRun: false,
+      setupDone: true,
+      ownerQQ: '10000001',
+      botQQ: '20000002',
+      ownerName: '阿白',
+      merge: { enabled: false },
+      allow: { private: ['10000001', 'qq#2:private:10000001'], groups: [] },
+      platforms: { qq: { enabled: true }, 'qq#2': { enabled: true, platform: 'qq' } },
+      stickers: { enabled: true, faces: true },
+    },
+  })
+  const ownerP = dualQq.app.gateway.identity.owner() || dualQq.app.gateway.identity.claimOwner('qq', '10000001')
+  assert.ok(ownerP)
+  await dualQq.app.gateway.stopAll()
+  let qq2b = null
+  dualQq.app.gateway.register(() => (qq2b = makeFakeAdapter({
+    id: 'qq',
+    self: { account: '20000099', name: '小鱼二号' },
+    caps: { image: true, file: true, voice: 'native', sticker: true, poke: false, history: true },
+  })))
+  await dualQq.app.gateway.sync()
+
+  assert.doesNotMatch(dualQq.fake.variables.get('aurabot_rules_private')(), /<poke>|想戳回去/)
+  assert.doesNotMatch(dualQq.fake.variables.get('aurabot_rules_social')(), /<poke>|想戳回去/)
+
+  await dualQq.app.hub.onMessage({
+    post_type: 'message',
+    message_type: 'private',
+    sub_type: 'friend',
+    self_id: 20000002,
+    user_id: 10000001,
+    message_id: 902,
+    sender: { user_id: 10000001, nickname: '阿白' },
+    message: [{ type: 'text', data: { text: '默认号在吗' } }],
+  })
+  await until(() => dualQq.fake.turns.length >= 1)
+  assert.match(dualQq.fake.turns[0].ctxText, /<poke>/, '默认 qq 会话仍应通过会话上下文拿到 <poke>')
+
+  qq2b.pushInbound({
+    chat: { id: '10000001', kind: 'private', name: '阿白' },
+    sender: { account: '10000001', name: '阿白', isOwner: true },
+    messageId: 'qq2_dual_1',
+    at: Date.now(),
+    text: '二号在吗',
+    parts: [{ type: 'text', text: '二号在吗' }],
+  })
+  await until(() => dualQq.fake.turns.length >= 2)
+  assert.doesNotMatch(dualQq.fake.turns[1].ctxText, /<poke>|会变成 QQ 的戳一戳/, 'qq#2 会话不得收到 <poke> 指引')
+})

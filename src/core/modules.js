@@ -702,7 +702,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
     if (hasPlatMap) {
       for (const [k, v] of Object.entries(plats)) {
         if (!v || v.enabled === false) continue
-        const p = String(v.platform || k.split(':')[0] || '').trim()
+        const p = String(v.platform || k.split(':')[0].split('#')[0] || '').trim()
         if (p) set.add(p)
       }
     }

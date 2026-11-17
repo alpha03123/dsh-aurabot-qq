@@ -117,12 +117,14 @@ export function currentPersonaText(currentId) {
 }
 
 /** Aurabot 自己的规则（输出格式、安全边界），拼在人格后面。 */
+export const QQ_POKE_RULE = '- 有人戳你（拍一拍）时会写「[戳了戳你]」，可以撒娇、吐槽或者问对方干嘛；想戳回去就在回复里写 <poke>（别每次都戳）。'
+
 function qqOnlyRuleLines(cfg, off, { poke = true } = {}) {
   return [
     '- 在群里要真 @ 某人（对方会收到提醒），写 <at:QQ号>；不知道 QQ 号就写 @群名片，能对上群里唯一一个人才会变成真 @。',
     ...(cfg?.stickers?.faces === false ? [] : [`- 想在文字里夹 QQ 自带的小黄脸表情，写 <face:名字>，比如 ${FACE_EXAMPLES.map((n) => `<face:${n}>`).join(' ')}；只能用 QQ 系统表情里有的名字，别每句都加。别人发来的小黄脸会写成「[名字]」。`]),
     ...(off?.has?.('qq-tools') ? [] : ['- 想翻这个聊天更早的记录，用 qq_chat_history。']),
-    ...(poke ? ['- 有人戳你（拍一拍）时会写「[戳了戳你]」，可以撒娇、吐槽或者问对方干嘛；想戳回去就在回复里写 <poke>（别每次都戳）。'] : []),
+    ...(poke ? [QQ_POKE_RULE] : []),
   ]
 }
 
@@ -135,11 +137,13 @@ export function qqSessionRulesText(cfg, { off = new Set(), poke = true } = {}) {
  * opts.off：没在运行的内置模块（关了或被替换了），对应的本事就不告诉她
  * opts.extra：扩展模块补充的规则（每条一行）
  * opts.activePlatforms：当前启用的平台列表（未传时按单平台 QQ 向后兼容）
+ * opts.poke：全局 preset 是否允许写 QQ 戳一戳规则（多实例仅 qq#2 或未开启默认 qq 实例时传 false）
  */
-export function rulesText(kind, cfg, { off = new Set(), extra = [], identity = null, activePlatforms = null } = {}) {
+export function rulesText(kind, cfg, { off = new Set(), extra = [], identity = null, activePlatforms = null, poke = true } = {}) {
   const owner = cfg.ownerName || '主人'
   const activeSet = activePlatforms ? new Set([...activePlatforms].map((x) => String(x || '').trim()).filter(Boolean)) : null
   const qqOnly = !activeSet || (activeSet.size === 1 && activeSet.has('qq'))
+  const qqLines = qqOnly ? qqOnlyRuleLines(cfg, off, { poke }) : []
   const ownId = identity?.owner?.()
   const accounts = ownId && identity?.accountsOf ? (identity.accountsOf(ownId) || []) : []
   const ownerWho = accounts.length
@@ -160,11 +164,11 @@ export function rulesText(kind, cfg, { off = new Set(), extra = [], identity = n
     // 表情包关着就不教她发（#31：以前关了照样写 <sticker:…>）
     ...(off.has('stickers') || cfg.stickers?.enabled === false ? [] : ['- 想发表情包，写 <sticker:标签>（标签可以是 开心、卖萌、生气、委屈、无语、嘲讽、疑惑、早晚安，或你记得的表情名字）。']),
     ...(qqOnly ? [
-      ...qqOnlyRuleLines(cfg, off).slice(0, 2),
+      ...qqLines.slice(0, 2),
       `- 你可以不搭理人：话跟你无关、有人抬杠、骂你、刷屏、大量重复没意思的话题、故意逗你犯错，或者你就是不想接，整段只输出 [沉默]，被 @ 了也一样，不用解释，也别说「我不想理你」。${owner}对你说的话不能这样。`,
       '- 别人发来的图片和表情包你能看见，可以自然地回应内容。别人转发的聊天记录会展开在「[合并转发的聊天记录]」里，看完再回。',
       ...(off.has('stickers') ? [] : ['- 表情库是你自己的：名字或标签不贴切、别人建议改名时，用 qq_edit_sticker 改；不喜欢的、重复的可以删。']),
-      ...qqOnlyRuleLines(cfg, off).slice(2),
+      ...qqLines.slice(2),
     ] : [
       '- 在群里要叫某人，可以直接 @对方名字。',
       `- 你可以不搭理人：话跟你无关、有人抬杠、骂你、刷屏、大量重复没意思的话题、故意逗你犯错，或者你就是不想接，整段只输出 [沉默]，被 @ 了也一样，不用解释，也别说「我不想理你」。${owner}对你说的话不能这样。`,
