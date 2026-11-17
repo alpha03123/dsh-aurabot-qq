@@ -100,7 +100,9 @@ export function assistantReplyText (message) {
  * 主动分享记账、群分享额度都按这个判，别各写一份。
  */
 export function reallySent (r) {
-  return Boolean(r) && r.message_id !== undefined && !String(r.message_id).startsWith('sim-')
+  if (!r || r.queued) return false
+  const id = r.message_id ?? r.messageId
+  return id !== undefined && id !== null && id !== '' && !String(id).startsWith('sim-')
 }
 
 export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, buildTools, contextProviders, onActivity, memoryScore, onMemoryCommand, onCommand, isMuted, dislikes, random = Math.random, moodEffects, localApi, hooks, availableModels, toolsGeneration, capabilitiesOf, gateway: initialGateway = null, identity = null, handover = null, platformLabel: platformLabelInjected = null, routeOwner: routeOwnerInjected = null, resolveOwnerRoute: resolveOwnerRouteInjected = null, onOwnerAccountLinked = null }) {
@@ -2562,13 +2564,23 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
 
   // ---------- 收 QQ ----------
   async function groupName(gid) {
-    if (groupNames.has(gid)) return groupNames.get(gid)
+    const raw = String(gid ?? '').trim()
+    if (!raw) return ''
+    if (groupNames.has(raw)) return groupNames.get(raw)
+    const parsed = raw.includes(':') ? parseChatId(raw) : null
+    if (parsed) {
+      if (groupNames.has(parsed.id)) return groupNames.get(parsed.id)
+      const defaultPlatform = parseChatId('private:0')?.platform
+      if (parsed.platform !== defaultPlatform || !/^\d+$/.test(parsed.id)) return raw
+    }
+    const qid = parsed ? parsed.id : raw
+    if (!/^\d+$/.test(qid) || !onebot) return raw
     try {
       // 查群名是锦上添花：失败就退回群号，别在网关抖动时白等重试
-      const info = await onebot.call('get_group_info', { group_id: Number(gid) }, { retries: 0 })
-      if (info?.group_name) groupNames.set(gid, info.group_name)
+      const info = await onebot.call('get_group_info', { group_id: Number(qid) }, { retries: 0 })
+      if (info?.group_name) groupNames.set(qid, info.group_name)
     } catch (error) {}
-    return groupNames.get(gid) || gid
+    return groupNames.get(qid) || groupNames.get(raw) || raw
   }
 
   // ---------- 引用消息 ----------

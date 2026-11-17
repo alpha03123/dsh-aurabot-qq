@@ -467,6 +467,17 @@ const allowList = (v) => {
   }
   return [...new Set(out)]
 }
+// B站群分享目标：兼容旧数字 QQ 群号与规范平台群地址（feishu:group:oc_x / qq:group:123）。
+const groupShareTarget = (v) => {
+  const s = String(v ?? '').trim()
+  if (!s) return ''
+  if (/^\d+$/.test(s)) return s
+  try {
+    const parsed = parseChatId(s)
+    if (parsed?.kind === 'group' && parsed.id) return normalizeChatId(s) || ''
+  } catch {}
+  return ''
+}
 const privateGrantList = (v) => {
   const raw = Array.isArray(v) ? v : []
   const out = []
@@ -791,8 +802,8 @@ export function normalize(raw) {  const c = deepMerge(DEFAULTS, raw)
   b.shotLibrary = Math.round(num(b.shotLibrary, 300, 1, BIG))
   if (!isObj(b.groupShare)) b.groupShare = {}
   b.groupShare.enabled = bool(b.groupShare.enabled, false)
-  b.groupShare.groupId = qq(b.groupShare.groupId)
-  b.groupShare.groups = [...new Set((Array.isArray(b.groupShare.groups) ? b.groupShare.groups : []).map(qq).filter(Boolean))].slice(0, 20)
+  b.groupShare.groupId = groupShareTarget(b.groupShare.groupId)
+  b.groupShare.groups = [...new Set((Array.isArray(b.groupShare.groups) ? b.groupShare.groups : []).map(groupShareTarget).filter(Boolean))].slice(0, 20)
   b.groupShare.dailyLimit = Math.round(num(b.groupShare.dailyLimit, 3, 0, BIG))
   b.groupShare.pendingTtlHours = Math.round(num(b.groupShare.pendingTtlHours, 24, 1, 24 * 30))
   b.groupShare.queueLimit = Math.round(num(b.groupShare.queueLimit, 1, 1, 20))
