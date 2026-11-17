@@ -788,7 +788,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
       }
       return { ...emptyFeatures(), ...(gw.features(norm) || {}) }
     }
-    if (addr?.platform === 'qq' && qqEnabled() && core.onebot && (!gw || core.onebot.state === 'connected')) {
+    if (addr?.platform === 'qq' && qqEnabled() && core.onebot?.state === 'connected') {
       return deriveQqFallbackFeatures(norm)
     }
     return emptyFeatures()

@@ -336,6 +336,23 @@ test('api.features / api.can / api.require 与 FeatureUnavailableError (offline 
     () => legacyApi.require('sticker.sync.native', 'private:1'),
     (e) => e instanceof FeatureUnavailableError && e.reason === 'unsupported' && e.instance === 'qq',
   )
+
+  // 6) 无 gateway + onebot.state !== 'connected'（§5.3 边界）：api.features 全 false 且 require 判 offline
+  let offlineLegacyApi = null
+  const hOfflineLegacy = makeHarness(t, {
+    cfgPatch: { platforms: { qq: { enabled: true } } },
+    builtins: [{ id: 'legacy-offline-probe', api: 3, platforms: ['qq'], setup(api) { offlineLegacyApi = api } }],
+    onebot: { state: 'disconnected', call: async () => ({}) },
+    gateway: null,
+  })
+  await hOfflineLegacy.mods.boot()
+  const offFeats = offlineLegacyApi.features('private:1')
+  assert.equal(Object.values(offFeats).every((v) => v === false), true, '无 gateway 且 onebot 断线时 features 必须全 false')
+  assert.equal(offlineLegacyApi.can('message.recall', 'private:1'), false)
+  assert.throws(
+    () => offlineLegacyApi.require('message.recall', 'private:1'),
+    (e) => e instanceof FeatureUnavailableError && e.reason === 'offline' && e.instance === 'qq',
+  )
 })
 
 test('全表面过滤：api.tool / api.context / api.command 按实例 L2 能力与平台过滤，mods.commands() 全量目录不变', async (t) => {
