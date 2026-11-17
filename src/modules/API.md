@@ -123,7 +123,7 @@ export default {
 | `api.sendParts(chatId, parts, opts?)` | **推荐**：发跨平台标准化 `Part[]` 消息段（`text`、`image`、`voice`、`video`、`file`、`mention`、`reply`……），自动走网关降级与出站策略；无网关回退通道下 `card` 与 `forward` 会降级为可读纯文本（如 `[合并转发 #id]`），不产生原生合并转发卡片 |
 | `api.platformOf(chatId)` | 从 `chatId` 解析所属平台（如 `'qq'`、`'feishu'`），无法识别返回 `''` |
 | `api.caps(chatId)` | 查询该聊天所在平台实例的当前 L1 能力表（`Caps`），未就绪返回 `null` |
-| `api.features(chatId?)` | 查询目标聊天的 14 项 L2 能力布尔表；省略 `chatId` 时依次取当前触发平台上下文、模块唯一声明平台或唯一启用实例，若无上下文且存在多个已启用实例则保守返回全 `false`。断线/未配置时全 `false`；无网关传统 QQ 回退路径仅推导带 L1 映射的能力（其余未探测 L2 能力保持 `false`）。注意 `sticker.sync.native = true` 仅表示读探测通过且乐观允许写动作，首次遇到底层 `unsupported` 时会运行时降级 |
+| `api.features(chatId?)` | 查询目标聊天的 14 项 L2 能力布尔表；省略 `chatId` 时依次取当前触发平台上下文、模块唯一声明平台或唯一启用实例，若无上下文且存在多个已启用实例则保守返回全 `false`。断线/未配置时全 `false`；无网关传统 QQ 回退路径仅推导带 L1 映射的能力（其余未探测 L2 能力保持 `false`）。**注意能力与权限边界**：`sticker.sync.native = true` 仅表示读探测通过且乐观允许写动作，首次遇到底层 `unsupported` 会运行时降级；`message.quote.read = true` 仅代表协议支持调用，不保证租户已开通平台权限（如飞书 `im:message:readonly`），遇 `230027`/`403` 时会写入长冷却负缓存并引导核对授权（也可用配置 `caps.features` 手动关闭） |
 | `api.can(feature, chatId?)` | 快捷检查单项 L2 能力是否可用（返回 `boolean`） |
 | `api.require(feature, chatId?)` | 若目标聊天不具备该 L2 能力则抛出 `FeatureUnavailableError`（`error.reason` 为 `'offline'` / `'disabled-by-config'` / `'unsupported'`） |
 | `api.ownerRoute({ purpose? })` | 查询主人主账号路由的结构化结果 `{ chatId, blocked, reason, target, fallbackUsed }`；受阻或无路由时 `chatId` 为 `''` 且不会静默回退 QQ |

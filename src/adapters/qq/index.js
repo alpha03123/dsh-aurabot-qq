@@ -22,6 +22,10 @@
 //   都不给时按生产默认：真连 OneBot、真读写 caps.json、不维护表情名表。
 //   client 只要求有 { start, stop, call, isConnected, state, restart } —— 就是 createOneBotClient 的返回。
 
+import * as nodeFs from 'node:fs'
+import { isAbsolute, join, relative, resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { createOneBotClient, isDefiniteFailure } from '../../onebot/client.js'
 import { fromOneBotEvent, toAdapterEvent, segmentsToParts, toParts as partsOf } from './inbound.js'
 import { buildParts } from './outbound.js'
@@ -57,6 +61,73 @@ export function createQqAdapter(options = {}) {
 
   const fsImpl = options.fs || null // 测试注入的假 fs（决定 caps.json 走哪）
   const log = () => (ctx?.log || noopLog)
+  const MAX_LOCAL_MEDIA_BYTES = 50 * 1024 * 1024
+
+  function controlledMediaRoots() {
+    const cfg = config()
+    const raw = [
+      typeof ctx?.dataDir === 'function' ? ctx.dataDir() : '',
+      cfg.snowlumaDir,
+      cfg.dir,
+      ...(Array.isArray(cfg.mediaDirs) ? cfg.mediaDirs : []),
+      ...(Array.isArray(options.mediaDirs) ? options.mediaDirs : []),
+      join(homedir(), '.config', 'QQ'),
+      join(homedir(), 'NapCat'),
+      join(homedir(), 'Documents', 'Tencent Files'),
+      join(homedir(), 'AppData', 'Roaming', 'NapCat'),
+      join(homedir(), 'AppData', 'Roaming', 'LLOneBot'),
+    ]
+    const out = []
+    const fsApi = fsImpl || nodeFs
+    for (const dir of raw) {
+      const s = String(dir || '').trim()
+      if (!s) continue
+      try {
+        const resolved = resolve(s)
+        out.push(typeof fsApi.realpathSync === 'function' ? fsApi.realpathSync(resolved) : resolved)
+      } catch {}
+    }
+    return [...new Set(out)]
+  }
+
+  function readControlledMediaBytes(rawPath) {
+    const fsApi = fsImpl || nodeFs
+    let target = String(rawPath || '').trim()
+    if (target.startsWith('file://')) {
+      try { target = fileURLToPath(target) } catch { throw makeSendError('not-sent', 'unsafe-media-path', instance, '非法 file:// 媒体路径') }
+    }
+    if (!isAbsolute(target)) throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 媒体路径必须是绝对路径')
+    const roots = controlledMediaRoots()
+    if (!roots.length) throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 未配置受控媒体目录，拒绝读取本机路径')
+    let st
+    try {
+      st = typeof fsApi.lstatSync === 'function' ? fsApi.lstatSync(target) : fsApi.statSync(target)
+    } catch {
+      throw makeSendError('not-sent', 'media-not-found', instance, `QQ 本机媒体文件不存在：${target}`)
+    }
+    if (typeof st?.isSymbolicLink === 'function' && st.isSymbolicLink()) {
+      throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 媒体路径不允许符号链接')
+    }
+    if (typeof st?.isFile === 'function' && !st.isFile()) {
+      throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 媒体路径不是普通文件')
+    }
+    if (Number(st?.size) > MAX_LOCAL_MEDIA_BYTES) {
+      throw makeSendError('not-sent', 'too-large', instance, `QQ 媒体文件超过 ${Math.round(MAX_LOCAL_MEDIA_BYTES / 1048576)}MB 上限`)
+    }
+    const realTarget = typeof fsApi.realpathSync === 'function' ? fsApi.realpathSync(target) : resolve(target)
+    const inside = roots.some((root) => {
+      const rel = relative(root, realTarget)
+      return Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel)
+    })
+    if (!inside) {
+      throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 媒体路径不在受控目录内，拒绝读取')
+    }
+    const buf = fsApi.readFileSync(realTarget)
+    if (buf.length > MAX_LOCAL_MEDIA_BYTES) {
+      throw makeSendError('not-sent', 'too-large', instance, `QQ 媒体文件超过 ${Math.round(MAX_LOCAL_MEDIA_BYTES / 1048576)}MB 上限`)
+    }
+    return buf
+  }
 
   // ───────────────────────── 配置 ─────────────────────────
 
@@ -456,13 +527,23 @@ export function createQqAdapter(options = {}) {
       switch (request.kind) {
         case 'media': {
           const media = request.media || {}
-          // 图片和语音走不同的取文件动作；文件地址看 chat 类型
+          // 图片和语音走不同的取文件动作；path-only 结果仅在受控目录下由本端读成 bytes，绝不向外透传本机路径
           const file = media.id || (media.url ? String(media.url) : '')
           if (!file) throw makeSendError('not-sent', 'no-media', instance, 'media 里没有可取的标识')
           const record = String(media.mime || '').startsWith('audio') || media.kind === 'voice'
           const action = record ? 'get_record' : 'get_image'
           const r = await call(action, record ? { file, out_format: 'wav' } : { file }, { timeoutMs: 30000 })
-          return { url: r?.url ? String(r.url) : undefined, path: r?.file ? String(r.file) : undefined, base64: r?.base64 || undefined }
+          const rawUrl = r?.url ? String(r.url).trim() : ''
+          const rawB64 = r?.base64 ? String(r.base64).trim() : ''
+          const rawFile = r?.file ? String(r.file).trim() : ''
+          if (rawB64) return { ...(rawUrl ? { url: rawUrl } : {}), base64: rawB64 }
+          if (rawUrl) return { url: rawUrl }
+          if (rawFile) {
+            if (/^https?:\/\//i.test(rawFile)) return { url: rawFile }
+            if (rawFile.startsWith('base64://')) return { base64: rawFile.slice(9) }
+            return { bytes: readControlledMediaBytes(rawFile) }
+          }
+          return {}
         }
         case 'message': {
           const mid = String(request.messageId ?? '').trim()

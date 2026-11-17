@@ -22,7 +22,7 @@ import { fetchImage, segmentBytes } from '../core/net.js'
 import { toMono16k } from '../voice/wav.js'
 import { asrConfigured, transcribeAudio } from '../voice/asr.js'
 import { mimeOf } from './inbound.js'
-import { applyForwardBodies, formatFetchedForward, forwardBody, readForward } from './forward.js'
+import { applyForwardBodies, forwardBody, readFetchedForward, readForward } from './forward.js'
 import { renderParts } from '../gateway/render.js'
 import { findFfmpeg, findSharp, shrinkImage, shrinkWithSharp } from '../core/img.js'
 import { redact } from '../core/redact.js'
@@ -393,7 +393,9 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       const reactAddr = reactCid ? parseChatId(reactCid) : null
       const reactPlat = msg?.platform || reactAddr?.platform || defaultPlatform()
       const useGwReact = Boolean(gateway && (reactPlat !== defaultPlatform() || gateway.caps?.(reactCid) !== null || !onebot))
+      if (!useGwReact && reactPlat !== defaultPlatform()) return
       if (useGwReact && !gateway.features?.(reactCid)?.['message.reaction']) return
+      // Phase 1A 仅保留 QQ/OneBot 的 set_msg_emoji_like 动作；其余平台待后续适配归一化 reaction 接口
       if (reactPlat !== defaultPlatform()) return
       if (!useGwReact && !onebot) return
       const chance = cfg.stickers?.reactChance ?? 0
@@ -2707,6 +2709,19 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
         const built = await buildQuotedFromFetched(recent, normChatId, selfAcc)
         if (built && built !== 'hidden') return saveCache(built)
       }
+      const instCfg = getConfig()?.platforms?.[addr?.instance || defaultPlatform()]?.caps
+      const quoteDisabledByCfg = instCfg?.quoteReply === false || instCfg?.features?.['message.quote.read'] === false
+      if (quoteDisabledByCfg || addr?.platform !== defaultPlatform() || !onebot?.call) {
+        return saveCache({
+          ok: false, failKind: quoteDisabledByCfg ? 'permission' : 'unsupported',
+          expiresAt: Date.now() + NEG_TTL_SHORT_MS,
+          who: '', uid: '', text: '', images: [], stickers: [], records: 0,
+          isBot: false, at: Date.now(), chatId: normChatId, time: 0,
+        })
+      }
+    }
+
+    if (!onebot?.call) {
       return saveCache({
         ok: false, failKind: 'unsupported',
         expiresAt: Date.now() + NEG_TTL_SHORT_MS,
@@ -2714,7 +2729,6 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
         isBot: false, at: Date.now(), chatId: normChatId, time: 0,
       })
     }
-
     const out = { ok: false, who: '', uid: '', text: '', images: [], stickers: [], records: 0, isBot: false, at: 0, chatId: normChatId, time: 0 }
     try {
       const m = await onebot.call('get_msg', { message_id: Number(id) || id }, { timeoutMs: 5000, retries: 0 })
@@ -3022,6 +3036,14 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
             if (!seg.data?.url) throw error
             raw = await fetchImage(seg.data.url, { maxBytes: MAX_IMAGE_BYTES, allowLocal: false })
           }
+        } else if (gateway && !onebot) {
+          if (seg.data?.url) {
+            raw = await fetchImage(seg.data.url, { maxBytes: MAX_IMAGE_BYTES, allowLocal: false })
+          } else if (seg.data?.mediaId || seg.data?.file) {
+            raw = await gatewayMediaBytes(normCid || msg.chatId, seg.data, msg.messageId)
+          } else {
+            continue
+          }
         } else {
           raw = await segmentBytes(seg, onebot, { maxBytes: MAX_IMAGE_BYTES })
         }
@@ -3212,11 +3234,12 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     const msgPlatform = gw?.platform || defaultPlatform()
     const rawCid = gw?.chatId || (event.message_type === 'group' ? `group:${event.group_id}` : `private:${event.user_id}`)
     const scopedSelf = selfAccountFor(gw?.instance || rawCid)
-    if (msgPlatform === defaultPlatform()) {
+    const isDefaultInstance = !gw || gw.instance === defaultPlatform()
+    if (isDefaultInstance) {
       if (!gw) selfId = String(event.self_id || selfId || getConfig().botQQ)
       else if (event.self_id) selfId = String(event.self_id)
     }
-    const parseSelf = msgPlatform === defaultPlatform()
+    const parseSelf = isDefaultInstance
       ? String(event.self_id || scopedSelf || selfId || getConfig().botQQ || '')
       : scopedSelf
     const cfg = getConfig()
@@ -3549,16 +3572,10 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       if (!gateway.features?.(cid)?.['message.forward.expand']) return String(text ?? '')
       const bodies = []
       for (const id of msg.forwards.slice(0, 5)) {
-        try {
-          const res = await gateway.fetch(cid, { kind: 'forward', id })
-          const r = formatFetchedForward(res?.messages)
-          msg.images.push(...r.images)
-          msg.stickers.push(...r.stickers)
-          bodies.push(forwardBody(r))
-        } catch (error) {
-          log?.debug?.('拉合并转发失败（网关）：', error?.message || error)
-          bodies.push(forwardBody({ lines: [], images: [], stickers: [] }))
-        }
+        const r = await readFetchedForward((fid) => gateway.fetch(cid, { kind: 'forward', id: fid }), id, { log })
+        msg.images.push(...r.images)
+        msg.stickers.push(...r.stickers)
+        bodies.push(forwardBody(r))
       }
       return applyForwardBodies(text, bodies)
     }
@@ -4830,6 +4847,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     onGatewayRecall: (chatIdOrHint, messageId) => evictMessageCaches(chatIdOrHint, messageId),
     selfAccountFor,
     gatewayMediaBytes,
+    imagesOf,
     quotedInfo,
     repliedToBot,
     expandForwards,

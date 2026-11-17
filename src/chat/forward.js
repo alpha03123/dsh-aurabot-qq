@@ -57,16 +57,19 @@ export function applyForwardBodies(text, bodies) {
 }
 
 /** 将网关归一化的 FetchedMessage[] 展平为 { lines, images, stickers }（不读 raw）。 */
-export function formatFetchedForward(messages, { limit = MAX_FORWARD_LINES, maxImages = MAX_FORWARD_IMAGES } = {}) {
-  const st = { count: 0, lines: [], images: [], stickers: [] }
+export function formatFetchedForward(messages, { limit = MAX_FORWARD_LINES, maxImages = MAX_FORWARD_IMAGES, depth = 1, state = null } = {}) {
+  const st = state || { count: 0, seen: new Set(), lines: [], images: [], stickers: [] }
+  const pad = '  '.repeat(depth)
+  const nestedIds = []
   for (const m of Array.isArray(messages) ? messages : []) {
     if (!m || st.count >= limit) break
     st.count++
     const who = m.sender?.name || m.sender?.account || '某人'
     const rendered = renderParts(m.parts).text || '（图片/表情）'
-    st.lines.push(`  ${who}：${rendered.slice(0, MAX_LINE)}`)
+    st.lines.push(`${pad}${who}：${rendered.slice(0, MAX_LINE)}`)
     for (const part of Array.isArray(m.parts) ? m.parts : []) {
-      if (st.images.length + st.stickers.length >= maxImages) break
+      if (part?.type === 'forward' && part.id) nestedIds.push(String(part.id))
+      if (st.images.length + st.stickers.length >= maxImages) continue
       if (part?.type === 'image') {
         st.images.push({
           type: 'image',
@@ -92,6 +95,32 @@ export function formatFetchedForward(messages, { limit = MAX_FORWARD_LINES, maxI
           },
         })
       }
+    }
+  }
+  return { ...st, nestedIds }
+}
+
+/** 递归展开网关归一化的合并转发（深度上限与传统 readForward 一致，防环且不读 raw）。 */
+export async function readFetchedForward(fetchFn, id, { depth = 1, state, log } = {}) {
+  const st = state || { count: 0, seen: new Set(), lines: [], images: [], stickers: [] }
+  const sid = String(id ?? '')
+  if (!sid || st.seen.has(sid)) return st
+  st.seen.add(sid)
+  let res
+  try {
+    res = await fetchFn(sid)
+  } catch (error) {
+    log?.debug?.('拉合并转发失败（网关）：', error?.message || error)
+    return st
+  }
+  const { nestedIds } = formatFetchedForward(res?.messages, { depth, state: st })
+  if (nestedIds.length) {
+    if (depth < MAX_FORWARD_DEPTH) {
+      for (const childId of nestedIds) {
+        await readFetchedForward(fetchFn, childId, { depth: depth + 1, state: st, log })
+      }
+    } else {
+      st.lines.push(`${'  '.repeat(depth)}  （里面还有一层转发，太深了没展开）`)
     }
   }
   return st

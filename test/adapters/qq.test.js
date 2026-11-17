@@ -3,6 +3,9 @@
 // 全部用可注入的假 OneBot client，绝不真连网。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { runAdapterContract, makeCtx } from '../contract/adapter-kit.js'
 import { createQqAdapter } from '../../src/adapters/qq/index.js'
 import { parseMessageEvent } from '../../src/chat/inbound.js'
@@ -446,6 +449,41 @@ test('Step 1A：fetch(message) 与 fetch(forward) 统一输出归一化 FetchedM
   assert.deepEqual(fwd.messages[0].parts, [{ type: 'text', text: '第一句' }])
   assert.equal(fwd.messages[1].sender?.isBot, true)
   assert.equal(fwd.messages[1].parts[0]?.type, 'image')
+
+  await adapter.stop()
+})
+
+test('Step 1A P1-1：fetch(media) 对受控目录 path-only 转 bytes，越界本机路径拒绝', async () => {
+  const controlledDir = mkdtempSync(join(tmpdir(), 'aurabot-qq-media-'))
+  const outsideDir = mkdtempSync(join(tmpdir(), 'aurabot-qq-outside-'))
+  const insideFile = join(controlledDir, 'cached.png')
+  const outsideFile = join(outsideDir, 'secret.txt')
+  const expected = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02])
+  writeFileSync(insideFile, expected)
+  writeFileSync(outsideFile, 'do-not-read')
+
+  const client = makeFakeClient()
+  const baseCall = client.call.bind(client)
+  let nextPath = insideFile
+  client.call = async (action, params, opts) => {
+    if (action === 'get_image') return { status: 'ok', retcode: 0, data: { file: nextPath } }
+    return baseCall(action, params, opts)
+  }
+
+  const adapter = createQqAdapter({ client, mediaDirs: [controlledDir] })
+  const ctx = makeCtx(adapter)
+  await adapter.start(ctx)
+  await new Promise((r) => setTimeout(r, 60))
+
+  const okRes = await adapter.fetch({ kind: 'media', media: { id: 'cached.png' } })
+  assert.deepEqual(okRes.bytes, expected)
+  assert.equal('path' in okRes, false, 'QQ fetch(media) 不应再把裸本机 path 透出给中枢')
+
+  nextPath = outsideFile
+  await assert.rejects(
+    () => adapter.fetch({ kind: 'media', media: { id: 'secret.txt' } }),
+    (e) => e.certainty === 'not-sent' && e.code === 'unsafe-media-path',
+  )
 
   await adapter.stop()
 })

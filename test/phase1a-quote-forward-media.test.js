@@ -7,11 +7,13 @@
 //   - gatewayMediaBytes 4xx/5xx/json 错误、超大限制、SSRF 拦截、拒绝本机 r.path
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHub } from '../src/chat/hub.js'
 import { createGateway } from '../src/gateway/index.js'
+import { createQqAdapter } from '../src/adapters/qq/index.js'
+import { createFeishuAdapter } from '../src/adapters/feishu/index.js'
 import { makeIdentity } from './gateway/helpers.js'
 import { normalize } from '../src/core/config.js'
 import { createFakeDsh } from './helpers/fake-dsh.js'
@@ -440,4 +442,215 @@ test('referenceImage(quote) 通过 gatewayMediaBytes 取飞书引用图片而不
   assert.equal(mediaCalls.length, 1)
   assert.equal(mediaCalls[0].req.media.id, 'img_ref_1')
   assert.equal(onebotCalls.length, 0)
+})
+
+test('Step 1A 复审：QQ path-only 经受控目录转 bytes 打通 gatewayMediaBytes / qq+qq#2 不串 selfId / 多层嵌套转发 / G3 回退 / 飞书真实 recall / imagesOf URL 兜底', async (t) => {
+  // 1) P1-1 端到端：QQ adapter 只拿到 path-only get_image → 受控目录转 bytes → hub.gatewayMediaBytes 成功
+  const root = mkdtempSync(join(tmpdir(), 'aurabot-p1a-rev-'))
+  const cacheDir = join(root, 'qq-cache')
+  const imgFile = join(cacheDir, 'img_only_path.png')
+  // 最小合法 1x1 PNG
+  const png1x1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  )
+  mkdirSync(cacheDir, { recursive: true })
+  writeFileSync(imgFile, png1x1)
+
+  const mkOneBotClient = (selfAccount, selfNick) => {
+    const handlers = { event: new Set(), state: new Set() }
+    return {
+      state: 'connected',
+      isConnected: () => true,
+      start() { queueMicrotask(() => handlers.state.forEach((f) => f('connected'))) },
+      stop() { handlers.state.forEach((f) => f('stopped')) },
+      on(ev, fn) { handlers[ev]?.add(fn); return () => handlers[ev]?.delete(fn) },
+      off(ev, fn) { handlers[ev]?.delete(fn) },
+      async call(action) {
+        if (action === 'get_login_info') return { status: 'ok', retcode: 0, data: { user_id: Number(selfAccount), nickname: selfNick } }
+        if (action === 'get_version_info') return { status: 'ok', retcode: 0, data: { app_name: 'NapCat', app_version: '1.0' } }
+        if (action === 'can_send_image' || action === 'can_send_record') return { status: 'ok', retcode: 0, data: { yes: true } }
+        if (action === 'get_image') return { status: 'ok', retcode: 0, data: { file: imgFile } } // 仅 path！无 url/base64
+        if (action === 'get_msg') return { status: 'ok', retcode: 0, data: { message_id: 99, time: 1700000000, user_id: 10000001, sender: { user_id: 10000001 }, message: [{ type: 'text', data: { text: 'g3 fallback' } }] } }
+        return { status: 'ok', retcode: 0, data: {} }
+      },
+    }
+  }
+
+  const gwP1 = createGateway({
+    config: {
+      platforms: {
+        qq: { enabled: true },
+        'qq#2': { enabled: true },
+        feishu: { enabled: true, transport: 'webhook', encryptKey: '', verificationToken: 'vt-real', appId: 'cli_a', appSecret: 'sec_a' },
+      },
+    },
+    dataDir: (...p) => join(root, 'gw', ...p),
+    http: { route: () => () => {} },
+    identity: makeIdentity(),
+    log: silent,
+    replyHoldMs: 10,
+  })
+  let regCount = 0
+  gwP1.register(() => createQqAdapter({
+    client: regCount++ <= 1 ? mkOneBotClient('20000002', '主QQ') : mkOneBotClient('30000003', '副QQ'),
+    mediaDirs: [cacheDir],
+  }))
+  let feishuFetchCount = 0
+  let feishuMsgGone = false
+  const feishuFakeClient = {
+    async request(req) {
+      if (req.url.includes('tenant_access_token')) return { status: 200, json: { code: 0, tenant_access_token: 't-1', expire: 7200 } }
+      if (req.url.includes('/bot/v3/info')) return { status: 200, json: { code: 0, bot: { open_id: 'ou_bot_real', app_name: '飞书Bot' } } }
+      if (req.url.includes('/open-apis/im/v1/messages/om_real_1')) {
+        feishuFetchCount++
+        if (feishuMsgGone) return { status: 404, json: { code: 404, msg: 'recalled/gone' } }
+        return {
+          status: 200,
+          json: {
+            code: 0,
+            data: {
+              items: [{
+                message_id: 'om_real_1',
+                create_time: '1700000000000',
+                msg_type: 'text',
+                body: { content: JSON.stringify({ text: '真实飞书消息' }) },
+                sender: { id: 'ou_u1', id_type: 'open_id', sender_type: 'user' },
+              }],
+            },
+          },
+        }
+      }
+      return { status: 404, json: { code: 404, msg: 'gone' } }
+    },
+  }
+  gwP1.register(() => createFeishuAdapter({ client: feishuFakeClient }))
+  await gwP1.sync()
+
+  // 等 qq 与 qq#2 连接 whoami 完成
+  await new Promise((r) => setTimeout(r, 80))
+
+  const legacyFallbackOb = {
+    async call(action) {
+      if (action === 'get_msg') {
+        return { message_id: '99', time: 1700000000, user_id: 10000001, sender: { user_id: 10000001, nickname: '老QQ友' }, message: [{ type: 'text', data: { text: '来自G3 onebot回退' } }] }
+      }
+      return {}
+    },
+  }
+  const { hub } = setupHubTest(t, {
+    cfgPatch: {
+      platforms: {
+        qq: { enabled: true },
+        'qq#2': { enabled: true },
+        feishu: { enabled: true },
+      },
+    },
+    gateway: gwP1,
+    onebot: legacyFallbackOb,
+  })
+  // 模拟 host.js gatewayReady 接线 onEvent -> onGatewayRecall
+  const offEvt = gwP1.onEvent((ev) => {
+    if (ev.type === 'recall' && ev.messageId) hub.onGatewayRecall(ev.chatId || '', ev.messageId)
+    else if (ev.type === 'native' && ev.name === 'im.message.recalled_v1' && ev.raw?.event?.message_id) {
+      hub.onGatewayRecall('', ev.raw.event.message_id)
+    }
+  })
+  t.after(() => offEvt())
+
+  // 验证 P1-1：QQ path-only 经受控目录读出 bytes 并通过 gatewayMediaBytes
+  const mediaGot = await hub.gatewayMediaBytes('qq:private:10000001', { file: 'img_only_path.png' })
+  assert.deepEqual(mediaGot, png1x1)
+
+  // 验证 P1-2：先让 qq 入站确立 hub.selfId = '20000002'，再让 qq#2 入站（self='30000003'），hub.selfId 不得被改写
+  await hub.onGatewayMessage({
+    v: 1, instance: 'qq', platform: 'qq', chatId: 'qq:group:777', kind: 'group',
+    chat: { kind: 'group', id: '777' },
+    sender: { account: '10000001', name: '主人', role: 'owner', person: 'p_1', isOwner: true },
+    messageId: 'q1_m1', at: Date.now(), mentionedMe: false, parts: [{ type: 'text', text: 'hi' }], raw: {},
+  })
+  assert.equal(hub.selfId, '20000002')
+  await hub.onGatewayMessage({
+    v: 1, instance: 'qq#2', platform: 'qq', chatId: 'qq#2:group:777', kind: 'group',
+    chat: { kind: 'group', id: '777' },
+    sender: { account: '10000001', name: '主人', role: 'owner', person: 'p_1', isOwner: true },
+    messageId: 'q2_m1', at: Date.now(), mentionedMe: false, parts: [{ type: 'text', text: 'hi2' }], raw: {},
+  })
+  assert.equal(hub.selfId, '20000002', 'qq#2 入站绝不能污染全局 default QQ selfId')
+
+  // 验证 P2-6：飞书官方 im.message.recalled_v1 真实回调结构经过 gateway.onEvent → hub.onGatewayRecall 驱逐 quoteCache
+  const qFeishu = await hub.quotedInfo('om_real_1', { chatId: 'feishu:group:oc_1' })
+  assert.equal(qFeishu.ok, true)
+  assert.equal(feishuFetchCount, 1)
+  feishuMsgGone = true
+  const req = {
+    url: '/platform/feishu/callback',
+    method: 'POST',
+    headers: {},
+    body: { schema: '2.0', header: { event_id: 'ev_r1', event_type: 'im.message.recalled_v1', token: 'vt-real' }, event: { message_id: 'om_real_1', chat_id: 'oc_1', recall_time: '1700000100', recall_type: 'message_owner' } },
+  }
+  const res = { statusCode: 200, setHeader() {}, end() {} }
+  const handled = gwP1.handleHttp(req, res)
+  assert.equal(handled, true)
+  assert.equal(res.statusCode, 200)
+  const qFeishuAfterRecall = await hub.quotedInfo('om_real_1', { chatId: 'feishu:group:oc_1' })
+  assert.equal(feishuFetchCount, 2, '真实 im.message.recalled_v1 回调必须驱逐缓存并触发重新拉取')
+  assert.equal(qFeishuAfterRecall.ok, false)
+
+  // 验证 P2-1：无 onebot + gateway media.fetch=false 时 imagesOf 按 URL 兜底读取
+  const gwNoMedia = {
+    instances: () => [],
+    caps: () => ({ features: { 'media.fetch': false } }),
+    features: () => ({ 'media.fetch': false }),
+  }
+  const hUrl = setupHubTest(t, { gateway: gwNoMedia, onebot: null })
+  const imgs = await hUrl.hub.imagesOf({
+    chatId: 'qq:private:10000001',
+    platform: 'qq',
+    messageId: 'm_url_1',
+    images: [{ type: 'image', data: { url: 'base64://' + png1x1.toString('base64') } }],
+    stickers: [],
+  })
+  assert.equal(imgs.length, 1)
+  assert.equal(imgs[0].mediaType, 'image/png')
+
+  // 验证 P2-3：expandForwards 支持多层嵌套递归（不读 raw）
+  const gwNestedFwd = {
+    instances: () => [],
+    caps: () => ({ forwardExpand: true, features: { 'message.forward.expand': true } }),
+    features: () => ({ 'message.forward.expand': true }),
+    async fetch(_cid, req) {
+      if (req.id === 'outer') {
+        return {
+          messages: [
+            { messageId: 'o1', sender: { account: 'u1', name: '甲' }, parts: [{ type: 'text', text: '外层' }, { type: 'forward', id: 'inner' }] },
+          ],
+        }
+      }
+      return {
+        messages: [
+          { messageId: 'i1', sender: { account: 'u2', name: '乙' }, parts: [{ type: 'text', text: '内层深处消息' }] },
+        ],
+      }
+    },
+  }
+  const hNest = setupHubTest(t, { gateway: gwNestedFwd })
+  const nestOut = await hNest.hub.expandForwards({ chatId: 'qq:group:777', forwards: ['outer'], images: [], stickers: [] }, '看看 [合并转发]')
+  assert.match(nestOut, /外层/)
+  assert.match(nestOut, /内层深处消息/)
+
+  // 验证 P2-4：G3 默认 QQ gateway 探针未开 message.quote.read 但直连 onebot 在线时允许回退 onebot
+  const gwQuoteFalse = {
+    instances: () => [],
+    caps: () => ({ quoteReply: true, features: { 'message.quote.read': false } }),
+    features: () => ({ 'message.quote.read': false }),
+  }
+  const hG3 = setupHubTest(t, {
+    cfgPatch: { platforms: { qq: { enabled: true } } },
+    gateway: gwQuoteFalse,
+    onebot: legacyFallbackOb,
+  })
+  const qG3 = await hG3.hub.quotedInfo('99', { chatId: 'qq:private:10000001', userId: '10000001' })
+  assert.equal(qG3.ok, true)
+  assert.equal(qG3.text, '来自G3 onebot回退')
 })
