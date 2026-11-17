@@ -639,18 +639,28 @@ test('Step 1A 复审：QQ path-only 经受控目录转 bytes 打通 gatewayMedia
   assert.match(nestOut, /外层/)
   assert.match(nestOut, /内层深处消息/)
 
-  // 验证 P2-4：G3 默认 QQ gateway 探针未开 message.quote.read 但直连 onebot 在线时允许回退 onebot
+  // 验证 P2-4 & 复审5.4：G3 默认 QQ gateway 探针未开 message.quote.read 但直连 onebot 在线时允许回退 onebot；
+  // 且仅配置 quoteReply=false（发送侧能力）不应关闭入站引用读取，只有 features['message.quote.read']=false 才拦截
   const gwQuoteFalse = {
     instances: () => [],
     caps: () => ({ quoteReply: true, features: { 'message.quote.read': false } }),
     features: () => ({ 'message.quote.read': false }),
   }
   const hG3 = setupHubTest(t, {
-    cfgPatch: { platforms: { qq: { enabled: true } } },
+    cfgPatch: { platforms: { qq: { enabled: true, caps: { quoteReply: false } } } },
     gateway: gwQuoteFalse,
     onebot: legacyFallbackOb,
   })
   const qG3 = await hG3.hub.quotedInfo('99', { chatId: 'qq:private:10000001', userId: '10000001' })
   assert.equal(qG3.ok, true)
   assert.equal(qG3.text, '来自G3 onebot回退')
+
+  const hG3ReadBlocked = setupHubTest(t, {
+    cfgPatch: { platforms: { qq: { enabled: true, caps: { features: { 'message.quote.read': false } } } } },
+    gateway: gwQuoteFalse,
+    onebot: legacyFallbackOb,
+  })
+  const qG3Blocked = await hG3ReadBlocked.hub.quotedInfo('99', { chatId: 'qq:private:10000001', userId: '10000001' })
+  assert.equal(qG3Blocked.ok, false)
+  assert.equal(qG3Blocked.failKind, 'permission')
 })

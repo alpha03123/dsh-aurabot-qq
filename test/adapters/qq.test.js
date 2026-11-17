@@ -3,7 +3,7 @@
 // 全部用可注入的假 OneBot client，绝不真连网。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runAdapterContract, makeCtx } from '../contract/adapter-kit.js'
@@ -453,14 +453,53 @@ test('Step 1A：fetch(message) 与 fetch(forward) 统一输出归一化 FetchedM
   await adapter.stop()
 })
 
-test('Step 1A P1-1：fetch(media) 对受控目录 path-only 转 bytes，越界本机路径拒绝', async () => {
+test('Step 1A P1-1 & 复审5.3：fetch(media) 仅放行媒体子目录+合法媒体，拒绝 outbox/config/caps/越界/伪装文件', async () => {
   const controlledDir = mkdtempSync(join(tmpdir(), 'aurabot-qq-media-'))
   const outsideDir = mkdtempSync(join(tmpdir(), 'aurabot-qq-outside-'))
+  const dataRoot = mkdtempSync(join(tmpdir(), 'aurabot-qq-datadir-'))
+  const snowlumaDir = mkdtempSync(join(tmpdir(), 'aurabot-qq-snowluma-'))
+  const dataMediaDir = join(dataRoot, 'media')
+  const snowlumaConfigDir = join(snowlumaDir, 'config')
+  const fakeHome = mkdtempSync(join(tmpdir(), 'aurabot-qq-home-'))
+  const tencentPicDir = join(fakeHome, 'Documents', 'Tencent Files', '123456', 'nt_qq', 'nt_data', 'Pic', '2026-11')
+  const tencentDbDir = join(fakeHome, 'Documents', 'Tencent Files', '123456', 'nt_qq', 'nt_db')
+  const qqConfigDir = join(fakeHome, '.config', 'QQ')
+  mkdirSync(dataMediaDir, { recursive: true })
+  mkdirSync(snowlumaConfigDir, { recursive: true })
+  mkdirSync(tencentPicDir, { recursive: true })
+  mkdirSync(tencentDbDir, { recursive: true })
+  mkdirSync(qqConfigDir, { recursive: true })
+
   const insideFile = join(controlledDir, 'cached.png')
+  const dataMediaPng = join(dataMediaDir, 'in-datadir-media.png')
+  const extensionlessPng = join(controlledDir, 'hash_no_ext')
+  const tencentPicPng = join(tencentPicDir, 'pic.png')
+  const tencentDbFile = join(tencentDbDir, 'nt_msg.db')
+  const qqConfigFile = join(qqConfigDir, 'config.json')
   const outsideFile = join(outsideDir, 'secret.txt')
+  const outboxFile = join(dataRoot, 'outbox.json')
+  const capsFile = join(dataRoot, 'caps.json')
+  const configFile = join(dataRoot, 'config.json')
+  const snowlumaWebui = join(snowlumaConfigDir, 'webui.json')
+  const disguisedOutbox = join(dataMediaDir, 'outbox.png')
+  const disguisedJsonPng = join(dataMediaDir, 'evil.png')
+  const sqliteFile = join(dataMediaDir, 'msg.db')
+
   const expected = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02])
   writeFileSync(insideFile, expected)
+  writeFileSync(dataMediaPng, expected)
+  writeFileSync(extensionlessPng, expected)
+  writeFileSync(tencentPicPng, expected)
+  writeFileSync(tencentDbFile, 'SQLite format 3\0nt')
+  writeFileSync(qqConfigFile, '{"uin":"123"}')
   writeFileSync(outsideFile, 'do-not-read')
+  writeFileSync(outboxFile, '{"queue":[{"secret":"token"}]}')
+  writeFileSync(capsFile, '{"features":{}}')
+  writeFileSync(configFile, '{"token":"abc"}')
+  writeFileSync(snowlumaWebui, '{"password":"secret"}')
+  writeFileSync(disguisedOutbox, expected)
+  writeFileSync(disguisedJsonPng, '{"secret":"json-disguised-as-png"}')
+  writeFileSync(sqliteFile, 'SQLite format 3\0dummy')
 
   const client = makeFakeClient()
   const baseCall = client.call.bind(client)
@@ -470,20 +509,37 @@ test('Step 1A P1-1：fetch(media) 对受控目录 path-only 转 bytes，越界�
     return baseCall(action, params, opts)
   }
 
-  const adapter = createQqAdapter({ client, mediaDirs: [controlledDir] })
-  const ctx = makeCtx(adapter)
+  const adapter = createQqAdapter({ client, mediaDirs: [controlledDir], homeDir: fakeHome })
+  const ctx = makeCtx(adapter, { snowlumaDir })
+  ctx.dataDir = (...p) => join(dataRoot, ...p)
   await adapter.start(ctx)
   await new Promise((r) => setTimeout(r, 60))
 
-  const okRes = await adapter.fetch({ kind: 'media', media: { id: 'cached.png' } })
-  assert.deepEqual(okRes.bytes, expected)
-  assert.equal('path' in okRes, false, 'QQ fetch(media) 不应再把裸本机 path 透出给中枢')
+  // 1. 显式 mediaDirs 内的合法 PNG、ctx.dataDir('media') 内的合法 PNG、Tencent Pic 缓存子目录、以及无扩展名真实 PNG magic 放行
+  for (const [label, target] of [
+    ['explicit mediaDir PNG', insideFile],
+    ['ctx.dataDir(media) PNG', dataMediaPng],
+    ['Tencent Pic subdir PNG', tencentPicPng],
+    ['extensionless media magic', extensionlessPng],
+  ]) {
+    nextPath = target
+    const okRes = await adapter.fetch({ kind: 'media', media: { id: label } })
+    assert.deepEqual(okRes.bytes, expected, label)
+    assert.equal('path' in okRes, false, 'QQ fetch(media) 不应再把裸本机 path 透出给中枢')
+  }
 
-  nextPath = outsideFile
-  await assert.rejects(
-    () => adapter.fetch({ kind: 'media', media: { id: 'secret.txt' } }),
-    (e) => e.certainty === 'not-sent' && e.code === 'unsafe-media-path',
-  )
+  // 2. outbox.json / config.json / caps.json / snowluma config / Tencent nt_db / .config/QQ config / 伪装文件名与伪装内容 / db 全部拒绝
+  for (const denied of [
+    outsideFile, outboxFile, capsFile, configFile, snowlumaWebui,
+    tencentDbFile, qqConfigFile, disguisedOutbox, disguisedJsonPng, sqliteFile,
+  ]) {
+    nextPath = denied
+    await assert.rejects(
+      () => adapter.fetch({ kind: 'media', media: { id: denied } }),
+      (e) => e.certainty === 'not-sent' && e.code === 'unsafe-media-path',
+      `必须拒绝敏感/越界/伪装路径：${denied}`,
+    )
+  }
 
   await adapter.stop()
 })

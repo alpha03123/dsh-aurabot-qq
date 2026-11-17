@@ -395,7 +395,8 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       const useGwReact = Boolean(gateway && (reactPlat !== defaultPlatform() || gateway.caps?.(reactCid) !== null || !onebot))
       if (!useGwReact && reactPlat !== defaultPlatform()) return
       if (useGwReact && !gateway.features?.(reactCid)?.['message.reaction']) return
-      // Phase 1A 仅保留 QQ/OneBot 的 set_msg_emoji_like 动作；其余平台待后续适配归一化 reaction 接口
+      // 注意：此处不是通用 message.reaction 实现，Phase 1A 仅保留 QQ/OneBot 专有动作 set_msg_emoji_like；
+      // 其他平台的通用 reaction 能力将在后续适配补充统一契约后再放行。
       if (reactPlat !== defaultPlatform()) return
       if (!useGwReact && !onebot) return
       const chance = cfg.stickers?.reactChance ?? 0
@@ -2710,7 +2711,8 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
         if (built && built !== 'hidden') return saveCache(built)
       }
       const instCfg = getConfig()?.platforms?.[addr?.instance || defaultPlatform()]?.caps
-      const quoteDisabledByCfg = instCfg?.quoteReply === false || instCfg?.features?.['message.quote.read'] === false
+      // quoteReply 控制出站是否引用回复，不应连带禁用入站读取被引用消息；这里只看 message.quote.read
+      const quoteDisabledByCfg = instCfg?.features?.['message.quote.read'] === false
       if (quoteDisabledByCfg || addr?.platform !== defaultPlatform() || !onebot?.call) {
         return saveCache({
           ok: false, failKind: quoteDisabledByCfg ? 'permission' : 'unsupported',

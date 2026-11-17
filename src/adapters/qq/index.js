@@ -23,7 +23,7 @@
 //   client 只要求有 { start, stop, call, isConnected, state, restart } —— 就是 createOneBotClient 的返回。
 
 import * as nodeFs from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { createOneBotClient, isDefiniteFailure } from '../../onebot/client.js'
@@ -36,6 +36,80 @@ import {
   readCapsCache, supportedActions, writeCapsCache,
 } from './probe.js'
 import { createSnowlumaSidecar, snowlumaEnabled } from './snowluma.js'
+
+const MAX_LOCAL_MEDIA_BYTES = 50 * 1024 * 1024
+const SENSITIVE_MEDIA_NAME_RE = /^(?:outbox|caps|config|settings|webui|onebot|identity|secret|token|credential|auth|cookie|session|keystore|env)(?:[._-]|$)/i
+const BLOCKED_MEDIA_EXTS = new Set([
+  '.json', '.jsonc', '.json5', '.db', '.sqlite', '.sqlite3', '.wal', '.shm', '.log',
+  '.txt', '.md', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.yml', '.yaml',
+  '.toml', '.ini', '.env', '.cfg', '.conf', '.bak', '.key', '.pem', '.crt', '.p12',
+  '.pfx', '.sh', '.bat', '.cmd', '.ps1', '.exe', '.dll', '.html', '.htm', '.xml',
+  '.svg', '.csv',
+])
+const MAGIC_REQUIRED_MEDIA_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ogg', '.flac', '.wav', '.mp4', '.m4a', '.mov', '.webm', '.mkv',
+])
+const ALLOWED_MEDIA_EXTS = new Set([
+  ...MAGIC_REQUIRED_MEDIA_EXTS,
+  '.tiff', '.tif', '.avif', '.heic', '.ico', '.mp3', '.opus', '.amr', '.silk', '.slk', '.aac', '.pcm', '.avi', '.flv', '.m4v',
+])
+// Tencent Files / QQ 主目录只允许进入明确的缓存子目录，绝不放行账号数据库（nt_db/*.db）与配置文件
+const TENCENT_CACHE_SUBDIR_RE = /^(?:\d+[\\/])?(?:nt_qq[\\/]nt_data[\\/](?:Pic|Emoji|Ptt|Video|FileRecv|Cache|Temp)|(?:Image|Audio|Video|Cache|Temp))[\\/]/i
+
+function looksLikeMediaBytes(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 3) return false
+  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true
+  if (buf.length >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38 && (buf[4] === 0x37 || buf[4] === 0x39) && buf[5] === 0x61) return true
+  if (buf[0] === 0x42 && buf[1] === 0x4d) return true
+  if (buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF') {
+    const tag = buf.subarray(8, 12).toString('ascii')
+    if (tag === 'WEBP' || tag === 'WAVE' || tag === 'AVI ') return true
+  }
+  if (buf.length >= 4 && buf.subarray(0, 4).toString('ascii') === 'OggS') return true
+  if (buf.length >= 4 && buf.subarray(0, 4).toString('ascii') === 'fLaC') return true
+  if (buf.subarray(0, 3).toString('ascii') === 'ID3') return true
+  if (buf[0] === 0xff && (buf[1] === 0xfb || buf[1] === 0xf3 || buf[1] === 0xf2)) return true
+  if (buf.length >= 12 && buf.subarray(4, 8).toString('ascii') === 'ftyp') return true
+  if (buf.length >= 4 && buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return true
+  if (buf.length >= 5 && buf.subarray(0, 5).toString('ascii') === '#!AMR') return true
+  if (buf.length >= 9 && (buf.subarray(0, 10).toString('ascii') === '\x02#!SILK_V3' || buf.subarray(0, 9).toString('ascii') === '#!SILK_V3')) return true
+  return false
+}
+
+function looksLikeSensitivePayload(buf) {
+  if (!Buffer.isBuffer(buf) || !buf.length) return true
+  if (buf.length >= 16 && buf.subarray(0, 16).toString('ascii') === 'SQLite format 3\0') return true
+  const s = buf.subarray(0, Math.min(buf.length, 256)).toString('utf8').replace(/^\uFEFF/, '').trimStart()
+  return s.startsWith('{') || s.startsWith('[') || s.startsWith('<') || s.startsWith('-----BEGIN ')
+}
+
+function isSensitiveMediaPath(filePath) {
+  const name = basename(filePath)
+  const ext = extname(name).toLowerCase()
+  return SENSITIVE_MEDIA_NAME_RE.test(name) || (Boolean(ext) && BLOCKED_MEDIA_EXTS.has(ext))
+}
+
+function isAllowedMediaContent(filePath, buf) {
+  if (isSensitiveMediaPath(filePath) || looksLikeSensitivePayload(buf)) return false
+  const ext = extname(basename(filePath)).toLowerCase()
+  if (MAGIC_REQUIRED_MEDIA_EXTS.has(ext)) return looksLikeMediaBytes(buf)
+  if (ALLOWED_MEDIA_EXTS.has(ext)) return true
+  return looksLikeMediaBytes(buf)
+}
+
+function resolveRealDirs(dirs, fsApi) {
+  const out = []
+  for (const dir of dirs) {
+    const s = String(dir || '').trim()
+    if (!s) continue
+    try {
+      const resolved = resolve(s)
+      out.push(typeof fsApi.realpathSync === 'function' ? fsApi.realpathSync(resolved) : resolved)
+    } catch {}
+  }
+  return [...new Set(out)]
+}
 
 /**
  * 建一个 QQ 平台端实例。
@@ -61,33 +135,54 @@ export function createQqAdapter(options = {}) {
 
   const fsImpl = options.fs || null // 测试注入的假 fs（决定 caps.json 走哪）
   const log = () => (ctx?.log || noopLog)
-  const MAX_LOCAL_MEDIA_BYTES = 50 * 1024 * 1024
 
-  function controlledMediaRoots() {
+  function controlledMediaPolicy() {
     const cfg = config()
-    const raw = [
-      typeof ctx?.dataDir === 'function' ? ctx.dataDir() : '',
-      cfg.snowlumaDir,
-      cfg.dir,
+    const fsApi = fsImpl || nodeFs
+    const userHome = String(options.homeDir || homedir())
+    const snowlumaBase = String(cfg.snowlumaDir ?? cfg.dir ?? '').trim()
+    const snowlumaSubs = snowlumaBase
+      ? [join(snowlumaBase, 'media'), join(snowlumaBase, 'cache'), join(snowlumaBase, 'temp')]
+      : []
+    const dataSubs = typeof ctx?.dataDir === 'function'
+      ? [ctx.dataDir('media'), ctx.dataDir('cache')]
+      : []
+    const fixedRaw = [
+      ...dataSubs,
+      ...snowlumaSubs,
       ...(Array.isArray(cfg.mediaDirs) ? cfg.mediaDirs : []),
       ...(Array.isArray(options.mediaDirs) ? options.mediaDirs : []),
-      join(homedir(), '.config', 'QQ'),
-      join(homedir(), 'NapCat'),
-      join(homedir(), 'Documents', 'Tencent Files'),
-      join(homedir(), 'AppData', 'Roaming', 'NapCat'),
-      join(homedir(), 'AppData', 'Roaming', 'LLOneBot'),
+      join(userHome, '.config', 'QQ', 'NapCat', 'temp'),
+      join(userHome, '.config', 'QQ', 'NapCat', 'cache'),
+      join(userHome, 'NapCat', 'temp'),
+      join(userHome, 'NapCat', 'cache'),
+      join(userHome, 'NapCat', 'media'),
+      join(userHome, 'AppData', 'Roaming', 'NapCat', 'temp'),
+      join(userHome, 'AppData', 'Roaming', 'NapCat', 'cache'),
+      join(userHome, 'AppData', 'Roaming', 'LLOneBot', 'temp'),
+      join(userHome, 'AppData', 'Roaming', 'LLOneBot', 'cache'),
+      join(userHome, 'AppData', 'Roaming', 'LLOneBot', 'media'),
     ]
-    const out = []
-    const fsApi = fsImpl || nodeFs
-    for (const dir of raw) {
-      const s = String(dir || '').trim()
-      if (!s) continue
-      try {
-        const resolved = resolve(s)
-        out.push(typeof fsApi.realpathSync === 'function' ? fsApi.realpathSync(resolved) : resolved)
-      } catch {}
+    const scopedParentsRaw = [
+      join(userHome, 'Documents', 'Tencent Files'),
+      join(userHome, '.config', 'QQ'),
+    ]
+    return {
+      fixedRoots: resolveRealDirs(fixedRaw, fsApi),
+      scopedParents: resolveRealDirs(scopedParentsRaw, fsApi),
     }
-    return [...new Set(out)]
+  }
+
+  function isPathInsideMediaPolicy(candidatePath, policy) {
+    for (const root of policy.fixedRoots) {
+      const rel = relative(root, candidatePath)
+      if (rel && !rel.startsWith('..') && !isAbsolute(rel)) return true
+    }
+    for (const parent of policy.scopedParents) {
+      const rel = relative(parent, candidatePath)
+      if (rel && !rel.startsWith('..') && !isAbsolute(rel) && TENCENT_CACHE_SUBDIR_RE.test(rel)) return true
+    }
+    return false
   }
 
   function readControlledMediaBytes(rawPath) {
@@ -97,12 +192,25 @@ export function createQqAdapter(options = {}) {
       try { target = fileURLToPath(target) } catch { throw makeSendError('not-sent', 'unsafe-media-path', instance, '非法 file:// 媒体路径') }
     }
     if (!isAbsolute(target)) throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 媒体路径必须是绝对路径')
-    const roots = controlledMediaRoots()
-    if (!roots.length) throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 未配置受控媒体目录，拒绝读取本机路径')
+    if (isSensitiveMediaPath(target)) {
+      throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 媒体路径指向受保护文件类型或敏感文件名，拒绝读取')
+    }
+    const policy = controlledMediaPolicy()
+    if (!policy.fixedRoots.length && !policy.scopedParents.length) {
+      throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 未配置受控媒体目录，拒绝读取本机路径')
+    }
+    // 本机可信环境约束：lstatSync → realpathSync → readFileSync 之间存在常规文件系统 TOCTOU 窗口，
+    // 这里依赖本机 OneBot/QQ 宿主的普通用户文件权限隔离，仅防静态符号链接与跨目录越界读取。
     let st
     try {
       st = typeof fsApi.lstatSync === 'function' ? fsApi.lstatSync(target) : fsApi.statSync(target)
     } catch {
+      let realParent = ''
+      try { realParent = typeof fsApi.realpathSync === 'function' ? fsApi.realpathSync(dirname(target)) : resolve(dirname(target)) } catch {}
+      const probeTarget = realParent ? join(realParent, basename(target)) : resolve(target)
+      if (!isPathInsideMediaPolicy(probeTarget, policy)) {
+        throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 媒体路径不在受控媒体子目录内，拒绝读取')
+      }
       throw makeSendError('not-sent', 'media-not-found', instance, `QQ 本机媒体文件不存在：${target}`)
     }
     if (typeof st?.isSymbolicLink === 'function' && st.isSymbolicLink()) {
@@ -115,16 +223,15 @@ export function createQqAdapter(options = {}) {
       throw makeSendError('not-sent', 'too-large', instance, `QQ 媒体文件超过 ${Math.round(MAX_LOCAL_MEDIA_BYTES / 1048576)}MB 上限`)
     }
     const realTarget = typeof fsApi.realpathSync === 'function' ? fsApi.realpathSync(target) : resolve(target)
-    const inside = roots.some((root) => {
-      const rel = relative(root, realTarget)
-      return Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel)
-    })
-    if (!inside) {
-      throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 媒体路径不在受控目录内，拒绝读取')
+    if (isSensitiveMediaPath(realTarget) || !isPathInsideMediaPolicy(realTarget, policy)) {
+      throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 媒体路径不在受控媒体子目录内，拒绝读取')
     }
     const buf = fsApi.readFileSync(realTarget)
     if (buf.length > MAX_LOCAL_MEDIA_BYTES) {
       throw makeSendError('not-sent', 'too-large', instance, `QQ 媒体文件超过 ${Math.round(MAX_LOCAL_MEDIA_BYTES / 1048576)}MB 上限`)
+    }
+    if (!isAllowedMediaContent(realTarget, buf)) {
+      throw makeSendError('not-sent', 'unsafe-media-path', instance, 'QQ 媒体文件内容或扩展名不符合媒体白名单，拒绝读取')
     }
     return buf
   }
