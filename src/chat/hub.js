@@ -2855,8 +2855,8 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     return got.map((x, i) => ({ type: 'image', data: x.data, mediaType: x.mediaType, name: `quote-${q.uid || 'x'}-${i + 1}` }))
   }
 
-  /** 多平台/传统 OneBot 统一取媒体字节：优先内联 base64，网关会话走 gatewayMediaBytes，纯 URL 走安全 fetchImage，无网关回退 segmentBytes。 */
-  async function mediaBytesForSegment(chatId, seg, { maxBytes = MAX_IMAGE_BYTES, timeoutMs = 20000 } = {}) {
+  /** 多平台/传统 OneBot 统一取媒体字节：优先内联 base64，网关会话走 gatewayMediaBytes，纯 URL 走安全 fetchImage，无网关或 G3 回退直连 onebot 允许本机路径。 */
+  async function mediaBytesForSegment(chatId, seg, { maxBytes = MAX_IMAGE_BYTES, timeoutMs = 20000, allowLocal } = {}) {
     const d = seg?.data || {}
     const limit = Math.min(Math.max(1, Number(maxBytes) || MAX_IMAGE_BYTES), MAX_IMAGE_BYTES)
     if (typeof d.file === 'string' && d.file.startsWith('base64://')) {
@@ -2879,7 +2879,10 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
     if (useGatewayRef && d.url) {
       return fetchImage(d.url, { maxBytes: limit, allowLocal: false, timeoutMs })
     }
-    return segmentBytes(seg, onebot, { maxBytes: limit, allowLocal: false, timeoutMs })
+    const legacyAllowLocal = allowLocal !== undefined
+      ? Boolean(allowLocal)
+      : (!gateway || !addr || gateway.caps?.(normCid) === null) && Boolean(onebot)
+    return segmentBytes(seg, onebot, { maxBytes: limit, allowLocal: legacyAllowLocal, timeoutMs })
   }
 
   /** 生图复用收到的媒体段和引用缓存，不接受工具传来的路径、URL 或任意消息 ID。 */
@@ -2894,7 +2897,7 @@ export function createHub({ dsh, getConfig, log, onebot, outbox, stickers, tts, 
       seg = recentMediaOf(chat.chatId).at(-1)?.seg
     }
     if (!seg) throw new Error(source === 'quote' ? '当前聊天没有可用的引用图片，请引用带图的消息再试' : '当前聊天最近半小时没有收到图片，请先发一张图')
-    return mediaBytesForSegment(chat.chatId, seg)
+    return mediaBytesForSegment(chat.chatId, seg, { allowLocal: false })
   }
 
   async function repliedToBot(replyId, msg) {

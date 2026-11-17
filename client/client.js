@@ -3818,9 +3818,22 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         }))
       const activePlats = platRows.filter((x) => x && (x.legacy || x.enabled !== false))
       const qqPlats = activePlats.filter((x) => x.platform === 'qq')
-      const hasActiveQq = Boolean(qqPlats.length || (st && st.onebot && st.onebot.state === 'connected') || (draft && draft.enabled && draft.botQQ))
-      const canQqSync = hasActiveQq && (!qqPlats.some((x) => x.caps) || qqPlats.some((x) => !x.caps || !x.caps.features || x.caps.features['sticker.sync.native'] !== false))
-      const hasStickerImageFallback = activePlats.some((x) => x.platform !== 'qq' && (!x.caps || (x.caps.sticker === false && x.caps.image !== false)))
+      const cfgPlatforms = (draft && draft.platforms && typeof draft.platforms === 'object') ? draft.platforms : {}
+      const legacyQqConfigured = Boolean(draft && draft.enabled && draft.botQQ && (!cfgPlatforms.qq || cfgPlatforms.qq.enabled !== false))
+      const hasActiveQq = Boolean(qqPlats.length || legacyQqConfigured)
+      const hasServerSync = Boolean(st && st.stickers && typeof st.stickers.canQqSync === 'boolean')
+      const qqProbed = qqPlats.filter((x) => x && x.caps)
+      const canQqSync = hasActiveQq && (
+        hasServerSync
+          ? Boolean(st.stickers.canQqSync)
+          : (qqProbed.length
+            ? qqProbed.some((x) => (!x.state || x.state === 'connected') && (!x.caps.features || x.caps.features['sticker.sync.native'] !== false))
+            : qqPlats.some((x) => x.legacy) || legacyQqConfigured)
+      )
+      const hasStickerImageFallback = activePlats.some((x) => {
+        if (x && x.caps) return x.caps.sticker === false && x.caps.image !== false
+        return Boolean(x && x.platform && x.platform !== 'qq')
+      })
       const load = () => getCached('/stickers?limit=40&offset=0').then((r) => {
         setItems(r.items || []); setHasMore(Boolean(r.hasMore)); setStickerTotal(Number(r.total) || 0)
       })
@@ -3959,7 +3972,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         ].filter(Boolean)
       return h('div', { className: 'ab-grid' },
         h(Card, { title: '表情包', right: f.sw('stickers.enabled'), desc: '回复里写 <sticker:名字> 就会发对应的表情；也会按概率自动配一张。' },
-          hasStickerImageFallback ? h('div', { className: 'ab-note', style: { marginBottom: 8 } }, '当前包含不支持原生表情包的平台（如飞书），发送表情包时会自动按图片降级发出。') : null,
+          hasStickerImageFallback ? h('div', { className: 'ab-note', style: { marginBottom: 8 } }, '当前包含不支持原生表情包的实例（如飞书或精简网关），发送表情包时会自动按图片降级发出。') : null,
           h(Row, { label: '自动配表情的概率' }, f.percent('stickers.autoChance')),
           hasActiveQq ? h(Row, { label: '夹 QQ 小黄脸', hint: '回复里能夹 QQ 自带的系统表情（/捂脸 /斜眼笑 这种），和文字在同一条消息里' }, f.sw('stickers.faces')) : null,
           h(Row, { label: '偷表情', hint: hasActiveQq ? '别人发的表情包会被收藏（普通照片不收）。' : '收到兼容的表情图片时会收进本地库（普通照片不收）。' }, f.sw('stickers.collect'), h('span', { className: 'ab-muted' }, '从群里'), f.sw('stickers.fromGroups'), h('span', { className: 'ab-muted' }, '从私聊'), f.sw('stickers.fromPrivate')),

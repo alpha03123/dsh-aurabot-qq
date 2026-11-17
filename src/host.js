@@ -2062,7 +2062,7 @@ export function apply(ctx) {
       stats: hub.stats(),
       // 模块关着时给个空壳，面板照常显示
       mood: moodSummary,
-      stickers: { count: stickers.library().items.length },
+      stickers: { count: stickers.library().items.length, canQqSync: core.stickerSync.ready() },
       diary: diary ? { next: diary.nextTime(), last: diary.history()[0] || null } : { next: 0, last: null },
       qzoneSocial: use('qzone-social')?.state?.() ?? null,
       speakUp: use('speakup')?.state?.() ?? { count: 0 },

@@ -475,10 +475,44 @@ test('Step 1B 面板 client/client.js#Stickers：纯飞书隐藏 QQ 专属按钮
     onebot: { state: 'stopped' },
     platforms: [{ instance: 'feishu', platform: 'feishu', enabled: true, state: 'connected', caps: CAPS_FEISHU }],
   })
-  assert.match(feishuOnlyText, /不支持原生表情包的平台/, '纯飞书下应提示自动按图片降级发出')
+  assert.match(feishuOnlyText, /不支持原生表情包的/, '纯飞书下应提示自动按图片降级发出')
   assert.doesNotMatch(feishuOnlyText, /从 QQ 收藏导入/, '纯飞书下必须隐藏 QQ 导入按钮')
   assert.doesNotMatch(feishuOnlyText, /夹 QQ 小黄脸/, '纯飞书下应隐藏 QQ 小黄脸设置')
   assert.doesNotMatch(feishuOnlyText, /贴表情/, '纯飞书下应隐藏 QQ 专属贴表情卡')
+
+  // P2-1：纯飞书禁用 QQ 但 st.onebot 残留 connected 时，不得误显示 QQ 同步控件
+  const staleOnebotText = renderStickers({
+    config: { ...baseCfg, platforms: { feishu: { enabled: true }, qq: { enabled: false } } },
+    onebot: { state: 'connected' },
+    platforms: [
+      { instance: 'feishu', platform: 'feishu', enabled: true, state: 'connected', caps: CAPS_FEISHU },
+      { instance: 'qq', platform: 'qq', enabled: false, state: 'stopped', caps: null },
+    ],
+  })
+  assert.doesNotMatch(staleOnebotText, /从 QQ 收藏导入/, 'QQ 禁用时不得仅凭 onebot.state 露出 QQ 收藏导入')
+  assert.doesNotMatch(staleOnebotText, /夹 QQ 小黄脸/)
+
+  // P2-4 & P2-5：多 QQ 实例部分可用 + QQ stripped 实例 sticker=false 提示图片降级
+  const multiQqPartialSyncText = renderStickers({
+    config: { ...baseCfg, platforms: { qq: { enabled: true }, 'qq#2': { enabled: true } } },
+    onebot: { state: 'stopped' },
+    platforms: [
+      { instance: 'qq', platform: 'qq', enabled: true, state: 'connected', caps: { image: true, sticker: false, features: { 'sticker.sync.native': true } } },
+      { instance: 'qq#2', platform: 'qq', enabled: true, state: 'connected', caps: { image: true, sticker: true, features: { 'sticker.sync.native': false } } },
+    ],
+  })
+  assert.match(multiQqPartialSyncText, /从 QQ 收藏导入/, '任一已连通 QQ 实例有 sync 能力即可显示导入')
+  assert.match(multiQqPartialSyncText, /不支持原生表情包的/, 'P2-5：QQ 实例 caps.sticker=false 时也应展示图片降级提示')
+
+  const multiQqNoSyncText = renderStickers({
+    config: { ...baseCfg, platforms: { qq: { enabled: true }, 'qq#2': { enabled: true } } },
+    onebot: { state: 'stopped' },
+    platforms: [
+      { instance: 'qq', platform: 'qq', enabled: true, state: 'connected', caps: { image: true, sticker: true, features: { 'sticker.sync.native': false } } },
+      { instance: 'qq#2', platform: 'qq', enabled: true, state: 'stopped', caps: null },
+    ],
+  })
+  assert.doesNotMatch(multiQqNoSyncText, /从 QQ 收藏导入/, 'P2-4：在跑实例不支持且另一实例停机时不应盲目显示可导入')
 
   const qqText = renderStickers({
     config: { ...baseCfg, platforms: { qq: { enabled: true } } },
@@ -535,4 +569,100 @@ test('Step 1B 宿主接线：纯飞书 host.js /sticker/upload、/sticker/import
   const part = app.stickers.partFor(up.item)
   assert.equal(part.type, 'sticker')
   assert.ok(Buffer.isBuffer(part.media.bytes))
+  const stView = (await fake.call('/state')).json()
+  assert.equal(stView.stickers.canQqSync, false)
+})
+
+test('Step 1B 审阅 P1：传统 QQ 直连与 G3 caps=null 下收集本机路径表情成功，referenceImage 仍保持 allowLocal=false', async (t) => {
+  const localDir = mkdtempSync(join(tmpdir(), 'aurabot-p1b-local-'))
+  t.after(() => { try { rmSync(localDir, { recursive: true, force: true }) } catch {} })
+  const localPngPath = join(localDir, 'qq_cached_sticker.png')
+  const g3PngPath = join(localDir, 'g3_cached_sticker.png')
+  const legacyPng = makePng(55)
+  const g3Png = makePng(66)
+  writeFileSync(localPngPath, legacyPng)
+  writeFileSync(g3PngPath, g3Png)
+
+  // 1) 无 gateway + legacy onebot connected + 本地路径 segment.data.file & get_image 回本地路径
+  const obCalls = []
+  const legacyOb = {
+    state: 'connected',
+    async call(action, params) {
+      obCalls.push({ action, params })
+      if (action === 'get_image') return { file: localPngPath }
+      if (action === 'add_custom_face') return { emoji_id: 'ob_face_1' }
+      return {}
+    },
+  }
+  const legacyCfg = normalize({
+    enabled: true,
+    dryRun: false,
+    botQQ: '20000001',
+    ownerQQ: '10000001',
+    allow: { private: ['10000001'], groups: [] },
+    stickers: { enabled: true, collect: true, collectMode: 'ask', fromPrivate: true, caption: false, autoChance: 0 },
+  })
+  const identity = makeIdentity({
+    ownerId: 'p_owner',
+    accounts: [{ platform: 'qq', account: '10000001' }],
+  })
+  const legacyRig = wireHubAndStickers({ t, cfg: legacyCfg, gateway: null, identity, onebot: legacyOb })
+  legacyRig.core.stickerSync = { ready: () => true, call: (a, p, o) => legacyOb.call(a, p, o) }
+  await legacyRig.mods.boot()
+
+  const gotLegacy = await legacyRig.hub.mediaBytes('private:10000001', { type: 'image', data: { file: localPngPath, sub_type: 1 } })
+  assert.deepEqual(gotLegacy, legacyPng, '传统 QQ 无网关应允许读取本机缓存路径')
+
+  // 注入一条含本地路径的表情，分别测 qq_collect_sticker（工具路径）与 stickers.collect（自动收集路径）
+  await legacyRig.hub.onMessage({
+    post_type: 'message',
+    message_type: 'private',
+    sub_type: 'friend',
+    self_id: 20000001,
+    user_id: 10000001,
+    message_id: 7001,
+    sender: { user_id: 10000001, nickname: '主人' },
+    message: [{ type: 'image', data: { file: 'cached_id.png', sub_type: 1 } }],
+  })
+  await assert.rejects(
+    () => legacyRig.hub.referenceImage({ chatId: 'private:10000001' }),
+    /不认识的地址|没有可用的地址/,
+    'referenceImage 在传统 QQ 下仍必须维持 allowLocal=false 安全边界',
+  )
+  legacyRig.hub.simulateTurn('s_legacy_qq', ['10000001'], 'qq')
+  const legacyCollectTool = legacyRig.mods.buildTools({
+    chat: { kind: 'private', chatId: 'private:10000001', platform: 'qq' },
+    sessionId: 's_legacy_qq',
+    level: 'full',
+  }).find((x) => x.name === 'qq_collect_sticker')
+  const collectRes = await legacyCollectTool.execute({ index: 1, name: '直连本地' })
+  assert.equal(collectRes.ok, true, collectRes.message)
+  assert.equal(legacyRig.mods.use('stickers').library().items.some((x) => x.name === '直连本地'), true)
+  assert.equal(obCalls.some((c) => c.action === 'add_custom_face'), true, '直连 QQ 收集仍同步 add_custom_face')
+
+  const autoRes = await legacyRig.mods.use('stickers').collect({ type: 'image', data: { file: g3PngPath, sub_type: 1 } }, 'private:10000001')
+  assert.equal(autoRes.ok, true, autoRes.reason)
+
+  // 2) G3 共存：gateway 存在但 qq caps=null（回退直连 onebot），本地路径同样可读取并收集
+  const g3Gw = {
+    instances: () => [{ instance: 'qq', platform: 'qq', enabled: true, state: 'stopped', caps: null }],
+    caps: () => null,
+    features: () => emptyFeatures(),
+  }
+  const g3Cfg = normalize({
+    enabled: true,
+    dryRun: false,
+    botQQ: '20000001',
+    ownerQQ: '10000001',
+    allow: { private: ['10000001'], groups: [] },
+    platforms: { qq: { enabled: true } },
+    stickers: { enabled: true, collect: true, collectMode: 'ask', fromPrivate: true, caption: false, autoChance: 0 },
+  })
+  const g3Rig = wireHubAndStickers({ t, cfg: g3Cfg, gateway: g3Gw, identity, onebot: legacyOb })
+  g3Rig.core.stickerSync = { ready: () => true, call: (a, p, o) => legacyOb.call(a, p, o) }
+  await g3Rig.mods.boot()
+  const gotG3 = await g3Rig.hub.mediaBytes('qq:private:10000001', { type: 'image', data: { file: g3PngPath, sub_type: 1 } })
+  assert.deepEqual(gotG3, g3Png, 'G3 caps=null 回退 onebot 应允许读取本机路径')
+  const g3Auto = await g3Rig.mods.use('stickers').collect({ type: 'image', data: { file: g3PngPath, sub_type: 1 } }, 'qq:private:10000001')
+  assert.equal(g3Auto.ok, true, g3Auto.reason)
 })

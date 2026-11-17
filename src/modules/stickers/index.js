@@ -59,10 +59,15 @@ export default {
       }
       const d = seg?.data || {}
       const normCid = chatId ? (normalizeChatId(String(chatId)) || String(chatId)) : ''
-      if (normCid && typeof hub?.gatewayMediaBytes === 'function' && (d.mediaId || (d.file && !d.url && !String(d.file).startsWith('base64://')))) {
+      const addr = normCid ? parseChatId(normCid) : null
+      const gw = api.core?.gateway
+      const useGw = Boolean(gw && normCid && (addr?.platform !== 'qq' || gw.caps?.(normCid) !== null || !onebot))
+      if (useGw && typeof hub?.gatewayMediaBytes === 'function' && (d.mediaId || (d.file && !d.url && !String(d.file).startsWith('base64://')))) {
         return await hub.gatewayMediaBytes(normCid, d, d.messageId, opts)
       }
-      return await segmentBytes(seg, onebot, { allowLocal: false, ...opts })
+      // 仅无网关或 G3 caps=null 直连 onebot 时允许读取网关同机返回的表清缓存本机路径
+      const allowLocal = !useGw && Boolean(onebot?.call)
+      return await segmentBytes(seg, onebot, { allowLocal, ...opts })
     }
     const store = createStickerStore({
       dsh: api.dsh,
@@ -79,15 +84,17 @@ export default {
       const gwCaps = gw && typeof gw.caps === 'function' && current ? gw.caps(current) : null
       const caps = (typeof api.caps === 'function' ? api.caps(current) : null) || gwCaps
       const feat = passedFeatures || (typeof api.features === 'function' ? api.features(current) : null)
-      const legacyQqFallback = plat === 'qq' && gwCaps === null
+      // Step 0C 约定 api.features() 在未接入网关（直连 OneBot / G3 caps=null）下不对无 L1 映射的 L2 能力做乐观猜测（保持 false）；
+      // 为兼容传统 QQ 直连收表情与同步收藏，这里单列 legacyDirectMode 兜底，经网关接管后严格服从 L2 Feature 矩阵。
+      const legacyDirectMode = plat === 'qq' && gwCaps === null
       const inst = parseChatId(current)?.instance || plat
       const userFeatCfg = api.config?.()?.platforms?.[inst]?.caps?.features
       const canSend = api.config()?.stickers?.enabled !== false && (!caps || caps.sticker !== false || caps.image !== false)
-      const canCollect = legacyQqFallback
+      const canCollect = legacyDirectMode
         ? userFeatCfg?.['sticker.collect'] !== false
         : (feat ? Boolean(feat['sticker.collect']) : true)
       const canImportQq = plat === 'qq' && (
-        legacyQqFallback
+        legacyDirectMode
           ? (userFeatCfg?.['sticker.sync.native'] !== false && canSyncQqNative())
           : Boolean(feat?.['sticker.sync.native'])
       )
