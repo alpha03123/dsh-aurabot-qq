@@ -6,7 +6,7 @@ import { dataDir, readJson, writeJson } from './store.js'
 import { DEFAULT_GROUP_POLICY } from '../chat/group-policy.js'
 import { LEVELS, PROFILE_PERM_KEYS, PROFILE_PERM_LEVELS, profilePermDefault } from '../chat/access.js'
 import { normalizeChatModels } from '../chat/chat-model.js'
-import { normalizeChatId } from '../gateway/address.js'
+import { normalizeChatId, parseChatId } from '../gateway/address.js'
 import { DELEGATED_COMMANDS, isDelegatedCommandKey } from '../chat/delegated-commands.js'
 import { DIARY_AUDIENCES } from '../features/qzone-audience.js'
 import { DEFAULT_TIER_DAYS } from '../features/memory-rules.js'
@@ -467,6 +467,23 @@ const allowList = (v) => {
   }
   return [...new Set(out)]
 }
+const privateGrantList = (v) => {
+  const raw = Array.isArray(v) ? v : []
+  const out = []
+  for (const item of raw) {
+    const s = String(item ?? '').trim()
+    if (!s) continue
+    if (/^\d{5,}$/.test(s) || /^p-[0-9a-z]+$/.test(s)) { out.push(s); continue }
+    try {
+      const parsed = parseChatId(s)
+      if (parsed?.kind === 'private') {
+        const canon = normalizeChatId(s)
+        if (canon) out.push(canon)
+      }
+    } catch {}
+  }
+  return [...new Set(out)]
+}
 const hhmm = (v, d) => (/^\d{1,2}:\d{2}$/.test(String(v)) ? String(v) : d)
 // 严格校验 'YYYY-MM-DD'（面板手填/配置文件手改都可能乱），非法日期当没填。
 const dateKey = (v) => {
@@ -595,15 +612,9 @@ export function normalize(raw) {  const c = deepMerge(DEFAULTS, raw)
   c.chatModels = normalizeChatModels(c.chatModels)
   c.chatEfforts = normalizeChatEfforts(c.chatEfforts)
   c.profilePerms = Object.fromEntries(PROFILE_PERM_KEYS.map((k) => [k, PROFILE_PERM_LEVELS.includes(c.profilePerms?.[k]) ? c.profilePerms[k] : profilePermDefault(k)]))
-  c.capabilityAllow = Object.fromEntries(['image', 'song', 'video'].map((key) => {
-    const ids = Array.isArray(c.capabilityAllow?.[key]) ? c.capabilityAllow[key] : []
-    return [key, [...new Set(ids.map(String).map((id) => id.trim()).filter((id) => /^\d{5,}$/.test(id)))]]
-  }))
+  c.capabilityAllow = Object.fromEntries(['image', 'song', 'video'].map((key) => [key, privateGrantList(c.capabilityAllow?.[key])]))
   const commandKeys = [...new Set([...DELEGATED_COMMANDS, ...Object.keys(c.commandAllow || {}).filter(isDelegatedCommandKey)])]
-  c.commandAllow = Object.fromEntries(commandKeys.map((key) => {
-    const ids = Array.isArray(c.commandAllow?.[key]) ? c.commandAllow[key] : []
-    return [key, [...new Set(ids.map(String).map((id) => id.trim()).filter((id) => /^\d{5,}$/.test(id)))]]
-  }))
+  c.commandAllow = Object.fromEntries(commandKeys.map((key) => [key, privateGrantList(c.commandAllow?.[key])]))
   // 旧版 douyinDm 是「回别人私信」的权限，含义已不同（现在是主动发私信），老配置一律回到默认「仅主人」
   if (isObj(raw?.profilePerms) && 'douyinDm' in raw.profilePerms) c.profilePerms.douyinDm = profilePermDefault('douyinDm')
   c.allow = { private: allowList(c.allow.private), groups: allowList(c.allow.groups) }
