@@ -459,8 +459,10 @@ test('QQ 关闭时或 G3 未同步共存下的旧口强失败与回退', async (
   const g3Gw = {
     instances: () => [{ instance: 'qq', platform: 'qq', name: 'QQ', enabled: true, state: 'stopped', caps: null }],
     caps: () => null,
+    features: () => ({}),
     native: () => { throw new Error('不应直调未启动 run 的 gateway.native') },
     onState: () => () => {},
+    onCapsChanged: () => () => {},
   }
   const directCalls = []
   let g3Api = null
