@@ -351,9 +351,21 @@ export function createQqbotAdapter(options = {}) {
     history: false,
     memberList: false, // 官方有群成员列表接口（2026-09-03），本包未实现，不撒谎
     forwardExpand: false,
+    features: {
+      'message.quote.read': false,
+      'message.reaction': false,
+      'media.fetch': false,
+      'chat.member.read': false,
+      'sticker.collect': false,
+      'sticker.sync.native': false,
+    },
   })
 
-  const caps = () => ({ ...baseCaps(), ...(capsOverride || {}) })
+  const caps = () => ({
+    ...baseCaps(),
+    ...(capsOverride || {}),
+    features: { ...baseCaps().features, ...(capsOverride?.features || {}) },
+  })
 
   // ───── access_token ─────
   const cfgOf = () => {
@@ -1087,7 +1099,11 @@ export function createQqbotAdapter(options = {}) {
     },
     /** 改 caps 覆盖（模拟探测后能力变化） */
     setCapsOverride(partial) {
-      capsOverride = { ...(capsOverride || {}), ...partial }
+      capsOverride = {
+        ...(capsOverride || {}),
+        ...(partial || {}),
+        ...(partial?.features ? { features: { ...(capsOverride?.features || {}), ...partial.features } } : {}),
+      }
       if (ctx) ctx.capsChanged()
     },
     /** 当前 token 状态（测试断言自动刷新用） */

@@ -46,13 +46,14 @@ export function createQqAdapter(options = {}) {
   let connected = false
   let client = options.client || null
   let sidecar = null // SnowLuma 控制器（只有 backend=snowluma 才有）
-  let caps = { ...CAPS_CONSERVATIVE }
+  let caps = { ...CAPS_CONSERVATIVE, features: { ...CAPS_CONSERVATIVE.features } }
   let probeState = null // { probed, supported:Set, entries, gateway, unsupported, unknown }
   let probeCache = null
   let capsFile = null
   let selfId = '' // 机器人自己的号：@自己 要判定成 mentionedMe
   let probing = false
   let unbindClient = null
+  const downgradedUnsupported = new Set()
 
   const fsImpl = options.fs || null // 测试注入的假 fs（决定 caps.json 走哪）
   const log = () => (ctx?.log || noopLog)
@@ -201,7 +202,11 @@ export function createQqAdapter(options = {}) {
     if (!file) return null // 没有数据目录：不缓存也不读缓存（保守表起步）
     probeCache = readCapsCache(file, { fs: fsImpl, log: log() })
     if (probeCache) {
-      caps = { ...CAPS_CONSERVATIVE, ...probeCache.caps }
+      caps = {
+        ...CAPS_CONSERVATIVE,
+        ...probeCache.caps,
+        features: { ...CAPS_CONSERVATIVE.features, ...(probeCache.caps?.features || {}) },
+      }
       // 动作白名单也先用缓存里的：native 在复探完成之前就能用上次探到的扩展动作。
       // probed=true 是这里的语义：缓存就是一份「上次探到的结果」，
       // 所以别的东西（面板、native 白名单）现在就可以按它工作，等后台复探再纠正。
@@ -270,8 +275,19 @@ export function createQqAdapter(options = {}) {
 
   /** 把探测结果装进 caps，并通知网关重读（capsChanged）。 */
   function applyProbe({ caps: probedCaps, supported, entries = {}, unknown = [], unsupported = [], probedAt = 0, fromCache = false }) {
-    caps = { ...CAPS_CONSERVATIVE, ...(probedCaps || {}) }
-    probeState = { probed: true, supported: supportedActions({ supported }), entries, unknown, unsupported, probedAt, fromCache }
+    const nextFeatures = { ...CAPS_CONSERVATIVE.features, ...(probedCaps?.features || {}) }
+    const supportedSet = supportedActions({ supported })
+    for (const action of downgradedUnsupported) {
+      supportedSet.delete(action)
+      if (CUSTOM_FACE_ACTIONS.has(action)) nextFeatures['sticker.sync.native'] = false
+      if (action === 'set_msg_emoji_like') nextFeatures['message.reaction'] = false
+    }
+    caps = {
+      ...CAPS_CONSERVATIVE,
+      ...(probedCaps || {}),
+      features: nextFeatures,
+    }
+    probeState = { probed: true, supported: supportedSet, entries, unknown, unsupported, probedAt, fromCache }
     // 探测后才敢说「这个网关有哪些扩展动作」：通知网关重新读 caps（契约 §八.1）
     try { ctx?.capsChanged?.() } catch (error) { log().debug?.('capsChanged 回调出错：', error?.message || error) }
   }
@@ -465,6 +481,8 @@ export function createQqAdapter(options = {}) {
 
   // ───────────────────────── PlatformAdapter ─────────────────────────
 
+  const CUSTOM_FACE_ACTIONS = new Set(['fetch_custom_face', 'add_custom_face', 'modify_custom_face', 'delete_custom_face'])
+
   const native = createNative({
     probeState: () => probeState,
     call: (action, params, opts) => {
@@ -473,6 +491,20 @@ export function createQqAdapter(options = {}) {
     },
     instance: () => instance,
     log: log(),
+    onUnsupported: (action) => {
+      downgradedUnsupported.add(action)
+      let changed = false
+      if (CUSTOM_FACE_ACTIONS.has(action) && caps.features?.['sticker.sync.native']) {
+        caps = { ...caps, features: { ...caps.features, 'sticker.sync.native': false } }
+        changed = true
+      } else if (action === 'set_msg_emoji_like' && caps.features?.['message.reaction']) {
+        caps = { ...caps, features: { ...caps.features, 'message.reaction': false } }
+        changed = true
+      }
+      if (changed) {
+        try { ctx?.capsChanged?.() } catch (error) { log().debug?.('懒降级 capsChanged 回调出错：', error?.message || error) }
+      }
+    },
   })
 
   const adapter = {
@@ -483,7 +515,7 @@ export function createQqAdapter(options = {}) {
 
     /** 能力表。探测前是最保守的那一版；探测完会换成探测结果（并调过 ctx.capsChanged）。 */
     caps() {
-      return { ...caps }
+      return { ...caps, features: { ...(caps.features || {}) } }
     },
 
     /** 面板表单。字段与契约 InstanceConfig 的约定一致：平台专属配置由平台端自己声明。 */

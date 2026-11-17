@@ -154,6 +154,14 @@ export const CAPS_CONSERVATIVE = {
   quoteReply: false, mention: false, mentionAll: false, poke: false, typing: false,
   recall: false, card: false, listenAllInGroup: false, proactive: 'none',
   replyWindowMs: 0, repliesPerMessage: 0, history: false, memberList: false, forwardExpand: false,
+  features: {
+    'message.quote.read': false,
+    'message.reaction': false,
+    'media.fetch': false,
+    'chat.member.read': false,
+    'sticker.collect': false,
+    'sticker.sync.native': false,
+  },
 }
 
 /**
@@ -186,6 +194,14 @@ export const CAPS_FEISHU = {
   history: false,     // 有历史消息接口，本端没实现
   memberList: false,  // 有群成员接口，本端没实现
   forwardExpand: false, // 合并转发要用「获取指定消息的内容」展开，未实现
+  features: {
+    'media.fetch': true,
+    'sticker.collect': true,
+    'message.quote.read': false, // Step 1A 实现 fetch('message') 后开启
+    'message.reaction': false,
+    'chat.member.read': false,
+    'sticker.sync.native': false,
+  },
 }
 
 // ───────────────────────── 加解密 / 验签 ─────────────────────────
@@ -1356,7 +1372,11 @@ export function createFeishuAdapter(options = {}) {
     name,
     contract: 1,
 
-    caps: () => ({ ...capsState, ...(capsOverride || {}) }),
+    caps: () => ({
+      ...capsState,
+      ...(capsOverride || {}),
+      features: { ...(capsState.features || {}), ...(capsOverride?.features || {}) },
+    }),
 
     settings: [
       { key: 'appId', label: 'App ID', type: 'text', hint: '开发者后台 → 应用详情 → 凭证与基础信息（cli_ 开头）' },
@@ -1567,13 +1587,31 @@ export function createFeishuAdapter(options = {}) {
       const messageId = String(media.messageId || '')
       if (!messageId) throw new Error('飞书取媒体需要 media.messageId（官方接口要消息 ID 才能定位资源）')
       const type = /^img_/.test(key) || String(media.mime || '').startsWith('image/') ? 'image' : 'file'
-      const token = await tenantToken()
-      return httpClient.request({
-        method: 'GET',
-        url: `${baseUrl()}/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(key)}?type=${type}`,
-        headers: { authorization: `Bearer ${token}` },
-        timeoutMs: timeoutMsOf(),
-      })
+      const url = `${baseUrl()}/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(key)}?type=${type}`
+      const requestOnce = async (forceToken = false) => {
+        const token = await tenantToken({ force: forceToken })
+        return httpClient.request({
+          method: 'GET',
+          url,
+          headers: { authorization: `Bearer ${token}` },
+          timeoutMs: timeoutMsOf(),
+        })
+      }
+      let r = await requestOnce(false)
+      let apiCode = r?.json && r.json.code !== undefined ? Number(r.json.code) : 0
+      if (r?.status === 401 || TOKEN_INVALID_CODES.has(String(apiCode))) {
+        tokenCache = { token: '', expiresAt: 0 }
+        r = await requestOnce(true)
+        apiCode = r?.json && r.json.code !== undefined ? Number(r.json.code) : 0
+      }
+      const status = Number(r?.status) || 200
+      if (status >= 400 || (Number.isFinite(apiCode) && apiCode > 0)) {
+        const codeStr = Number.isFinite(apiCode) && apiCode > 0 ? String(apiCode) : String(status)
+        const certainty = (status >= 400 && status < 500) || NOT_SENT_CODES.has(codeStr) ? 'not-sent' : 'unknown'
+        const msg = r?.json?.msg || r?.json?.message || ''
+        throw sendError(certainty, codeStr, instance, `飞书拉取媒体失败（HTTP ${status}${apiCode > 0 ? ` / ${apiCode}` : ''}）${msg ? '：' + msg : ''}`)
+      }
+      return r
     },
 
     /** 上传媒体换 key（外部拿到字节后让平台端上传；本端不主动下载） */
@@ -1599,7 +1637,14 @@ export function createFeishuAdapter(options = {}) {
 
   adapter.__feishu = {
     setSelf(value) { self = value },
-    setCaps(partial) { capsState = { ...capsState, ...(partial || {}) }; ctx?.capsChanged?.() },
+    setCaps(partial) {
+      capsState = {
+        ...capsState,
+        ...(partial || {}),
+        ...(partial?.features ? { features: { ...(capsState.features || {}), ...partial.features } } : {}),
+      }
+      ctx?.capsChanged?.()
+    },
     setConfig(cfg) { injectedConfig = cfg },
     tokenCache: () => ({ ...tokenCache }),
     handleCallback,

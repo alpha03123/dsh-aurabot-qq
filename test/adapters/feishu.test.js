@@ -909,3 +909,48 @@ test('stop 之后再推事件不 emit，且状态是 stopped', async () => {
   assert.equal(result.ok, false)
   assert.equal(ctx.emitted.length, 0)
 })
+
+test('Step 0B：CAPS_FEISHU.features 与 fetch(media) 的 4xx/5xx 检查及 401 刷新重试', async () => {
+  const client = makeFakeClient()
+  const baseRequest = client.request.bind(client)
+  let resourceMode = '403'
+  client.request = async (req) => {
+    if (req.url.includes('/resources/')) {
+      client.calls.push({ ...req })
+      if (resourceMode === '403') return { status: 403, json: { code: 230027, msg: 'no permission' }, bytes: Buffer.alloc(0) }
+      if (resourceMode === '500') return { status: 500, json: { code: 500, msg: 'internal' }, bytes: Buffer.alloc(0) }
+      if (resourceMode === '401-then-ok') {
+        resourceMode = 'ok'
+        return { status: 401, json: { code: 99991663, msg: 'token expired' }, bytes: Buffer.alloc(0) }
+      }
+      return { status: 200, json: { raw: '' }, bytes: Buffer.from([1, 2, 3]) }
+    }
+    return baseRequest(req)
+  }
+
+  const adapter = createFeishuAdapter({ client })
+  adapter.__feishu.setConfig(CFG)
+  const ctx = makeCtx(adapter)
+  await adapter.start(ctx)
+
+  const caps = adapter.caps()
+  assert.equal(caps.features['media.fetch'], true)
+  assert.equal(caps.features['sticker.collect'], true)
+  assert.equal(caps.features['message.quote.read'], false, 'Step 0B 暂不提前开 message.quote.read，留待 Step 1A')
+
+  await assert.rejects(
+    () => adapter.fetch({ kind: 'media', media: { id: 'img_1', messageId: 'om_1' } }),
+    (e) => e.certainty === 'not-sent' && e.code === '230027',
+  )
+
+  resourceMode = '500'
+  await assert.rejects(
+    () => adapter.fetch({ kind: 'media', media: { id: 'img_1', messageId: 'om_1' } }),
+    (e) => e.certainty === 'unknown' && /500/.test(e.message),
+  )
+
+  resourceMode = '401-then-ok'
+  const ok = await adapter.fetch({ kind: 'media', media: { id: 'img_1', messageId: 'om_1' } })
+  assert.deepEqual(ok.bytes, Buffer.from([1, 2, 3]))
+  await adapter.stop()
+})

@@ -11,7 +11,7 @@ import type {
   Gateway,
   Part,
   PlatformAdapter,
-} from '../../src/gateway/contracts'
+} from '../../src/gateway/contracts.js'
 
 declare const capsSample: Caps
 declare const gw: Gateway

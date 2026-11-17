@@ -878,4 +878,7 @@ test('配置里的 listenAllInGroup 会刷新网关 caps', async () => {
   const { adapter, ctx } = await boot({ config: { transport: 'webhook', listenAllInGroup: true } })
   assert.equal(adapter.caps().listenAllInGroup, true)
   assert.ok(ctx.capsChanges > 0, 'adapter 启动后应通知网关重新读 caps')
+  assert.equal(adapter.caps().features['media.fetch'], false)
+  assert.equal(adapter.caps().features['sticker.collect'], false)
+  assert.equal(adapter.caps().features['sticker.sync.native'], false)
 })
