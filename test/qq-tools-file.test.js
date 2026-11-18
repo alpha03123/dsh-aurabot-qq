@@ -1,4 +1,4 @@
-// qq_send_file 的权限边界（#169）：主人私聊能发；群里只有「这一轮说话的人全是主人」能发；
+// send_chat_file 的权限边界（#169）：主人私聊能发；群里只有「这一轮说话的人全是主人」能发；
 // 图片先按图发，明确发不出去才按文件发，结果不确定时绝不发第二份。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -17,7 +17,7 @@ function setup({ level = 'full', kind = 'private', ownerAll = true, files = { en
   let build = null
   qqTools.setup({ core: { hub, onebot: { call: async () => ({}) } }, config: () => cfg, tool: (fn) => { build = fn } })
   const tools = build({ chat: { kind, chatId: kind === 'group' ? 'group:9' : 'private:1' }, level, sessionId: 's1' })
-  return { tool: tools.find((t) => t.name === 'qq_send_file'), sent, images, cfg }
+  return { tool: tools.find((t) => t.name === 'send_chat_file'), sent, images, cfg }
 }
 
 test('主人私聊：能发，走 sendFile', async () => {

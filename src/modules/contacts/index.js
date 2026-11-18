@@ -1,5 +1,5 @@
 // 内置模块：白名单。
-//  · qq_whitelist：听主人的话把用户 / 频道加进、移出白名单（allow.private / allow.groups），写进配置并保存。
+//  · edit_whitelist：听主人的话把用户 / 频道加进、移出白名单（allow.private / allow.groups），写进配置并保存。
 // 权限在面板「权限」页：off 关 / owner 仅主人私聊（默认）/ all 所有人。
 // （原来的好友 / 加群申请处理是 QQ 专属的，Discord fork 里删掉了。）
 
@@ -59,7 +59,7 @@ export default {
       const cfg = api.config()
       const tools = []
       if (profileToolVisible(cfg, 'whitelist', chat)) tools.push(defineTool({
-        name: 'qq_whitelist',
+        name: 'edit_whitelist',
         description: '改白名单：action 填 add（加进）或 remove（移出），kind 填 private（某个人可以私聊你）或 group（某个频道你会理），id 填用户 ID 或频道 ID。主人不能被移出。',
         properties: { action: str('add 加进 / remove 移出'), kind: str('private 私聊的人 / group 频道'), id: str('用户 ID 或频道 ID（数字）') },
         required: ['action', 'kind', 'id'],

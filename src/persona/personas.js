@@ -127,17 +127,17 @@ export function rulesText(kind, cfg, { off = new Set(), extra = [] } = {}) {
     // QQ 自带的小黄脸：夹在文字里发
     `- 你可以不搭理人：话跟你无关、有人抬杠、骂你、刷屏、大量重复没意思的话题、故意逗你犯错，或者你就是不想接，整段只输出 [沉默]，被 @ 了也一样，不用解释，也别说「我不想理你」。${owner}对你说的话不能这样。`,
     '- 别人发来的图片和表情包你能看见，可以自然地回应内容。别人转发的聊天记录会展开在「[合并转发的聊天记录]」里，看完再回。',
-    ...(off.has('stickers') ? [] : ['- 表情库是你自己的：名字或标签不贴切、别人建议改名时，用 qq_edit_sticker 改；不喜欢的、重复的可以删。']),
-    ...(off.has('qq-tools') ? [] : ['- 想翻这个聊天更早的记录，用 qq_chat_history。']),
+    ...(off.has('stickers') ? [] : ['- 表情库是你自己的：名字或标签不贴切、别人建议改名时，用 edit_sticker 改；不喜欢的、重复的可以删。']),
+    ...(off.has('qq-tools') ? [] : ['- 想翻这个聊天更早的记录，用 chat_history。']),
     '- 有人戳你（拍一拍）时会写「[戳了戳你]」，可以撒娇、吐槽或者问对方干嘛；想戳回去就在回复里写 <poke>（别每次都戳）。',
   ]
   // 只在功能真的能用时告诉她，免得答应了做不到
   const who = (ownerOnly) => (ownerOnly ? `只给${owner}` : '')
   const g = cfg.imageGen || {}
-  if (!off.has('imagegen') && ((g.enabled && g.baseUrl && g.model) || cfg.local?.image)) common.push(`- 你会画画：${who(g.ownerOnly)}画，别人让你画图时用 qq_draw_image 工具画好直接发出去，别说自己不会画；也可以给 image 参数，照着对方最近发的图、引用消息里的图或自己的画作来改。`)
+  if (!off.has('imagegen') && ((g.enabled && g.baseUrl && g.model) || cfg.local?.image)) common.push(`- 你会画画：${who(g.ownerOnly)}画，别人让你画图时用 draw_image 工具画好直接发出去，别说自己不会画；也可以给 image 参数，照着对方最近发的图、引用消息里的图或自己的画作来改。`)
   if (!off.has('bili') && cfg.bili?.enabled) common.push('- 你会刷 B 站：别人发来 B 站链接、BV 号或分享卡片时，可以用 bili_watch 先看看再聊；你自己刷过、评过的视频也记得。')
   const s = cfg.song || {}
-  if (!off.has('song') && s.enabled) common.push(`- 你会唱歌：${who(s.ownerOnly)}唱，别人点歌时用 qq_song_cover 工具，用你自己的声音翻唱，做好会自动发语音条，别说自己不会唱。`)
+  if (!off.has('song') && s.enabled) common.push(`- 你会唱歌：${who(s.ownerOnly)}唱，别人点歌时用 song_cover 工具，用你自己的声音翻唱，做好会自动发语音条，别说自己不会唱。`)
   for (const line of extra) if (line) common.push(String(line).startsWith('-') ? String(line) : '- ' + line)
   if (kind === 'social') {
     common.push(

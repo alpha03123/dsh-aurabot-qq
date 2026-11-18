@@ -79,14 +79,14 @@ export default {
   id: 'qq-tools',
   name: '基础 QQ 工具',
   version: '1.0.0',
-  description: '翻当前聊天的记录（qq_chat_history）；主人私聊里让她主动给白名单里的人和群发消息（qq_send_message）；把本机文件发到 QQ（qq_send_file，图片会直接显示成图）——私聊里随时能发，群里只在她主人开口的那一轮能发',
+  description: '翻当前聊天的记录（chat_history）；主人私聊里让她主动给白名单里的人和群发消息（send_chat_message）；把本机文件发到 QQ（send_chat_file，图片会直接显示成图）——私聊里随时能发，群里只在她主人开口的那一轮能发',
   setup(api) {
     const { hub, onebot } = api.core
     api.tool(({ chat, level, sessionId }) => {
       if (chat.kind === 'system') return []
       const crossRead = api.config().group?.crossRead || 'private'
       const tools = [defineTool({
-        name: 'qq_chat_history',
+        name: 'chat_history',
         description: '翻翻当前这个聊天之前的聊天记录（只读，最多 50 条）。用返回的最早消息 ID 填 before 可以继续往前翻。',
         properties: {
           count: int('要翻多少条，默认 20，最多 50'),
@@ -129,7 +129,7 @@ export default {
         },
       })]
       tools.push(defineTool({
-        name: 'qq_send_card',
+        name: 'send_card',
         description: '向当前聊天发送分享、音乐、位置、联系人、骰子或猜拳。音乐的 music_type、联系人的 contact_type 对应卡片里的 type。',
         properties: {
           type: str('share / music / location / contact / dice / rps'),
@@ -151,11 +151,11 @@ export default {
           return { ok: true, message: '卡片发出去了' }
         },
       }))
-      // 跨天搜聊天流水：只读。qq_chat_history 只能翻当前聊天最近 50 条，
+      // 跨天搜聊天流水：只读。chat_history 只能翻当前聊天最近 50 条，
       // 想找几天前说过的一句话没有入口，这里按关键词翻本地流水（按天存的那份）。
       tools.push(defineTool({
-        name: 'qq_search_chatlog',
-        description: '在本地聊天流水里按关键词跨天搜旧对话（只读）。记不清以前说过什么、对方提过的人名约定梗，先搜这个再答；想找「几天前那句话」时比 qq_chat_history 管用。',
+        name: 'search_chatlog',
+        description: '在本地聊天流水里按关键词跨天搜旧对话（只读）。记不清以前说过什么、对方提过的人名约定梗，先搜这个再答；想找「几天前那句话」时比 chat_history 管用。',
         properties: {
           query: str('要搜的关键词，空格分隔表示每个词都要出现'),
           days: int('往回搜多少天，默认 30；0 表示全部'),
@@ -187,7 +187,7 @@ export default {
       }))
       // 读文件：别人发来的内容不可信，只有主人开口才读
       tools.push(defineTool({
-        name: 'qq_read_file',
+        name: 'read_chat_file',
         description: '读这个聊天里别人发来的文本文件（txt、md、json、日志、代码等，2MB 以内）。只有主人让你看的时候才用。name 填文件名，不填就读最新的一个。',
         properties: { name: str('可选：文件名，不填就读最新的') },
         required: [],
@@ -204,7 +204,7 @@ export default {
       // 发文件/发图：主人私聊（full）和群聊都挂；群里只有「这一轮说话的人全是主人」才放行（#169）。
       // 面板「聊天」页关掉 files.enabled 就都没有。
       if ((level === 'full' || chat.kind === 'group') && api.config().files?.enabled) tools.push(defineTool({
-        name: 'qq_send_file',
+        name: 'send_chat_file',
         description: '把本机上的文件发到 QQ：图片（png/jpg/jpeg/gif/webp/bmp）会直接显示成图，其它当文件发。默认发到当前聊天；主人让你发给别的私聊或群时，target 写 private:QQ号 或 group:群号（只能发白名单里的人和群）。file 要写这台电脑上的绝对路径，而且必须在允许发送的目录里（QQ 工作区，或主人在面板里加的目录）；name 可选，是对方看到的文件名。',
         properties: {
           file: str('本机文件的绝对路径（必须在允许发送的目录里）'),
@@ -249,7 +249,7 @@ export default {
 
       // 跨聊天发消息：主人私聊（full）和群聊都挂；群里只有「这一轮说话的人全是主人」才放行，和发文件同一条线
       if (level === 'full' || chat.kind === 'group') tools.push(defineTool({
-        name: 'qq_send_message',
+        name: 'send_chat_message',
         description: '主动给另一个 QQ 好友或群发一条消息（不是回复当前聊天时用）。主人让你去别的私聊或群说几句时用。target 写 private:QQ号 或 group:群号；只能发给白名单里的人和群。',
         properties: { target: str('private:QQ号 或 group:群号'), text: str('要发的话，可以用 ||| 分多条、<voice>…</voice> 发语音、<sticker:名字> 发表情') },
         required: ['target', 'text'],

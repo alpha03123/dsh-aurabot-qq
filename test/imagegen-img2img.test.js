@@ -1,4 +1,4 @@
-// 参考图沿用 qq_draw_image：请求形状、短期媒体来源、安全边界及原有发送 / 经历流程。
+// 参考图沿用 draw_image：请求形状、短期媒体来源、安全边界及原有发送 / 经历流程。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs'
@@ -270,7 +270,7 @@ function drawTool(cfg, overrides = {}) {
   return { tool: build({ chat: privateChat, sessionId: 'img-test' }), generated, sent, events, references }
 }
 
-test('qq_draw_image 的 image 可选；quote 来源传递；沿用发送、存盘、经历和 seeOwn', async (t) => {
+test('draw_image 的 image 可选；quote 来源传递；沿用发送、存盘、经历和 seeOwn', async (t) => {
   const dir = sandbox(t), cfg = config({ seeOwn: false })
   const s = drawTool(cfg)
   assert.ok(!s.tool.parameters.required.includes('image'))

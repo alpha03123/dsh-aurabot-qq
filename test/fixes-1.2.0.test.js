@@ -35,7 +35,7 @@ function searchBuilder() {
 }
 
 function searchTool(builder, chat, level) {
-  const tool = builder({ chat, level }).find((t) => t.name === 'qq_search_chatlog')
+  const tool = builder({ chat, level }).find((t) => t.name === 'search_chatlog')
   assert.ok(tool, '应该注册聊天流水搜索工具')
   return tool
 }
@@ -300,7 +300,7 @@ function historyTool({ mode, level = 'chat', chat = { kind: 'group', groupId: '1
     config: () => ({ botQQ: '1', files: { enabled: false }, allow: { groups: ['100', '200', '300'] }, group: { crossRead: mode } }),
     tool: (builder) => builders.push(builder),
   })
-  const tool = builders[0]({ chat, level, sessionId: 's' }).find((x) => x.name === 'qq_chat_history')
+  const tool = builders[0]({ chat, level, sessionId: 's' }).find((x) => x.name === 'chat_history')
   return { tool, calls }
 }
 const privateChat = { kind: 'private', userId: '7', chatId: 'private:7' }

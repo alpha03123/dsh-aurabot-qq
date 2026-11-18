@@ -99,7 +99,7 @@ export function createBridge({ ctx, getConfig, setConfig, hub, mods, log, versio
   function builtinTools() {
     return [
       defineTool({
-        name: 'aurabot_qq_send',
+        name: 'aurabot_send',
         description: '让 QQ 上的「大肥鱼」（Aurabot 插件里的 AI 伙伴）替你发一条 QQ 消息。target 写 private:QQ号 或 group:群号，不填就发给主人。text 是要发的话，可以用 ||| 分多条、<voice>…</voice> 发语音。',
         properties: { target: str('private:QQ号 / group:群号，可不填（发给主人）'), text: str('要发的话') },
         required: ['text'],

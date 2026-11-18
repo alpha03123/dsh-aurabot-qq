@@ -37,44 +37,44 @@ async function brain({ preset, text, images, callTool }) {
   if (text.includes('排队权限测试1')) { await sleep(1200); return '第一轮好了' }
   if (text.includes('【空间互动')) { qzonePrompts.push(text); return '哈哈好看' }
   if (/^【(私聊|群聊)/.test(text) && text.includes('戳了戳你')) return '干嘛戳我<poke>'
-  if (/^【私聊/.test(text) && text.includes('表情改名测试')) { const m = text.match(/把「(.+?)」/); const r = await callTool('qq_edit_sticker', { sticker: m[1], new_name: '改过的名字', tags: ['开心'] }); return r.message }
-  if (/^【私聊/.test(text) && text.includes('表情删除测试')) { const r = await callTool('qq_edit_sticker', { sticker: '改过的名字', delete: true }); return r.message }
-  if (/^【私聊/.test(text) && text.includes('翻聊天记录')) { const r = await callTool('qq_chat_history', { count: 5 }); return r.message.split('\n')[0] }
+  if (/^【私聊/.test(text) && text.includes('表情改名测试')) { const m = text.match(/把「(.+?)」/); const r = await callTool('edit_sticker', { sticker: m[1], new_name: '改过的名字', tags: ['开心'] }); return r.message }
+  if (/^【私聊/.test(text) && text.includes('表情删除测试')) { const r = await callTool('edit_sticker', { sticker: '改过的名字', delete: true }); return r.message }
+  if (/^【私聊/.test(text) && text.includes('翻聊天记录')) { const r = await callTool('chat_history', { count: 5 }); return r.message.split('\n')[0] }
   if (text.includes('查看QQ资料测试')) { const r = await callTool('qq_get_profile', {}); return r?.ok ? '资料查到了' : r ? r.message : '没这个工具' }
   if (text.includes('改昵称测试')) { const r = await callTool('qq_set_nickname', { name: '小鲸鱼' }); return r ? r.message : '没这个工具' }
   if (text.includes('改签名测试')) { const r = await callTool('qq_set_signature', { text: '今天也要开心' }); return r ? r.message : '没这个工具' }
   if (text.includes('刚才那张换头像测试')) { const r = await callTool('qq_set_avatar', { image: 'last' }); return r ? r.message : '没这个工具' }
   if (text.includes('画作换头像测试')) { const r = await callTool('qq_set_avatar', { image: '#1' }); return r ? r.message : '没这个工具' }
-  if (text.includes('存画作表情测试')) { const r = await callTool('qq_save_sticker', { painting: '#1', name: '自画像' }); return r ? r.message : '没这个工具' }
+  if (text.includes('存画作表情测试')) { const r = await callTool('save_sticker', { painting: '#1', name: '自画像' }); return r ? r.message : '没这个工具' }
   if (text.includes('换头像测试')) { const r = await callTool('qq_set_avatar', { image: 'https://example.com/a.png' }); return r ? r.message : '没这个工具' }
   if (text.includes('本地头像测试')) { const r = await callTool('qq_set_avatar', { image: 'C:/Users/a/secret.png' }); return r ? r.message : '没这个工具' }
   if (text.includes('慢慢想') && !text.includes('补充')) { await sleep(2500); return '想好了' }
   if (text.includes('引用测试') && text.includes('【群聊')) { const n = (text.match(/\[(\d+)\][^\n]*引用测试/) || [])[1]; return n ? `<reply:${n}>收到这条啦\n别的我就不挨个回了` : '没看到编号' }
   if (text.includes('第一句') && text.includes('第二句')) return '两句我都看到啦'
-  if (text.includes('画一只')) { const r = await callTool('qq_draw_image', { prompt: '一只蓝色小鲸鱼' }); return r && r.ok ? '画好啦' : '画不了' }
+  if (text.includes('画一只')) { const r = await callTool('draw_image', { prompt: '一只蓝色小鲸鱼' }); return r && r.ok ? '画好啦' : '画不了' }
   if (text.includes('【写空间日记】')) return '今天主人夸我可爱，开心得尾巴甩来甩去。晚饭吃了一大碗白米饭，满足～明天也要元气满满地陪大家聊天呀'
   if (text.includes('禁言')) {
     const r = await callTool('qq_group_admin', { action: 'ban', user_id: '999', minutes: 5 })
     return r && r.ok ? '好 禁了' : '你谁啊 我只听主人的'
   }
   if (text.includes('发文件越界')) {
-    const r = await callTool('qq_send_file', { file: outsideFilePath, name: '外面的文件.txt' })
+    const r = await callTool('send_chat_file', { file: outsideFilePath, name: '外面的文件.txt' })
     return r && r.ok ? '居然发了' : '发文件失败：' + (r && r.message)
   }
   if (text.includes('发文件超限')) {
-    const r = await callTool('qq_send_file', { file: bigFilePath, name: '太大了.bin' })
+    const r = await callTool('send_chat_file', { file: bigFilePath, name: '太大了.bin' })
     return r && r.ok ? '居然发了' : '发文件失败：' + (r && r.message)
   }
   if (text.includes('发文件发给群')) {
-    const r = await callTool('qq_send_file', { file: sendFilePath, name: '发个文件.txt', target: 'group:555' })
+    const r = await callTool('send_chat_file', { file: sendFilePath, name: '发个文件.txt', target: 'group:555' })
     return r && r.ok ? '发到群里啦' : '发文件失败：' + (r && r.message)
   }
   if (text.includes('发文件目标越界')) {
-    const r = await callTool('qq_send_file', { file: sendFilePath, name: '发个文件.txt', target: 'group:999' })
+    const r = await callTool('send_chat_file', { file: sendFilePath, name: '发个文件.txt', target: 'group:999' })
     return r && r.ok ? '居然发了' : '发文件失败：' + (r && r.message)
   }
   if (text.includes('发文件测试')) {
-    const r = await callTool('qq_send_file', { file: sendFilePath, name: '发个文件.txt' })
+    const r = await callTool('send_chat_file', { file: sendFilePath, name: '发个文件.txt' })
     return r && r.ok ? '文件发出去啦' : '发文件失败：' + (r ? r.message : '没有这个工具')
   }
   if (text.includes('跑个慢任务')) { await new Promise((r) => setTimeout(r, 1500)); return '慢任务跑完了' }
@@ -224,9 +224,9 @@ test('群聊：没叫她不回；@她必回（群聊 preset，只有主人那一
   assert.equal(reply[0].type, 'reply', '回复引用了对方的消息')
   assert.deepEqual(reply[1], { type: 'at', data: { qq: '777' } }, '回复真实 @ 对方')
   const agent = fake.agents.get(turn.sessionId)
-  assert.ok(!agent.tools.has('qq_send_qzone'), '群聊会话没有发空间这类主人工具')
-  assert.ok(agent.tools.has('qq_send_message'), '群聊会话有跨聊天发送工具，但 execute 里只放行「这一轮说话的全是主人」')
-  assert.ok(agent.tools.has('qq_send_file'), '群聊会话有发文件工具，但 execute 里只放行「这一轮说话的全是主人」')
+  assert.ok(!agent.tools.has('post_update'), '群聊会话没有发空间这类主人工具')
+  assert.ok(agent.tools.has('send_chat_message'), '群聊会话有跨聊天发送工具，但 execute 里只放行「这一轮说话的全是主人」')
+  assert.ok(agent.tools.has('send_chat_file'), '群聊会话有发文件工具，但 execute 里只放行「这一轮说话的全是主人」')
 })
 
 test('群聊：叫名字（唤醒词）必回', async () => {
@@ -738,7 +738,7 @@ test('生图工具结果：能看图时带 image 块，纯文本模型只给文�
   await new Promise((r) => srv.listen(0, '127.0.0.1', r))
   const baseUrl = `http://127.0.0.1:${srv.address().port}/v1`
   // 找准「这次画图」那一轮：别用 sentTo 计数判断，前一个用例的回复可能还在异步发送
-  const drawTurn = () => [...fake.turns].reverse().find((t) => (t.toolCalls || []).some((c) => c.name === 'qq_draw_image'))
+  const drawTurn = () => [...fake.turns].reverse().find((t) => (t.toolCalls || []).some((c) => c.name === 'draw_image'))
   const draw = async (vision, seeOwn = true) => {
     const before = drawTurn()
     await fake.call('/save', {
@@ -747,7 +747,7 @@ test('生图工具结果：能看图时带 image 块，纯文本模型只给文�
     })
     mock.push(priv(OWNER, text('画一只鲸鱼')))
     await until(() => drawTurn() && drawTurn() !== before, 15000)
-    return drawTurn().toolCalls.find((c) => c.name === 'qq_draw_image').result
+    return drawTurn().toolCalls.find((c) => c.name === 'draw_image').result
   }
 
   // 面板里声明「支持」：工具结果里要有图，而且是登记过的附件块
@@ -842,7 +842,7 @@ test('#52 发文件：网关看不到本机路径时，小文件自动改走 bas
 
 test('#52 发文件：模拟测试里只截获，不真的上传', async () => {
   const before = mock.sent('upload_private_file').length + mock.sent('upload_group_file').length
-  const r = (await fake.call('/modules/tool', { name: 'qq_send_file', args: { file: sendFilePath, name: '发个文件.txt' } })).json()
+  const r = (await fake.call('/modules/tool', { name: 'send_chat_file', args: { file: sendFilePath, name: '发个文件.txt' } })).json()
   assert.equal(r.ok, true)
   assert.equal(r.result.ok, true, r.result.message)
   assert.match(JSON.stringify(r.sent), /\[文件\]/)
@@ -908,7 +908,7 @@ test('#58 在 DSH 会话窗口里直接打字：这一轮按主人说的算（�
   assert.equal(api.hub.turnHasOwner(sid), true)
   // 权限真的通了：白名单工具（默认仅主人）能执行。移出一个本来就不在名单里的频道，不改配置
   const agent = fake.agents.get(sid)
-  const tool = agent && agent.tools.get('qq_whitelist')
+  const tool = agent && agent.tools.get('edit_whitelist')
   assert.ok(tool, '会话里有白名单工具')
   const r = await tool.execute({ action: 'remove', kind: 'group', id: '99999' }, { agent })
   assert.equal(r.ok, true, JSON.stringify(r))

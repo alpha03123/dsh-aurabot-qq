@@ -48,7 +48,7 @@ const friendEv = (over = {}) => ({ post_type: 'request', request_type: 'friend',
 
 test('白名单：加 / 移出 私聊和群、去重、写进配置', async () => {
   const t = setup({ cfg: { allow: { private: ['111111'], groups: [] } } })
-  const w = t.tools(ownerPm).qq_whitelist
+  const w = t.tools(ownerPm).edit_whitelist
   let r = await w.execute({ action: 'add', kind: 'private', id: '40004' })
   assert.equal(r.ok, true)
   assert.deepEqual(t.cfg().allow.private, ['111111', '40004'])
@@ -69,7 +69,7 @@ test('白名单：加 / 移出 私聊和群、去重、写进配置', async () =
 
 test('白名单：不能把主人移出私聊白名单（哪怕名单里有他）；也不能乱填', async () => {
   const t = setup({ cfg: { allow: { private: [OWNER, '111111'], groups: [] } } })
-  const w = t.tools(ownerPm).qq_whitelist
+  const w = t.tools(ownerPm).edit_whitelist
   let r = await w.execute({ action: 'remove', kind: 'private', id: OWNER })
   assert.equal(r.ok, false)
   assert.match(r.message, /主人/)
@@ -87,7 +87,7 @@ test('白名单：不能把主人移出私聊白名单（哪怕名单里有他�
 
 test('白名单试运行：只回话，配置不变', async () => {
   const t = setup({ cfg: { dryRun: true, allow: { private: ['111111'], groups: ['555666'] } } })
-  const w = t.tools(ownerPm).qq_whitelist
+  const w = t.tools(ownerPm).edit_whitelist
   let r = await w.execute({ action: 'add', kind: 'private', id: '40004' })
   assert.match(r.message, /试运行/)
   r = await w.execute({ action: 'remove', kind: 'group', id: '555666' })
@@ -100,7 +100,7 @@ test('白名单试运行：只回话，配置不变', async () => {
 
 test('白名单：保存时用最新配置，不盖掉别处刚改的', async () => {
   const t = setup({ cfg: { allow: { private: [], groups: [] } } })
-  const w = t.tools(ownerPm).qq_whitelist
+  const w = t.tools(ownerPm).edit_whitelist
   t.set({ allow: { private: ['222222'], groups: [] } })
   await w.execute({ action: 'add', kind: 'private', id: '40004' })
   assert.deepEqual(t.cfg().allow.private, ['222222', '40004'])
@@ -108,7 +108,7 @@ test('白名单：保存时用最新配置，不盖掉别处刚改的', async ()
 
 test('白名单：所有人档，群友也能改（权限由面板决定）', async () => {
   const t = setup({ cfg: { profilePerms: { whitelist: 'all' } }, allOwner: false })
-  const r = await t.tools(group).qq_whitelist.execute({ action: 'add', kind: 'group', id: '777888' })
+  const r = await t.tools(group).edit_whitelist.execute({ action: 'add', kind: 'group', id: '777888' })
   assert.equal(r.ok, true)
   assert.deepEqual(t.cfg().allow.groups, ['777888'])
 })

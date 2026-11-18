@@ -43,7 +43,7 @@ function setup(t, { beforeDraw } = {}) {
     const sid = [...fake.agents.keys()][0]
     await beforeDraw?.()
     snapshots.push({ allOwner: hub.turnSendersAllOwner(sid), directOwner: Boolean(hub.turnDirectFromOwner?.(sid)) })
-    await callTool('qq_draw_image', { prompt: '测试图片' })
+    await callTool('draw_image', { prompt: '测试图片' })
     return ''
   } })
   hub = createHub({ dsh: fake.ctx, getConfig: () => cfg, log,
@@ -65,7 +65,7 @@ function setup(t, { beforeDraw } = {}) {
     const before = fake.turns.length
     for (const message of messages) await hub.onMessage(message)
     await until(() => fake.turns.length > before)
-    return fake.turns.at(-1).toolCalls.find(c => c.name === 'qq_draw_image').result
+    return fake.turns.at(-1).toolCalls.find(c => c.name === 'draw_image').result
   } }
 }
 

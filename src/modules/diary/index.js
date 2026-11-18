@@ -13,7 +13,7 @@ export default {
   id: 'diary',
   name: '空间日记',
   version: '1.0.0',
-  description: '每天自己写几条 QQ 空间说说；主人私聊里能让她发说说（qq_send_qzone）',
+  description: '每天自己写几条 QQ 空间说说；主人私聊里能让她发说说（post_update）',
   tab: 'diary',
   files: ['features/qzone.js', 'features/qzone-audience.js', 'features/diary-image.js'],
   setup(api) {
@@ -39,7 +39,7 @@ export default {
 
     // 空间日记关着时不挂这个工具（Discord 上没有 QQ 空间）
     api.tool(({ chat, level }) => (level === 'full' && chat.kind !== 'system' && api.config().diary?.enabled !== false ? defineTool({
-      name: 'qq_send_qzone',
+      name: 'post_update',
       description: '在你自己的 QQ 空间发一条说说。content 是正文（第一人称，口语）；images 可选，本地路径或网址。',
       properties: {
         content: str('说说正文'),

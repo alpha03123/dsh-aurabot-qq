@@ -8,7 +8,7 @@ export default {
   id: 'song',
   name: '翻唱',
   version: '1.0.0',
-  description: '用她的声音翻唱一首歌，做好发语音条（qq_song_cover、/sing）',
+  description: '用她的声音翻唱一首歌，做好发语音条（song_cover、/sing）',
   tab: 'song',
   files: ['song/studio.js'],
   setup(api) {
@@ -34,7 +34,7 @@ export default {
 
     // 面板里打开了才给她（没开就别让她答应唱歌）
     api.tool(({ chat, sessionId }) => (api.config().song.enabled && chat.kind !== 'system' ? defineTool({
-      name: 'qq_song_cover',
+      name: 'song_cover',
       description: '用你自己的声音翻唱一首歌，做好后自动以语音条发到当前聊天（要两三分钟，调用后先简单回一句「等我一下」就好）。song 写歌名，最好带上歌手，比如「小幸运 田馥甄」。pitch 是变调半音：你是女声，原唱是男声时一般 +12，原唱是女声时 0。别人说清唱、不要伴奏时 acapella 填 true。',
       properties: { song: str('歌名（可以带歌手）'), pitch: int('变调半音：原唱男声 +12，女声 0'), acapella: bool('清唱：只留人声，不要伴奏') },
       required: ['song'],

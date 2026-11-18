@@ -11,7 +11,7 @@ export default {
   id: 'imagegen',
   name: '生图',
   version: '1.0.0',
-  description: '画一张图发到聊天里（qq_draw_image）',
+  description: '画一张图发到聊天里（draw_image）',
   tab: 'imagegen',
   files: ['features/imagegen.js', 'features/image-shape.js', 'features/paintings.js', 'features/codex-auth.js', 'features/codex-image.js'],
   setup(api) {
@@ -54,7 +54,7 @@ export default {
     api.route('/image/open-folder', async () => openPaintFolder())
 
     api.tool(({ chat, sessionId }) => (gen.enabled() && chat.kind !== 'system' ? defineTool({
-      name: 'qq_draw_image',
+      name: 'draw_image',
       description: '画一张图并发到当前 QQ 聊天里。prompt 详细描述画面；可以用 image 参考当前聊天最近收到的图（last）、引用消息里的图（quote）或自己画作的文件名来改画；shape 可按用途选择方图、竖图、横图或宽幅；不填就沿用面板默认构图 / 图片尺寸。画好会直接发出去，并给你一个画作编号（换头像、收成表情时用这个编号）。回复里简单说一句就行。',
       properties: {
         prompt: str('画面描述'),
@@ -110,7 +110,7 @@ export default {
         }
         if (img) out.image = img
         if (index && saved) out.message += `\n画作编号 #${index}（想换头像、收成表情时用这个编号）`
-        // 只有**图真的交给模型了**才把本地路径告诉她（#59）：收录表情包 / 存素材 / qq_add_sticker 用；
+        // 只有**图真的交给模型了**才把本地路径告诉她（#59）：收录表情包 / 存素材 / add_sticker 用；
         // 看不了图或开关关着时不给路径，免得她知道路径就去读图，绕开「不给看」的判断。
         if (shown && saved) out.message += `\n已保存到本机：${saved}（要收录表情包、存素材时可以用这个路径）`
         return out

@@ -49,7 +49,7 @@ for (const call of calls) test(`工具形式：${call}`, () => {
   assert.equal(cleanOutboundText(call, { ownerPrivate: true }), '')
 })
 
-for (const call of ['调用工具 search(参数)', '调用工具 qq_draw_image（{"prompt":"猫"}）', '「调用工具 search(参数)」', '```text\n调用工具 search(参数)\n```', '<reply:7><voice>调用工具 search(参数)</voice>']) {
+for (const call of ['调用工具 search(参数)', '调用工具 draw_image（{"prompt":"猫"}）', '「调用工具 search(参数)」', '```text\n调用工具 search(参数)\n```', '<reply:7><voice>调用工具 search(参数)</voice>']) {
   test(`整段自然语言调用不发：${call}`, () => {
     assert.equal(cleanOutboundText(call), '')
     assert.deepEqual(parseReply(call), { silent: true, items: [] })

@@ -106,7 +106,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   const recentMedia = createRecentMedia({ log }) // 最近发来的图片和表情，短期落盘恢复
   const recentFiles = new Map() // chatId → 最近发来的文件
   // 「她挑 / 只听主人的」：这一轮收到的表情先按会话记着，她想收时凭编号来取。
-  // 落盘存一份 —— 只在内存里的话，DSH 一重启就什么都没有了，她只好绕路（拷附件 + qq_add_sticker）。
+  // 落盘存一份 —— 只在内存里的话，DSH 一重启就什么都没有了，她只好绕路（拷附件 + add_sticker）。
   const stickerStash = new Map() // chatId → { at, segs: [seg] }
   const STICKER_TTL = 30 * 60_000 // 和「最近图片」一个尺度
   const stashFile = () => dataDir('sticker-stash.json')
@@ -159,7 +159,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
    */
   function stickerHint (n) {
     const range = n > 1 ? `1~${n}` : '1'
-    return `（这轮里夹着 ${n} 张表情，是你自己看到的。有中意的就用 qq_collect_sticker ${range} 收进自己库；收表情是你自己的小爱好，不用每张都跟对方说，偶尔提一句也行。）`
+    return `（这轮里夹着 ${n} 张表情，是你自己看到的。有中意的就用 collect_sticker ${range} 收进自己库；收表情是你自己的小爱好，不用每张都跟对方说，偶尔提一句也行。）`
   }
 
   const slowNoticeSent = new Set() // sessionKey → 这一轮已经发过「正在做」提示（慢工具，issue #74）
@@ -897,7 +897,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       } catch (error) {
         if (!isDefiniteFailure(error)) {
           log.warn(`${chatId}：按路径发图失败，发送结果不确定，不再重发：`, error.message)
-          // 调用方要发别的形态（比如 qq_send_file 想改用 sendFile）时，得知道「可能已经发出去了」，不能接着发第二份
+          // 调用方要发别的形态（比如 send_chat_file 想改用 sendFile）时，得知道「可能已经发出去了」，不能接着发第二份
           if (opts.strict) throw new Error(`图片可能已经发出去了，但网关没确认：${error.message}`)
           return null
         }
@@ -1386,7 +1386,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       log.debug(`忽略 ${msg.chatId}（${allowed.reason}）`)
       return
     }
-    // 文件先记着，她要读的时候用 qq_read_file 取
+    // 文件先记着，她要读的时候用 read_chat_file 取
     if (msg.files.length) {
       const list = (recentFiles.get(msg.chatId) || []).concat(msg.files.map((f) => ({ ...f, userId: msg.userId, at: now })))
       recentFiles.set(msg.chatId, list.slice(-8))

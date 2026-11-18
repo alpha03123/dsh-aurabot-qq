@@ -50,11 +50,11 @@ test('指纹随实际来源更新，不沿用上一次的提示词', () => {
 
 test('各种工具调用写法都不发，普通 JSON 保留', () => {
   for (const text of [
-    '<function_calls><invoke name="qq_draw_image"><parameter name="prompt">猫</parameter></invoke></function_calls>',
-    '<tool_call>{"name":"qq_draw_image","arguments":{"prompt":"猫"}}</tool_call>',
-    '<｜tool▁calls▁begin｜>qq_draw_image<｜tool▁calls▁end｜>',
-    '<｜DSML｜invoke name="qq_draw_image">猫</｜DSML｜invoke>',
-    '{"name":"qq_draw_image","arguments":{"prompt":"猫"}}',
+    '<function_calls><invoke name="draw_image"><parameter name="prompt">猫</parameter></invoke></function_calls>',
+    '<tool_call>{"name":"draw_image","arguments":{"prompt":"猫"}}</tool_call>',
+    '<｜tool▁calls▁begin｜>draw_image<｜tool▁calls▁end｜>',
+    '<｜DSML｜invoke name="draw_image">猫</｜DSML｜invoke>',
+    '{"name":"draw_image","arguments":{"prompt":"猫"}}',
   ]) assert.equal(stripToolText(text).trim(), '', text)
   assert.equal(stripToolText('好的\n{"name":"小明"}'), '好的\n{"name":"小明"}')
 })

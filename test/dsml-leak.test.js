@@ -12,7 +12,7 @@ import { cleanReply } from '../src/purpose/module.js'
 
 const screenshot = ['@苏眠眠 </ | | DSML | | invoke>', '</ | | DSML | | calls>']
 const closing = '</ | | DSML | | invoke>'
-const block = '<｜DSML｜function_calls><｜DSML｜invoke name="qq_draw_image"><｜DSML｜parameter name="prompt">内部参数</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls>'
+const block = '<｜DSML｜function_calls><｜DSML｜invoke name="draw_image"><｜DSML｜parameter name="prompt">内部参数</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls>'
 
 for (const input of [
   ...screenshot,
@@ -27,9 +27,9 @@ for (const input of [
   block,
   '<function_calls><invoke name="x"><parameter name="p">内部参数</parameter></invoke></function_calls>',
   '< ANtMl : FUNCTION_CALLS ><antml:invoke name="x">内部参数</ antml : invoke ></ antml : function_calls >',
-  '<tool_call>{"name":"qq_draw_image","arguments":{"prompt":"内部参数"}}</tool_call>',
+  '<tool_call>{"name":"draw_image","arguments":{"prompt":"内部参数"}}</tool_call>',
   '< | tool ▁ calls ▁ begin | >内部参数< | tool ▁ calls ▁ end | >',
-  '{"name":"qq_draw_image","arguments":{"prompt":"内部参数"}}',
+  '{"name":"draw_image","arguments":{"prompt":"内部参数"}}',
   `<reply:7><voice>${block}</voice>|||${closing}`,
   `\`\`\`xml\n${block}\n\`\`\``,
 ]) {
