@@ -187,7 +187,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       allowPromptEcho: outputScope.getStore()?.chatId === chatId && outputScope.getStore().allowPromptEcho,
       promptSources: [...(sources?.system.size ? sources.system.values() : hooks?.secrets?.({ chatId }) || []), sources?.context || '', ...(sources?.memory || [])],
       userText: sources?.userText || '',
-      ownerPrivate: chatId === `private:${getConfig().ownerQQ}`,
+      ownerPrivate: chatId === `private:${getConfig().ownerId}`,
     }
   }
 
@@ -270,7 +270,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   async function onNotice(ev) {
     const cfg = getConfig()
     const groupId = ev.group_id ? String(ev.group_id) : ''
-    if (groupId ? !cfg.allow.groups.map(String).includes(groupId) : !cfg.allow.private.map(String).includes(String(ev.user_id)) && String(ev.user_id) !== String(cfg.ownerQQ)) return
+    if (groupId ? !cfg.allow.groups.map(String).includes(groupId) : !cfg.allow.private.map(String).includes(String(ev.user_id)) && String(ev.user_id) !== String(cfg.ownerId)) return
     const names = new Map()
     for (const qq of new Set([ev.user_id, ev.operator_id, ev.sender_id].filter(Boolean))) {
       try {
@@ -279,7 +279,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       } catch (error) { names.set(String(qq), `QQ 用户(${qq})`) }
     }
     if (disposed) return
-    const note = noticeText(ev, { botQQ: cfg.botQQ, name: (qq) => names.get(String(qq)) || String(qq), ownMessage: (id) => sentIds.has(String(id)) })
+    const note = noticeText(ev, { selfId: cfg.selfId, name: (qq) => names.get(String(qq)) || String(qq), ownMessage: (id) => sentIds.has(String(id)) })
     if (!note) return
     logChat(note.chatId, '系统', `【系统】${note.text}`)
     noticesFor.set(note.chatId, [...(noticesFor.get(note.chatId) || []), note.text].slice(-8))
@@ -361,7 +361,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     const owner = getConfig().ownerName || '主人'
     if (chat.kind === 'system') return `QQ · ${chat.title || '后台'}`
     if (chat.kind === 'group') return `QQ 群 · ${groupNames.get(chat.groupId) || chat.groupId}`
-    return chat.userId === getConfig().ownerQQ ? `QQ · ${owner}私聊` : `QQ 私聊 · ${chat.nickname || chat.userId}`
+    return chat.userId === getConfig().ownerId ? `QQ · ${owner}私聊` : `QQ 私聊 · ${chat.nickname || chat.userId}`
   }
 
   async function createSession(chat, level) {
@@ -865,7 +865,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   /** 她回复里写的本机图片：主人私聊之外只认工作区、允许目录和插件数据目录，防止被人诱导发出电脑上的图。 */
   function localImageBlocked(chatId, src) {
     const cfg = getConfig()
-    if (chatId === `private:${cfg.ownerQQ}`) return false
+    if (chatId === `private:${cfg.ownerId}`) return false
     const s = String(src ?? '').trim()
     if (!isAbsolute(s) && !/^file:/i.test(s)) return false
     try {
@@ -1031,7 +1031,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (!opts.own) saidElsewhere.set(chatId, [...(saidElsewhere.get(chatId) || []), { at: Date.now(), text: said.slice(0, 300) }].slice(-5))
     lastChatAt = Date.now()
     if (chatId.startsWith('private:')) lastPrivateAt.set(chatId.slice(8), Date.now())
-    if (chatId === `private:${cfg.ownerQQ}`) lastBotToOwner = { at: Date.now(), text: items.filter((i) => i.kind === 'text' || i.kind === 'voice').map((i) => i.value).join('\n') }
+    if (chatId === `private:${cfg.ownerId}`) lastBotToOwner = { at: Date.now(), text: items.filter((i) => i.kind === 'text' || i.kind === 'voice').map((i) => i.value).join('\n') }
     onActivity?.({ kind: 'out', chatId, reply: text, userText: opts.userText || '' })
     return { missedAt, failed: failures.length, errors: failures }
   }
@@ -1183,7 +1183,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       out.images = parsed.images || []
       out.stickers = parsed.stickers || []
       out.records = (parsed.records || []).length
-      out.isBot = out.uid === String(selfId || getConfig().botQQ)
+      out.isBot = out.uid === String(selfId || getConfig().selfId)
       out.ok = true
       out.at = Date.now()
     } catch (error) {
@@ -1339,7 +1339,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
 
   async function onMessage(event) {
     if (disposed) return
-    selfId = String(event.self_id || selfId || getConfig().botQQ)
+    selfId = String(event.self_id || selfId || getConfig().selfId)
     const cfg = getConfig()
     const msg = parseMessageEvent(event, selfId)
     if (msg.userId === selfId) return
@@ -1545,7 +1545,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
           chatId: msg.chatId, userId: msg.userId, nickname: msg.nickname, text,
           owner: isOwner(cfg, msg.userId), queued: p0 ? p0.count : 0, heldUntil: p0?.holdUntil || 0,
           lastInAt: lastPrivateAt.get(msg.userId) || 0,
-          lastOutAt: msg.userId === cfg.ownerQQ ? (lastBotToOwner?.at || 0) : 0,
+          lastOutAt: msg.userId === cfg.ownerId ? (lastBotToOwner?.at || 0) : 0,
         })) || 0)
       } catch (error) {
         log.warn('扩展模块决定晚回出错：', error.message)
@@ -1554,7 +1554,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     }
     logChat(msg.chatId, msg.nickname, text, msg.userId)
     lastChatAt = now
-    if (msg.kind === 'private' && msg.userId === cfg.ownerQQ) lastOwnerChatAt = now
+    if (msg.kind === 'private' && msg.userId === cfg.ownerId) lastOwnerChatAt = now
     if (msg.kind === 'private') lastPrivateAt.set(msg.userId, now)
     onActivity?.({ kind: 'in', chatId: msg.chatId, userId: msg.userId, nickname: msg.nickname, text, direct: msg.kind === 'private' || msg.mentioned || mode === 'must', owner: isOwner(cfg, msg.userId) })
 
@@ -1583,7 +1583,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
 
   async function onPoke(ev) {
     if (disposed) return
-    const self = String(ev.self_id || selfId || getConfig().botQQ)
+    const self = String(ev.self_id || selfId || getConfig().selfId)
     if (String(ev.target_id) !== self) return
     if (hooks?.poke) {
       try { if (await hooks.poke(ev)) return } catch (error) {}
@@ -2130,7 +2130,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   // 主人私聊里只可能是主人说话：就算这一轮的记录丢了（工具是旧闭包、排队轮次被上一轮 turn/end 清掉等，见 #90），
   // 「仅主人」也应当放行；群聊 / 别人私聊不放宽。
   function ownerPrivateChat(sessionId) {
-    try { return chatOfSession(sessionId) === `private:${getConfig().ownerQQ}` } catch (error) { return false }
+    try { return chatOfSession(sessionId) === `private:${getConfig().ownerId}` } catch (error) { return false }
   }
 
   function turnHasOwner(sessionId) {
@@ -2263,7 +2263,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   /** 现在这次调用算不算「主人开口」：最近 5 分钟有主人私聊消息算 owner，否则后台（一审 #177 复审：source 由宿主判断）。 */
   const OWNER_ACTIVE_MS = 5 * 60_000
   function ownerSourceNow() {
-    const qq = String(getConfig().ownerQQ || '')
+    const qq = String(getConfig().ownerId || '')
     if (qq && lastOwnerChatAt && Date.now() - lastOwnerChatAt <= OWNER_ACTIVE_MS) return { kind: 'owner', chatId: `private:${qq}` }
     return { kind: 'system', reason: 'background' }
   }
@@ -2292,9 +2292,9 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       throw Object.assign(new Error(`模块「${moduleId || '未声明'}」没有 plugin-internals 能力，不能用子智能体委派（在 module.json 的 capabilities 里声明）`), { code: 'CAPABILITY_REQUIRED' })
     }
     const c = getConfig()
-    const ownerQQ = String(c.ownerQQ || '')
+    const ownerId = String(c.ownerId || '')
     const ownerChat = source && source.kind === 'owner' ? String(source.chatId || '') : ''
-    const fromOwner = Boolean(ownerQQ) && ownerChat === `private:${ownerQQ}`
+    const fromOwner = Boolean(ownerId) && ownerChat === `private:${ownerId}`
     const fromBackground = Boolean(source && source.kind === 'system') && c.subagentBackground === true
     if (!fromOwner && !fromBackground) {
       throw Object.assign(new Error('子智能体委派要主人开口：source 必须是主人私聊，或打开「后台子智能体」开关（没人应答时一律拒绝）'), { code: 'OWNER_REQUIRED' })

@@ -132,7 +132,7 @@ export default {
     api.tool(({ chat, level, sessionId }) => {
       const cfg = api.config()
       if (!cfg.bili.enabled || !cfg.bili.danmakuEnabled || level !== 'full'
-        || chat.kind !== 'private' || String(chat.userId) !== String(cfg.ownerQQ)) return []
+        || chat.kind !== 'private' || String(chat.userId) !== String(cfg.ownerId)) return []
       return defineTool({
         name: 'bili_danmaku',
         description: '只有主人明确让你发弹幕时才用。link 为视频或番剧链接；seconds 为当前分P内的出现时间（秒），part 为分P或ss链接的选集序号。不要替主人猜时间或内容。',

@@ -152,7 +152,7 @@ test('异步 setup 停止后，迟到的写操作不能发送消息或修改配�
           () => api.send('private:1', 'a'), () => api.sendText('private:1', 'b'),
           () => api.reply({ chatId: 'private:1' }, 'c'), () => api.sendImage('private:1', 'image'),
           () => api.sendSegments('private:1', []), () => api.sendFile('private:1', 'file'),
-          () => api.sendVoiceFile('private:1', 'voice'), () => api.setConfig({ ownerQQ: 'changed' }),
+          () => api.sendVoiceFile('private:1', 'voice'), () => api.setConfig({ ownerId: 'changed' }),
           () => api.saveSettings({ secret: 'changed' }), () => api.onebot('send_private_msg', {}),
           () => api.ask('question'), () => api.think('prompt'), () => api.emit('probe'),
         ]

@@ -33,7 +33,7 @@
 ### 2. 去掉硬编码
 - 人设名一律读当前人设：purpose、记忆自我过滤、唤醒词、兴趣、泄密过滤。默认人设不再是大肥鱼。
 - 提示词的平台规则重写成 Discord 版：允许 Markdown、`<at:用户ID>`、Unicode / 服务器表情、表情回应。
-- 配置改名并自动迁移：`ownerQQ → ownerId`、`botQQ → selfId`、`audienceQQs → audienceIds` 等；记忆里的 `qq / about_qq` 迁移成 `uid / about_uid`；`qq_*` 工具改成中性名字。
+- 配置改名并自动迁移：`ownerId → ownerId`、`selfId → selfId`、`audienceIds → audienceIds` 等；记忆里的 `qq / about_qq` 迁移成 `uid / about_uid`；`qq_*` 工具改成中性名字。
 - 所有 ID 一律当字符串：去掉 24 处 `Number(id)`、10 处「5~12 位数字」正则，设置向导接受 Discord ID。
 - 删掉 NapCat / SnowLuma 网关和 Windows 专用的启动管理。
 

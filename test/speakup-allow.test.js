@@ -33,7 +33,7 @@ test('白名单：只留 QQ 号并去重', () => {
 })
 
 test('/speak 加人时也进私聊白名单，能移除', async () => {
-  let cfg = normalize({ ownerQQ: '1' })
+  let cfg = normalize({ ownerId: '1' })
   const ctx = { getConfig: () => cfg, setConfig: (n) => { cfg = n } }
   const run = (text) => runCommand(parseCommand(text), { chatId: 'private:1', kind: 'private', userId: '1' }, ctx)
   assert.match(await run('/speak'), /空的/)
@@ -47,7 +47,7 @@ test('/speak 加人时也进私聊白名单，能移除', async () => {
 })
 
 test('白名单的人到点才找，一轮只找一个，次数到顶就停', async () => {
-  const cfg = normalize({ enabled: true, ownerQQ: '1', speakUp: { enabled: true, allow: ['22222', '33333'], minIntervalMinutes: 1, maxIntervalMinutes: 1, idleMinutes: 1, maxPerDay: 1, awakeFrom: 0, awakeTo: 24 } })
+  const cfg = normalize({ enabled: true, ownerId: '1', speakUp: { enabled: true, allow: ['22222', '33333'], minIntervalMinutes: 1, maxIntervalMinutes: 1, idleMinutes: 1, maxPerDay: 1, awakeFrom: 0, awakeTo: 24 } })
   const sent = []
   const hub = { get lastOwnerChatAt() { return Date.now() }, lastBotToOwner: { at: 0, text: '' }, lastPrivateAt: () => 0, pushToSession: async (chat, content) => sent.push({ chat, text: content[0].text }) }
   const realNow = Date.now

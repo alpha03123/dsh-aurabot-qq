@@ -20,7 +20,7 @@ export default {
       // 模型判心情（开了才判）：系统提醒开头的是她自己主动找人
       if (a.kind === 'out' && a.reply && !String(a.chatId).startsWith('system:')) {
         const speakUp = String(a.userText).startsWith('【系统提醒')
-        mood.judge({ userText: a.userText, reply: a.reply, who: String(a.chatId).startsWith('group:') ? '群里的人' : String(a.chatId) === `private:${cfg.ownerQQ}` ? cfg.ownerName || '主人' : '对方', origin: speakUp ? 'speak-up' : 'user' }).catch(() => {})
+        mood.judge({ userText: a.userText, reply: a.reply, who: String(a.chatId).startsWith('group:') ? '群里的人' : String(a.chatId) === `private:${cfg.ownerId}` ? cfg.ownerName || '主人' : '对方', origin: speakUp ? 'speak-up' : 'user' }).catch(() => {})
       }
     })
     return mood

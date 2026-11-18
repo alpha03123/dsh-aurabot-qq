@@ -19,7 +19,7 @@ function fixture(t, output = { facts: [] }) {
   const dir = mkdtempSync(join(tmpdir(), 'persona-tags-'))
   process.env.AURABOT_DATA_DIR = dir
   t.after(() => { if (old === undefined) delete process.env.AURABOT_DATA_DIR; else process.env.AURABOT_DATA_DIR = old; rmSync(dir, { recursive: true, force: true }) })
-  const cfg = normalize({ ownerQQ: owner, botQQ: bot, model: { provider: 'p', model: 'm' }, memory: { keepChatlogDays: 7 } })
+  const cfg = normalize({ ownerId: owner, selfId: bot, model: { provider: 'p', model: 'm' }, memory: { keepChatlogDays: 7 } })
   const rows = []
   const hub = { chatLogDays: () => [day()], chatLogOf: () => rows, speakersOf: () => [a], groupNames: new Map([['777', '测试群']]) }
   const dsh = { get: () => null, llm: { async *stream({ system }) { yield { type: 'text-delta', text: system.includes('整理长期记忆') ? JSON.stringify(output) : '{"insights":[],"style":[]}' }; yield { type: 'finish', reason: { kind: 'completed' } } } } }

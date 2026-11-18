@@ -91,7 +91,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     const c = cfg()
     const interests = [...(c.keywords || []), ...(getConfig().group.interests || [])]
     // 本地改（2026-11-17）：她自己看过 / 做过的事（seen、经历）不算「关于主人的事」，否则「我想补几部番」会被当成主人推荐的
-    const about = (memory?.list?.('') || []).filter((m) => m.kind !== 'seen' && m.source !== 'event' && (String(m.about) === String(getConfig().ownerQQ) || /喜欢|爱|想|在玩|在看|追/.test(m.text))).slice(0, 12).map((m) => m.text)
+    const about = (memory?.list?.('') || []).filter((m) => m.kind !== 'seen' && m.source !== 'event' && (String(m.about) === String(getConfig().ownerId) || /喜欢|爱|想|在玩|在看|追/.test(m.text))).slice(0, 12).map((m) => m.text)
     const recent = (memory?.recentEvents?.(72, 8) || []).filter((m) => m.kind === 'seen' || (m.tags || []).includes('B站')).slice(0, 6).map((m) => m.text)
     try {
       const out = await think(`你想去 B 站刷点视频。你感兴趣的：${interests.join('、') || '随便看看'}。\n你记得的关于${owner()}和大家的事：\n${about.map((t) => '- ' + t).join('\n') || '（暂无）'}\n你自己最近刷过 / 看过的：\n${recent.map((t) => '- ' + t).join('\n') || '（暂无）'}\n\n挑 3 个这次想搜的关键词（可以是你自己想看的，也可以是${owner()}可能喜欢、你想分享给${owner()}的），别和最近刷过的重复。只输出 JSON 数组，例如 ["白米饭 做法","猫咪 搞笑"]。`)
@@ -260,8 +260,8 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         }
         if (c.like && !getConfig().dryRun) api.likeVideo(v.aid).catch(() => {})
         const share = cleanOutboundText(d.share, { warn: (message) => log.warn(`B 站分享：${message}`) }).trim()
-        if (allowShare && share && !isSilence(share) && c.shareToOwner && getConfig().ownerQQ && d === shareOne && !justTalked) {
-          await hub.sendText(`private:${getConfig().ownerQQ}`, `${share}\n${link(v.bvid)}`)
+        if (allowShare && share && !isSilence(share) && c.shareToOwner && getConfig().ownerId && d === shareOne && !justTalked) {
+          await hub.sendText(`private:${getConfig().ownerId}`, `${share}\n${link(v.bvid)}`)
           shared++
           record(s, { kind: 'share', title: v.title, bvid: v.bvid, text: share })
         }
@@ -269,7 +269,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       }
       // 刷完按概率顺手甩一张截图给主人：默认概率和发一张表情包一样，0 = 从不
       let shotSent = 0
-      const shotTo = getConfig().ownerQQ ? `private:${getConfig().ownerQQ}` : ''
+      const shotTo = getConfig().ownerId ? `private:${getConfig().ownerId}` : ''
       if (allowShare && shotTo && c.enabled && getConfig().enabled && !getConfig().dryRun && Number(c.shotChance) > 0) {
         const pool = looked.filter((x) => x.shotIds && x.shotIds.length)
         if (pool.length && Math.random() < Number(c.shotChance)) {

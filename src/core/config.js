@@ -11,12 +11,12 @@ export const DEFAULTS = {
   dryRun: true, // 试运行：只记日志不真发
   setupDone: false, // 首次使用向导走完了没有
   communityMigrated: {}, // 搬到社区库的模块处理过没有（id → installed / skipped / kept），只处理一次
-  botQQ: '', // 机器人 QQ 号（向导里填）
-  ownerQQ: '', // 主人 QQ 号（向导里填）
+  selfId: '', // 机器人自己的用户 ID（向导里填）
+  ownerId: '', // 主人的用户 ID（向导里填）
   ownerName: '主人',
   ownerLevel: 'full', // full | social | chat
   approvalNotify: true, // DSH 要授权时把请求发到主人私聊
-  approvalViaQQ: true, // 主人私聊会话要授权时，在 QQ 回复「确认」直接批准这一次
+  approvalViaChat: true, // 主人私聊会话要授权时，在私聊里回复「确认」直接批准这一次
   profilePerms: { biliSign: 'owner', biliAvatar: 'owner', biliComment: 'owner', whitelist: 'owner', douyinBrowse: 'owner', douyinLike: 'owner', douyinComment: 'owner', douyinShareOwner: 'owner', douyinDm: 'owner' }, // 改资料类操作（含抖音浏览 / 点赞 / 评论 / 分享）的权限：off 关 / owner 仅主人私聊 / all 所有人。抖音项默认仅主人，总开关默认关
   longTasks: true, // 长任务模式：主人私聊（完整权限）额外挂 dsh-tool-jobs + dsh-tool-schedule，会多一点工具定义、稍慢
   // 后台子智能体委派（默认关）：模块用 hub.runSubagentTurn 派子智能体时，正常要求「主人开口」的来源；
@@ -127,7 +127,7 @@ export const DEFAULTS = {
     minChars: 60,
     maxChars: 140,
     visibility: 'all', // all | friends | selected | self | excluded，和 QQ 空间自身的可见范围一致
-    audienceQQs: '', // selected / excluded 时可见（或不可见）的好友 QQ 号，换行或逗号分隔
+    audienceIds: '', // selected / excluded 时可见（或不可见）的好友 QQ 号，换行或逗号分隔
   },
   // 本地接口：数据目录 local/ 里的脚本接管这几项（文件要在、开关要开）
   local: { tts: false, image: false, song: false, asr: false, video: false, videoTimeoutMin: 20 },
@@ -309,14 +309,36 @@ const bodyText = (v) => {
   return v == null ? '' : String(v)
 }
 
+/** Discord fork 改过名的配置键：老配置读进来时搬到新名字上，老名字丢掉 */
+const RENAMED_KEYS = { ownerQQ: 'ownerId', botQQ: 'selfId', approvalViaQQ: 'approvalViaChat' }
+export function migrateLegacyKeys(raw) {
+  if (!isObj(raw)) return raw
+  const out = { ...raw }
+  for (const [old, now] of Object.entries(RENAMED_KEYS)) {
+    if (old in out) {
+      if (out[now] === undefined || out[now] === '') out[now] = out[old]
+      delete out[old]
+    }
+  }
+  if (isObj(out.diary) && 'audienceQQs' in out.diary) {
+    out.diary = { ...out.diary }
+    if (out.diary.audienceIds === undefined) out.diary.audienceIds = out.diary.audienceQQs
+    delete out.diary.audienceQQs
+  }
+  // QQ 专属、已删掉的功能的配置
+  for (const k of ['qqApi', 'qzoneSocial', 'titleFilter']) delete out[k]
+  return out
+}
+
 export function normalize(raw) {
+  raw = migrateLegacyKeys(raw)
   const c = deepMerge(DEFAULTS, raw)
   c.enabled = bool(c.enabled, false)
   c.dryRun = bool(c.dryRun, true)
-  c.botQQ = qq(c.botQQ)
-  c.ownerQQ = qq(c.ownerQQ)
+  c.selfId = qq(c.selfId)
+  c.ownerId = qq(c.ownerId)
   c.approvalNotify = bool(c.approvalNotify, true)
-  c.approvalViaQQ = bool(c.approvalViaQQ, true)
+  c.approvalViaChat = bool(c.approvalViaChat, true)
   c.gateway = c.gateway === 'onebot' ? 'onebot' : 'snowluma'
   // 只认绝对路径（Windows 的 D:\\… 或 Linux 的 /…），别的当没填
   c.workspaceDir = String(c.workspaceDir || '').trim()
@@ -407,7 +429,7 @@ export function normalize(raw) {
   c.diary.minChars = num(c.diary.minChars, 60, 1, BIG)
   c.diary.maxChars = num(c.diary.maxChars, 140, 1, BIG)
   c.diary.visibility = DIARY_AUDIENCES.includes(c.diary.visibility) ? c.diary.visibility : 'all'
-  c.diary.audienceQQs = qqList(c.diary.audienceQQs).slice(0, 200).join('\n')
+  c.diary.audienceIds = qqList(c.diary.audienceIds).slice(0, 200).join('\n')
   c.speakUp.idleMinutes = num(c.speakUp.idleMinutes, 40, 1, BIG)
   c.speakUp.nudge = bool(c.speakUp.nudge, true)
   c.speakUp.minIntervalMinutes = num(c.speakUp.minIntervalMinutes, 90, 1, BIG)
@@ -671,9 +693,9 @@ const FILE = () => dataDir('config.json')
 export const OPT_IN_ON_UPDATE = ['bili', 'douyin']
 
 export function loadConfig() {
-  const raw = readJson(FILE(), {})
+  const raw = migrateLegacyKeys(readJson(FILE(), {}))
   // 老配置（向导上线前就填好了两个号）直接算向导已完成
-  if (raw && raw.setupDone === undefined && raw.botQQ && raw.ownerQQ) raw.setupDone = true
+  if (raw && raw.setupDone === undefined && raw.selfId && raw.ownerId) raw.setupDone = true
   // 更新插件后新增的、会公开发东西的功能：老用户先关着，等他们自己在面板里打开（新安装照常默认开）
   if (raw && raw.setupDone) for (const k of OPT_IN_ON_UPDATE) if (raw[k] === undefined) raw[k] = { enabled: false }
   return normalize(raw)

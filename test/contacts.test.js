@@ -15,7 +15,7 @@ const otherPm = { kind: 'private', userId: '30003', chatId: 'private:30003' }
 const group = { kind: 'group', userId: OWNER, groupId: '555', chatId: 'group:555' }
 
 function setup({ cfg = {}, allOwner = true, callImpl } = {}) {
-  let config = normalize({ ownerQQ: OWNER, botQQ: BOT, dryRun: false, ...cfg })
+  let config = normalize({ ownerId: OWNER, selfId: BOT, dryRun: false, ...cfg })
   const calls = []
   const sent = []
   const listeners = {}
@@ -118,5 +118,5 @@ test('纯函数：cleanId / planWhitelist', () => {
   assert.equal(cleanId('12'), '')
   assert.equal(cleanId('1322145178253000724'), '1322145178253000724', 'Discord snowflake 也认')
   assert.equal(cleanId('123456789012345678901'), '')
-  assert.equal(planWhitelist({ ownerQQ: '1', allow: { private: [], groups: [] } }, { action: 'add', kind: 'group', id: '12345' }).next[0], '12345')
+  assert.equal(planWhitelist({ ownerId: '1', allow: { private: [], groups: [] } }, { action: 'add', kind: 'group', id: '12345' }).next[0], '12345')
 })

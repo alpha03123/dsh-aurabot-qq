@@ -26,7 +26,7 @@ export default {
         mood.nudge?.(8, `唱完了「${title}」`)
         // 唱过的歌记成她的经历：私聊记到对方头上
         const uid = String(chatId).startsWith('private:') ? String(chatId).slice(8) : ''
-        const who = uid === String(cfg.ownerQQ) ? cfg.ownerName || '主人' : uid ? '对方' : '群里'
+        const who = uid === String(cfg.ownerId) ? cfg.ownerName || '主人' : uid ? '对方' : '群里'
         memory.addEvent?.({ text: `给${who}唱了《${title}》`, about: uid, tags: ['唱歌'], importance: 0.5 })
         api.emit('song/sung', { title, chatId })
       },
@@ -70,7 +70,7 @@ export default {
     // 面板里试唱：发到主人私聊
     api.route('/song/request', async (req) => {
       const b = await http.body(req)
-      return song.request({ song: b.song, songId: b.songId, pitch: b.pitch, voice: b.voice, chatId: b.chatId || `private:${api.config().ownerQQ}` })
+      return song.request({ song: b.song, songId: b.songId, pitch: b.pitch, voice: b.voice, chatId: b.chatId || `private:${api.config().ownerId}` })
     })
     return song
   },

@@ -75,7 +75,7 @@ export function apply(ctx) {
     const before = cfg
     cfg = saveConfig(next)
     // 改机器人号后旧连接的核对结果立刻失效，必须重新核对才能处理消息或完成向导。
-    if (before.botQQ !== cfg.botQQ) {
+    if (before.selfId !== cfg.selfId) {
       wrongAccount = ''
       if (onebotState === 'connected') onebot.restart()
     }
@@ -131,7 +131,7 @@ export function apply(ctx) {
   let pendingEvents = []
   let hub = null
   let dangerGuard = null // 危险命令确认（security.dangerConfirm 开着才生效）
-  let approvalRelay = null // DSH 要授权时在 QQ 私聊问主人（approvalViaQQ 开着才生效）
+  let approvalRelay = null // DSH 要授权时在 QQ 私聊问主人（approvalViaChat 开着才生效）
   async function checkLogin() {
     verifying = true
     pendingEvents = []
@@ -530,7 +530,7 @@ export function apply(ctx) {
     // 判断不出来（hub.isOwnedSession 缺失 / 抛错）时 safeOwnedSession 返回 true，走原 deny 逻辑；
     // 只有明确 false（宿主自己的 GUI/CLI 会话）才放行给 DSH 自己的权限系统，别在异常时 fail-open。
     isOwnedSession: safeOwnedSession(typeof hub?.isOwnedSession === 'function' ? (sessionId) => hub.isOwnedSession(sessionId) : null),
-    ownerQQ: () => cfg.ownerQQ,
+    ownerId: () => cfg.ownerId,
   })
   core.dangerGuard = dangerGuard
   approvalRelay = createApprovalRelay({ getConfig, deliver: (chatId, text) => hub.sendText(chatId, text), chatOfSession: (id) => hub.chatOfSession(id), log })
@@ -628,7 +628,7 @@ export function apply(ctx) {
       if (d.reason) lines.push('原因：' + String(d.reason).slice(0, 300))
       if (title) lines.push('会话：' + title.slice(0, 60))
       lines.push('这个会话的授权要在 DSH 界面里点「批准」。')
-      await hub.sendText(`private:${cfg.ownerQQ}`, lines.join('\n'))
+      await hub.sendText(`private:${cfg.ownerId}`, lines.join('\n'))
     } catch (error) {
       log.debug?.('审批通知失败：', error.message)
     }
@@ -795,7 +795,7 @@ export function apply(ctx) {
     // 换了模型：思考强度和「能不能看图」的探测结果都得重来，不然要等 10 分钟缓存过期
     const changedModel = before.model.provider !== cfg.model.provider || before.model.model !== cfg.model.model
     if (changedModel) { clearReasoningCache(); clearVisionCache() }
-    if (changedConn || before.botQQ !== cfg.botQQ) wrongAccount = ''
+    if (changedConn || before.selfId !== cfg.selfId) wrongAccount = ''
     if (changedConn && onebot.state !== 'stopped') onebot.restart()
     if (!before.enabled && cfg.enabled) setTimeout(safe(watchdog, '看门狗'), 100)
     if (before.enabled && !cfg.enabled) onebot.stop()
@@ -1217,7 +1217,7 @@ export function apply(ctx) {
   })
   route('/setup/done', async (req) => {
     const body = await readBody(req)
-    if (!cfg.botQQ || !cfg.ownerQQ || cfg.botQQ === cfg.ownerQQ) return { ok: false, message: '先填好不同的机器人 QQ 和你的 QQ' }
+    if (!cfg.selfId || !cfg.ownerId || cfg.selfId === cfg.ownerId) return { ok: false, message: '先填好不同的机器人 QQ 和你的 QQ' }
     if (body.existingConnection && !(cfg.enabled && onebotState === 'connected' && loginOk)) return { ok: false, message: 'QQ 网关还没通过机器人号核对，请先连接并核对后再进入面板' }
     setConfig({ ...cfg, setupDone: true })
     log.info('首次使用向导完成')
@@ -1229,11 +1229,11 @@ export function apply(ctx) {
   /** 连不上 QQ 网关时，按顺序找卡在哪一步，给一句人话。 */
   async function connectionProblem() {
     if (!cfg.enabled) return '总开关关着（右上角），打开后才会连'
-    if (!cfg.botQQ) return '还没填机器人 QQ 号'
+    if (!cfg.selfId) return '还没填机器人 QQ 号'
     if (cfg.gateway === 'onebot') {
       const ep = endpoint()
       if (!ep.wsUrl) return '还没填 OneBot 的 WebSocket 地址：在「连接」页填你的 OneBot v11 正向 WebSocket 地址（收消息要靠它；HTTP 可以不填）'
-      if (wrongAccount) return `连上的是 ${wrongAccount}，不是机器人号 ${cfg.botQQ}，已经断开：让你的 OneBot 服务登录机器人号，再点「重新连接」`
+      if (wrongAccount) return `连上的是 ${wrongAccount}，不是机器人号 ${cfg.selfId}，已经断开：让你的 OneBot 服务登录机器人号，再点「重新连接」`
       return `连 ${ep.wsUrl || ep.httpUrl} 没连上：确认你的 OneBot 服务开着、地址和 token 填对了（Docker 里的话，地址要用 DSH 能访问到的主机名 / 端口）`
     }
     const inst = snowluma.detect()
@@ -1242,7 +1242,7 @@ export function apply(ctx) {
     if (snowluma.lowIntegrity) return 'SnowLuma 以「低完整性」运行，看不到 QQ 进程（多半是解压在了下载目录这类带安全标签的地方）：把它重新解压到一个普通目录（比如 D:\SnowLuma），在「连接」页改好目录再启动'
     const ep = endpoint()
     if (!ep.wsUrl && !ep.httpUrl) return 'SnowLuma 还没给机器人号开 OneBot 端口，也就是机器人号还没接入：确认机器人号的 QQ 已经登录，再点「接入机器人号」'
-    if (wrongAccount) return `连上的是 ${wrongAccount}，不是机器人号 ${cfg.botQQ}，已经断开：只登着机器人号那个 QQ，再点「接入机器人号」`
+    if (wrongAccount) return `连上的是 ${wrongAccount}，不是机器人号 ${cfg.selfId}，已经断开：只登着机器人号那个 QQ，再点「接入机器人号」`
     const la = snowluma.lastAttach
     if (la && la.at && !la.ok && la.message) return '接入机器人号没成功：' + la.message
     return `连 ${ep.wsUrl || ep.httpUrl} 没连上：确认机器人号的 QQ 开着、已经登录，并且 SnowLuma 控制台里这个号显示已接入`
@@ -1260,7 +1260,7 @@ export function apply(ctx) {
     try {
       const info = await onebot.call('get_login_info', {}, { timeoutMs: 8000 })
       const uin = String(info?.user_id ?? '')
-      return { ok: uin === cfg.botQQ, message: uin === cfg.botQQ ? `连上了：${info.nickname}（${uin}）` : `连上的是 ${uin}，不是机器人号 ${cfg.botQQ}！`, info }
+      return { ok: uin === cfg.selfId, message: uin === cfg.selfId ? `连上了：${info.nickname}（${uin}）` : `连上的是 ${uin}，不是机器人号 ${cfg.selfId}！`, info }
     } catch (error) {
       return { ok: false, message: error.message }
     }
@@ -1268,7 +1268,7 @@ export function apply(ctx) {
   route('/test-send', async () => {
     if (!cfg.enabled) return { ok: false, message: '先打开总开关' }
     if (cfg.dryRun) return { ok: false, message: '现在是试运行，先关掉试运行再测' }
-    const r = await hub.sendText(`private:${cfg.ownerQQ}`, '【Aurabot 自测】大肥鱼到此一游～')
+    const r = await hub.sendText(`private:${cfg.ownerId}`, '【Aurabot 自测】大肥鱼到此一游～')
     return r ? { ok: true, message: '发给主人了，去 QQ 看看' } : { ok: false, message: '没发出去（看日志）' }
   })
 
@@ -1434,7 +1434,7 @@ export function apply(ctx) {
   // （模块直接调 api.onebot(...) 的操作不在此列，是真的会执行的）
   const simChat = (b) => {
     const owner = b.as !== 'other'
-    const userId = owner ? cfg.ownerQQ : '10001'
+    const userId = owner ? cfg.ownerId : '10001'
     const group = b.kind === 'group'
     const groupId = String(b.groupId || cfg.allow.groups[0] || '10002')
     return { owner, userId, chat: group ? { chatId: `group:${groupId}`, kind: 'group', groupId, userId } : { chatId: `private:${userId}`, kind: 'private', userId } }

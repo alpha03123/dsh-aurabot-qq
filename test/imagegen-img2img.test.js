@@ -176,7 +176,7 @@ test('图库只接受文件名；任意路径、URL、base64 输入、伪图片�
 
 function mediaHub(t) {
   sandbox(t)
-  const cfg = normalize({ botQQ: BOT, ownerQQ: OWNER, enabled: false, dryRun: true, titleFilter: { enabled: false }, stickers: { collect: false }, allow: { private: ['10000002'], groups: ['123'] } })
+  const cfg = normalize({ selfId: BOT, ownerId: OWNER, enabled: false, dryRun: true, titleFilter: { enabled: false }, stickers: { collect: false }, allow: { private: ['10000002'], groups: ['123'] } })
   const hub = createHub({ dsh: {}, getConfig: () => cfg, log, onebot: {}, stickers: {} })
   t.after(() => hub.dispose())
   return hub
@@ -221,7 +221,7 @@ test('quote 复用 hub 引用解析缓存，按聊天隔离，支持私聊并保
   sandbox(t)
   let now = 1_800_000_000_000, gets = 0
   t.mock.method(Date, 'now', () => now)
-  const cfg = normalize({ enabled: true, botQQ: BOT, ownerQQ: OWNER, dryRun: true,
+  const cfg = normalize({ enabled: true, selfId: BOT, ownerId: OWNER, dryRun: true,
     merge: { enabled: true, waitSec: 3600, maxSec: 3600 },
     titleFilter: { enabled: false }, stickers: { collect: false }, allow: { groups: ['123', '456'] },
   })

@@ -9,7 +9,7 @@ const input = { video, text: '这一段好有意思😀', seconds: 8.25, positio
 function fixture() {
   let data = { history: [] }, time = Date.parse('2026-10-31T10:00:00+08:00')
   let cookie = 'SESSDATA=fake; bili_jct=csrf; DedeUserID=10001'
-  const cfg = { enabled: true, dryRun: false, ownerQQ: '10000', bili: { enabled: true } }
+  const cfg = { enabled: true, dryRun: false, ownerId: '10000', bili: { enabled: true } }
   const settings = { danmakuEnabled: true, autoDanmaku: false, maxDanmakuPerDay: 3 }
   Object.assign(cfg.bili, settings)
   Object.defineProperty(cfg.bili, 'cookie', { get: () => cookie })

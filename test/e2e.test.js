@@ -118,8 +118,8 @@ before(async () => {
     enabled: true,
     dryRun: false,
     setupDone: true,
-    botQQ: BOT,
-    ownerQQ: OWNER,
+    selfId: BOT,
+    ownerId: OWNER,
     allow: { private: [OWNER], groups: ['555', '556', '557', '558', '559'] },
     // 556 专门测按头衔不理
     titleFilter: { enabled: true, groups: ['556'], title: '大肥鱼' },

@@ -25,12 +25,12 @@ export function planWhitelist(cfg, { action, kind, id }) {
   if (!n) return { ok: false, message: 'ID 不对：要纯数字的用户 ID / 频道 ID' }
   const label = k === 'private' ? '用户' : '频道'
   const listName = k === 'private' ? '私聊白名单' : '频道白名单'
-  if (k === 'private' && n === String(cfg.ownerQQ || '')) {
+  if (k === 'private' && n === String(cfg.ownerId || '')) {
     return act === 'remove'
       ? { ok: false, message: '主人不能被移出私聊白名单' }
       : { ok: true, message: '主人本来就能私聊，不用加白名单' }
   }
-  if (k === 'private' && act === 'add' && n === String(cfg.botQQ || '')) return { ok: false, message: '这是我自己，不用加' }
+  if (k === 'private' && act === 'add' && n === String(cfg.selfId || '')) return { ok: false, message: '这是我自己，不用加' }
   const list = (k === 'private' ? cfg.allow?.private : cfg.allow?.groups) || []
   const has = list.map(String).includes(n)
   if (act === 'add') {

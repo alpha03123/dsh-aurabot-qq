@@ -46,7 +46,7 @@ before(async () => {
   writeFileSync(join(dir, 'index.mjs'), FAKE)
   const port = await freePort()
   writeFileSync(join(dir, 'port.txt'), String(port))
-  cfg = { botQQ: '20000002', snowluma: { dir, webuiPort: port, webuiPassword: '' } }
+  cfg = { selfId: '20000002', snowluma: { dir, webuiPort: port, webuiPassword: '' } }
   mgr = createSnowLumaManager({
     getConfig: () => cfg,
     log: { info() {}, warn() {}, debug() {} },

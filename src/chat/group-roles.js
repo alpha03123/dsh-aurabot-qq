@@ -8,7 +8,7 @@ export function createGroupRoles({ onebot, getConfig, log }) {
   const inflight = new Map()
 
   async function fetchRole(gid) {
-    const r = await onebot.call('get_group_member_info', { group_id: Number(gid), user_id: Number(getConfig().botQQ), no_cache: true }, { timeoutMs: 8000 })
+    const r = await onebot.call('get_group_member_info', { group_id: Number(gid), user_id: Number(getConfig().selfId), no_cache: true }, { timeoutMs: 8000 })
     const role = ['owner', 'admin', 'member'].includes(r && r.role) ? r.role : 'member'
     cache.set(String(gid), { role, at: Date.now() })
     return role

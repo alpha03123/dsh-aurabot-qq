@@ -15,7 +15,7 @@ function makeGuard ({ enabled = true, timeoutMs = 5000 } = {}) {
     getConfig: () => cfg,
     deliver: async (chatId, text) => { delivered.push({ chatId, text }) },
     chatOfSession: (sid) => (sid === 'sid-owner' ? ownerChat : sid === 'sid-other' ? 'private:999' : ''),
-    ownerQQ: () => owner,
+    ownerId: () => owner,
     timeoutMs,
   })
   return { guard, delivered, cfg }
@@ -152,7 +152,7 @@ function makeScopedGuard ({ enabled = true, timeoutMs = 5000, owned = () => true
     deliver: async (chatId, text) => { delivered.push({ chatId, text }) },
     chatOfSession: (sid) => (sid === 'sid-owner' ? ownerChat : sid === 'sid-other' ? 'private:999' : ''),
     isOwnedSession: (sid) => owned(sid),
-    ownerQQ: () => owner,
+    ownerId: () => owner,
     timeoutMs,
   })
   return { guard, delivered, cfg }

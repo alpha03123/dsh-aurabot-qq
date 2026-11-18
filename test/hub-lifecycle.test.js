@@ -99,7 +99,7 @@ test('慢工具提示等待发送挂钩时轮次结束，不再投递到 QQ', as
 })
 
 function config(patch = {}) {
-  return normalize({ enabled: true, dryRun: true, setupDone: true, ownerQQ: OWNER, botQQ: BOT,
+  return normalize({ enabled: true, dryRun: true, setupDone: true, ownerId: OWNER, selfId: BOT,
     allow: { private: [OTHER], groups: [] }, voice: { enabled: false }, merge: { enabled: false },
     stickers: { collect: true, caption: false, autoChance: 0 },
     snowluma: { autoStart: false, autoAttach: false, dir: join(root, 'no-snowluma') }, ...patch })

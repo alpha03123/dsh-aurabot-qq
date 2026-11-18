@@ -127,7 +127,7 @@ function makeScopedGuard ({ owned = () => true, timeoutMs = 5000 } = {}) {
     deliver: async (chatId, text) => { delivered.push({ chatId, text }) },
     chatOfSession: (sid) => (sid === 'sid-owner' ? ownerChat : sid === 'sid-group' ? 'group:123' : ''),
     isOwnedSession: safeOwnedSession(owned),
-    ownerQQ: () => OWNER,
+    ownerId: () => OWNER,
     timeoutMs,
   })
   return { guard, delivered }
@@ -167,7 +167,7 @@ test('safeOwnedSession：判断不出来按 owned=true（fail-closed），只有
     deliver: async () => {},
     chatOfSession: () => '',
     isOwnedSession: safeOwnedSession(() => { throw new Error('boom') }),
-    ownerQQ: () => OWNER,
+    ownerId: () => OWNER,
     timeoutMs: 30,
   })
   const d = await guard.preExecute(execOf('rm -rf /', 'sid-unknown'), () => 'NEXT')

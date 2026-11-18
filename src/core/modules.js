@@ -326,7 +326,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
       sendText: writable('sendText', (chatId, text) => core.hub.sendText(String(chatId), String(text ?? ''))),
       // 回某一条消息：群里以「引用回复」发出，私聊直接发
       reply: writable('reply', (msg, text) => core.hub.sendText(String(msg.chatId), String(text ?? ''), msg.kind === 'group' ? msg.messageId : undefined)),
-      isOwner: (userId) => String(userId) === String(getConfig().ownerQQ),
+      isOwner: (userId) => String(userId) === String(getConfig().ownerId),
       sendImage: writable('sendImage', (chatId, src) => core.hub.sendImage(String(chatId), src)),
       sendSegments: writable('sendSegments', (chatId, segs, note) => core.hub.sendSegments(String(chatId), segs, note || `[${id}]`)),
       // 发任意文件（文档 / 压缩包 / 音频 / 视频……）：本机绝对路径，或网关能取到的网址 / base64://

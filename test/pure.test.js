@@ -194,7 +194,7 @@ test('imageSize 读 PNG 宽高', () => {
   assert.deepEqual(imageSize(png), { width: 200, height: 180 })
 })
 
-const cfg = { ownerQQ: '10000001', ownerLevel: 'full', allow: { private: ['10000001'], groups: ['555'] } }
+const cfg = { ownerId: '10000001', ownerLevel: 'full', allow: { private: ['10000001'], groups: ['555'] } }
 
 test('白名单', () => {
   assert.equal(checkAllowed(cfg, { kind: 'private', userId: '10000001' }).allowed, true)

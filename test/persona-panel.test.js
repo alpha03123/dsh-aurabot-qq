@@ -61,7 +61,7 @@ function setup(t) {
       { uid: ALICE, who: 'bot', t: now - 10 },
     ],
   }
-  const cfg = normalize({ ownerQQ: OWNER, memory: { dailyConsolidate: false } })
+  const cfg = normalize({ ownerId: OWNER, memory: { dailyConsolidate: false } })
   const make = () => createMemoryStore({ getConfig: () => cfg, hub, log })
   const state = () => readMemoryState(dir)
   t.after(() => {

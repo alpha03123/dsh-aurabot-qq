@@ -19,7 +19,7 @@ before(async () => {
 })
 
 test('备份、暂存、启动时换上：内容一致，旧文件留底，排除项不进备份', async () => {
-  put('config.json', JSON.stringify({ ownerQQ: '1', song: { root: join(root, 'songs') } }))
+  put('config.json', JSON.stringify({ ownerId: '1', song: { root: join(root, 'songs') } }))
   put('memories.json', '记忆🤔')
   put('personas/鱼.md', '人设')
   put('stickers/a.png', Buffer.alloc(5000, 7))
@@ -37,7 +37,7 @@ test('备份、暂存、启动时换上：内容一致，旧文件留底，排�
 
   // 模拟换了电脑：数据目录里是别的东西
   put('memories.json', '新电脑的')
-  put('config.json', '{"ownerQQ":"2"}')
+  put('config.json', '{"ownerId":"2"}')
   put('only-here.json', '留着')
 
   const r = await api.stageRestore(b.file)
@@ -49,7 +49,7 @@ test('备份、暂存、启动时换上：内容一致，旧文件留底，排�
   const pending = join(root, '.restore-pending.json')
   const oldRoot = join(tmpdir(), 'old', 'aurabot')
   const stageConfig = join(root, '.restore', 'config.json')
-  writeFileSync(stageConfig, JSON.stringify({ ownerQQ: '1', dir: join(oldRoot, 'songs') }))
+  writeFileSync(stageConfig, JSON.stringify({ ownerId: '1', dir: join(oldRoot, 'songs') }))
   writeFileSync(pending, JSON.stringify({ ...JSON.parse(readFileSync(pending, 'utf8')), dataDir: oldRoot }))
 
   assert.equal(api.applyPendingRestore(123), 7)

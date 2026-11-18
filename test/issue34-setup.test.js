@@ -18,7 +18,7 @@ test('未核对不能跳过；已有连接核对机器人号后可以完成并�
   const fake = createFakeDsh({ brain: async () => '好' })
   t.after(async () => { fake.dispose(); await mock.close() })
   writeFileSync(join(dataDir, 'config.json'), JSON.stringify({
-    enabled: true, setupDone: false, botQQ: BOT, ownerQQ: OWNER,
+    enabled: true, setupDone: false, selfId: BOT, ownerId: OWNER,
     snowluma: { httpUrl: mock.httpUrl, wsUrl: mock.wsUrl, httpToken: mock.token, wsToken: mock.token },
   }))
   const { apply } = await import('../src/host.js')
@@ -33,7 +33,7 @@ test('未核对不能跳过；已有连接核对机器人号后可以完成并�
   assert.equal(result.ok, true, result.message)
   assert.equal(result.config.setupDone, true)
   assert.equal(JSON.parse(readFileSync(join(dataDir, 'config.json'), 'utf8')).setupDone, true)
-  api.setConfig({ ...api.getConfig(), setupDone: false, botQQ: '30000003' })
+  api.setConfig({ ...api.getConfig(), setupDone: false, selfId: '30000003' })
   result = (await fake.call('/setup/done', { existingConnection: true })).json()
   assert.equal(result.ok, false, '换机器人号后旧连接不能再用来完成向导')
 })

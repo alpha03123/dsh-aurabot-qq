@@ -17,7 +17,7 @@ function setup(t) {
   const dir = mkdtempSync(join(tmpdir(), 'short-term-'))
   const previous = process.env.AURABOT_DATA_DIR
   process.env.AURABOT_DATA_DIR = dir
-  const cfg = normalize({ ownerQQ: QQ, model: { provider: 'p', model: 'm' }, memory: { dailyConsolidate: false, keepChatlogDays: -1, gistEnabled: false } })
+  const cfg = normalize({ ownerId: QQ, model: { provider: 'p', model: 'm' }, memory: { dailyConsolidate: false, keepChatlogDays: -1, gistEnabled: false } })
   const calls = []
   let answer = '正在聊旅行，还答应帮忙查路线。'
   let hook = null

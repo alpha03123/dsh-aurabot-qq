@@ -111,7 +111,7 @@ test('截图库：panel 给出 mm:ss 和上限，供面板渲染', () => {
 })
 
 function makeBili () {
-  const cfg = normalize({ enabled: true, dryRun: false, ownerQQ: '10000001', bili: { enabled: true } })
+  const cfg = normalize({ enabled: true, dryRun: false, ownerId: '10000001', bili: { enabled: true } })
   const sent = []
   const hub = {
     sendImage: async (chatId, src) => { sent.push({ chatId, src }); return { message_id: 1 } },
@@ -218,7 +218,7 @@ test('sendShot：关闭和试运行不发送、不记成功；发送失败如实
 })
 
 function browsing({ dryRun = false, sendResult = { message_id: 1 }, failVision = false } = {}) {
-  const cfg = normalize({ enabled: true, dryRun, ownerQQ: '10000001', bili: { enabled: true, vision: true, shotChance: 1, perRun: 1 } })
+  const cfg = normalize({ enabled: true, dryRun, ownerId: '10000001', bili: { enabled: true, vision: true, shotChance: 1, perRun: 1 } })
   const sent = []
   const info = { bvid: 'BV1aaaaaaaaa', cid: 1, aid: 1, title: '猫的视频', duration: 60 }
   const bili = createBili({

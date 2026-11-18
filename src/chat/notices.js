@@ -1,11 +1,11 @@
 // QQ 通知事件翻成她能看懂的一句话。字段按 SnowLuma 的事件来；这里只管翻译，要不要记由中枢决定。
 
 /** @returns {{chatId:string, text:string}|null} 不用让她知道的事件返回 null。name(qq) 把 QQ 号换成称呼。 */
-export function noticeText(ev, { botQQ, name = (qq) => String(qq), ownMessage = () => false } = {}) {
+export function noticeText(ev, { selfId, name = (qq) => String(qq), ownMessage = () => false } = {}) {
   if (ev?.post_type !== 'notice') return null
   const type = ev.notice_type
   const sub = ev.sub_type
-  const bot = String(botQQ || '')
+  const bot = String(selfId || '')
   const who = (qq) => (String(qq) === bot ? '你' : name(qq))
   const group = (text) => ({ chatId: `group:${ev.group_id}`, text })
   const by = (id) => (id && String(id) !== String(ev.user_id) ? `${who(id)}把` : '')

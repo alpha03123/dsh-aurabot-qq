@@ -19,7 +19,7 @@
 | 导出 | 签名 | 说明 |
 | --- | --- | --- |
 | `tick()` | `async () => void` | 60s 心跳（`api.every(60_000)` 已在 setup 注册），闸门判定 + 到点跑一轮 |
-| `fire(reason)` | `async (reason?) => { outcome }` | 手动触发：跳过排程类闸门，不跳过总开关/禁言/ownerQQ。`outcome`: `sent / silent / failed / delivery-failed / skipped-materials / skipped-no-candidate / disabled / muted / no-owner` |
+| `fire(reason)` | `async (reason?) => { outcome }` | 手动触发：跳过排程类闸门，不跳过总开关/禁言/ownerId。`outcome`: `sent / silent / failed / delivery-failed / skipped-materials / skipped-no-candidate / disabled / muted / no-owner` |
 | `run({force})` | 同 `fire` | 别名 |
 | `state()` | `() => { count, countToday, day, nextFireAt, lastOutcome, lastPurpose }` | **同步**，至少含 `count`（今日已投递次数） |
 | `status()` | `() => summary` | `summarizePurposeState` 包装：今日次数/上次结果/下次时间/驱动向量/topNeeds/前 5 条目标假设/pending/history 摘要 |
@@ -68,7 +68,7 @@ ext.purpose 同名键可覆写。
 
 - 素材：聊天流水（hub.chatLogOf 最近 2 天，主人私聊 + 群）+ 记忆（`api.use('memory').list('')`，importance×100 适配）+ 人格（`api.core.personas.current()`）+ pending；B站留空扩展。
 - 生成：`hub.runSystemTurn('purpose', …, { noTools:true })`，提示词无 QQ 发送工具指令；回包清洗：去内部备忘段/引号/「大肥鱼：」前缀，`[沉默]`/空 → `silent` 不硬发。
-- 投递：`hub.deliver('private:'+ownerQQ)`；deliver 内部吞错，`sent` = deliver 返回 `{missedAt}` 对象，`undefined`（钩子拦截）记 silent，抛错记 `delivery-failed`。
+- 投递：`hub.deliver('private:'+ownerId)`；deliver 内部吞错，`sent` = deliver 返回 `{missedAt}` 对象，`undefined`（钩子拦截）记 silent，抛错记 `delivery-failed`。
 - 闸门：`evaluatePurposeTick`（enabled/quiet/dailyMax/nextFireAt/ownerIdleMs）；`nextFireAt` 落盘 tick 重算，重启时在途 `pending` 改判 `interrupted` 不补发。
 - 归属/回执/pending 语义与 surfcore 一致（群友目标重复≥3 或被点名才升 self；主人回复正/负/中性 → confirmed/rejected/微调；备忘【状态】待续/完成驱动 pending）。
 - 投递载体：`ext.purpose.carrier`（默认 `qq`）。`carrier=pet` 时经桌宠模块（pet）推桌面气泡，

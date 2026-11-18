@@ -29,11 +29,11 @@ export function createBridge({ ctx, getConfig, setConfig, hub, mods, log, versio
     const cfg = getConfig()
     const [kind, id] = String(target || '').split(':')
     if (!id || !['private', 'group'].includes(kind)) return '目标要写成 private:QQ号 或 group:群号'
-    if (cfg.bridge.allowTargets === 'owner') return kind === 'private' && id === cfg.ownerQQ ? '' : '设置成了只能发给主人'
-    const ok = kind === 'group' ? cfg.allow.groups : [cfg.ownerQQ, ...cfg.allow.private]
+    if (cfg.bridge.allowTargets === 'owner') return kind === 'private' && id === cfg.ownerId ? '' : '设置成了只能发给主人'
+    const ok = kind === 'group' ? cfg.allow.groups : [cfg.ownerId, ...cfg.allow.private]
     return ok.includes(id) ? '' : '不在白名单里，不能发'
   }
-  const ownerTarget = () => `private:${getConfig().ownerQQ}`
+  const ownerTarget = () => `private:${getConfig().ownerId}`
 
   // ---------- 大家共用的几个操作 ----------
   const ops = {

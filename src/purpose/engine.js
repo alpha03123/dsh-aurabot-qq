@@ -26,8 +26,8 @@ export const PURPOSE_STATE_VERSION = 1;
 /** 默认值刻意保守：白天每 2.5~5 小时最多一次，一天最多 4 次，23:30~08:30 不打扰。 */
 export const DEFAULT_PURPOSE_CONFIG = Object.freeze({
   enabled: true,
-  // 空 = 用 config.json 的 ownerQQ；一般不需要改。
-  ownerUin: '',
+  // 空 = 用 config.json 的 ownerId；一般不需要改。
+  ownerId: '',
   gapMinMs: 150 * 60 * 1000,
   gapMaxMs: 300 * 60 * 1000,
   initialDelayMinMs: 30 * 60 * 1000,
@@ -132,15 +132,15 @@ export function nextDayStartAfter(now, config = DEFAULT_PURPOSE_CONFIG) {
   return d.getTime();
 }
 
-export function normalizePurposeConfig(input = {}, { ownerQQ = '' } = {}) {
+export function normalizePurposeConfig(input = {}, { ownerId = '' } = {}) {
   const src = isPlainObject(input) ? input : {};
-  const fallbackOwner = String(ownerQQ ?? '').replace(/[^\d]/g, '').slice(0, 12);
-  const rawOwner = String(src.ownerUin ?? '').replace(/[^\d]/g, '').slice(0, 12);
+  const fallbackOwner = String(ownerId ?? '').replace(/[^\d]/g, '').slice(0, 12);
+  const rawOwner = String(src.ownerId ?? '').replace(/[^\d]/g, '').slice(0, 20);
   const gapMinMs = clampInt(src.gapMinMs, DEFAULT_PURPOSE_CONFIG.gapMinMs, 5 * MINUTE, 24 * HOUR);
   const gapMaxMs = clampInt(src.gapMaxMs, Math.max(gapMinMs, DEFAULT_PURPOSE_CONFIG.gapMaxMs), gapMinMs, 24 * HOUR);
   return {
     enabled: src.enabled !== false,
-    ownerUin: rawOwner || fallbackOwner,
+    ownerId: rawOwner || fallbackOwner,
     gapMinMs,
     gapMaxMs,
     initialDelayMinMs: clampInt(src.initialDelayMinMs, DEFAULT_PURPOSE_CONFIG.initialDelayMinMs, MINUTE, 12 * HOUR),
@@ -500,7 +500,7 @@ function messageAt(msg) {
 export function collectMaterials({
   now = Date.now(),
   config = DEFAULT_PURPOSE_CONFIG,
-  ownerUin = '',
+  ownerId = '',
   roleName = '',
   conversations = [],
   biliEntries = [],
@@ -520,7 +520,7 @@ export function collectMaterials({
   const stats = { qq: 0, bili: 0, memory: 0, thought: 0 };
 
   // ① 和主人的私聊：最重要，也最不容易「隔着群」。
-  const ownerKey = ownerUin ? `private:${String(ownerUin).replace(/[^\d]/g, '')}` : '';
+  const ownerKey = ownerId ? `private:${String(ownerId).replace(/[^\d]/g, '')}` : '';
   const ownerConv = ownerKey ? list.find((c) => c.key === ownerKey) : null;
   if (ownerConv) {
     const recent = (Array.isArray(ownerConv.recentMessages) ? ownerConv.recentMessages : [])
@@ -2005,7 +2005,7 @@ export function buildPurposePrompt({
   now = Date.now(),
   config = DEFAULT_PURPOSE_CONFIG,
   mode = 'reserved2',
-  ownerUin = '',
+  ownerId = '',
   ownerName = '主人',
   token = '',
   contextBlocks = [],
@@ -2019,7 +2019,7 @@ export function buildPurposePrompt({
 } = {}) {
   const lines = [];
   const owner = String(ownerName || '').trim() || '主人';
-  const uin = String(ownerUin || '').replace(/[^\d]/g, '');
+  const uin = String(ownerId || '').replace(/[^\d]/g, '');
   const clock = new Date(now);
   const week = ['日', '一', '二', '三', '四', '五', '六'][clock.getDay()];
   lines.push('【主动找主人 · 目的回合】');

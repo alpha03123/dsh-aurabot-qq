@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { noticeText } from '../src/chat/notices.js'
 
-const n = (e) => noticeText({ post_type: 'notice', group_id: 9, ...e }, { botQQ: '1', name: (q) => `U${q}`, ownMessage: (id) => id === 7 })
+const n = (e) => noticeText({ post_type: 'notice', group_id: 9, ...e }, { selfId: '1', name: (q) => `U${q}`, ownMessage: (id) => id === 7 })
 
 test('常见群事件翻成一句话', () => {
   assert.deepEqual(n({ notice_type: 'group_recall', user_id: 2, operator_id: 2 }), { chatId: 'group:9', text: 'U2撤回了一条消息' })

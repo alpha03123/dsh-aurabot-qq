@@ -43,8 +43,8 @@ before(async () => {
     enabled: true,
     dryRun: false,
     setupDone: true,
-    botQQ: BOT,
-    ownerQQ: OWNER,
+    selfId: BOT,
+    ownerId: OWNER,
     allow: { private: [OWNER], groups: [] },
     // 连的是 mock，不是真的 SnowLuma
     snowluma: { autoStart: false, autoAttach: false, httpUrl: mock.httpUrl, wsUrl: mock.wsUrl, httpToken: mock.token, wsToken: mock.token, dir: join(dataDir, 'no-snowluma') },

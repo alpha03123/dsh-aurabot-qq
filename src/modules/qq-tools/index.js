@@ -115,7 +115,7 @@ export default {
             : await onebot.call('get_friend_msg_history', { user_id: Number(chat.userId), ...page }, { timeoutMs: 15000 })
           const msgs = (r?.messages || []).filter((m) => !anchor || String(m.message_id) !== String(Number(anchor))).slice(-n)
           if (!msgs.length) return { ok: true, message: '没翻到聊天记录' }
-          const self = String(api.config().botQQ)
+          const self = String(api.config().selfId)
           const lines = msgs.map((m) => {
             const p = parseMessageEvent({ ...m, message_type: m.message_type || (groupId ? 'group' : 'private') }, self)
             const who = String(m.user_id ?? m.sender?.user_id) === self ? '你' : (m.sender?.card || m.sender?.nickname || String(m.user_id ?? ''))
@@ -220,7 +220,7 @@ export default {
           const t = String(target || '').trim()
           if (t) {
             const [kind, id] = t.split(':')
-            const okList = kind === 'group' ? cfg.allow.groups : kind === 'private' ? [cfg.ownerQQ, ...cfg.allow.private] : []
+            const okList = kind === 'group' ? cfg.allow.groups : kind === 'private' ? [cfg.ownerId, ...cfg.allow.private] : []
             if (!okList.includes(String(id))) return { ok: false, message: '不在白名单里，不能发' }
             chatId = `${kind}:${id}`
           }
@@ -257,7 +257,7 @@ export default {
           if (chat.kind === 'group' && !hub.turnSendersAllOwner(sessionId)) return { ok: false, message: '只有主人开口时才能往别的聊天发，这一轮不是。' }
           const cfg = api.config()
           const [kind, id] = String(target || '').split(':')
-          const okList = kind === 'group' ? cfg.allow.groups : kind === 'private' ? [cfg.ownerQQ, ...cfg.allow.private] : []
+          const okList = kind === 'group' ? cfg.allow.groups : kind === 'private' ? [cfg.ownerId, ...cfg.allow.private] : []
           if (!okList.map(String).includes(String(id))) return { ok: false, message: '不在白名单里，不能发' }
           if (`${kind}:${id}` === chat.chatId) return { ok: false, message: '这就是当前聊天，直接回话就行，别用这个工具' }
           const r = await hub.deliver(`${kind}:${id}`, String(text || ''))

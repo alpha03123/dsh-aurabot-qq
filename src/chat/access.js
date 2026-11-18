@@ -9,7 +9,7 @@ export const LEVELS = ['full', 'social', 'chat']
  * @returns {{allowed: boolean, reason: string}}
  */
 export function checkAllowed(cfg, msg) {
-  const owner = String(cfg.ownerQQ || '')
+  const owner = String(cfg.ownerId || '')
   if (msg.kind === 'private') {
     if (msg.userId === owner) return { allowed: true, reason: '主人' }
     const list = (cfg.allow?.private || []).map(String)
@@ -25,7 +25,7 @@ export function checkAllowed(cfg, msg) {
 
 /** 这个会话用哪一档权限。群聊永远不超过 social。 */
 export function levelFor(cfg, chat) {
-  const owner = String(cfg.ownerQQ || '')
+  const owner = String(cfg.ownerId || '')
   if (chat.kind === 'private' && chat.userId === owner) {
     return LEVELS.includes(cfg.ownerLevel) ? cfg.ownerLevel : 'full'
   }
@@ -40,7 +40,7 @@ export function presetFor(level, cfg) {
 
 /** 只有主人能做的事（群管、点歌、写文件……）。 */
 export function isOwner(cfg, userId) {
-  return String(userId || '') !== '' && String(userId) === String(cfg.ownerQQ || '')
+  return String(userId || '') !== '' && String(userId) === String(cfg.ownerId || '')
 }
 
 /** 改资料类操作（改昵称 / 签名 / 头像、改 B 站签名），以及处理好友申请、改白名单的三档权限。 */
@@ -60,7 +60,7 @@ export const permOf = (cfg, key) => {
 export function profileToolVisible(cfg, key, chat) {
   const p = permOf(cfg, key)
   if (p === 'all') return chat.kind === 'private' || chat.kind === 'group'
-  if (p === 'owner') return chat.kind === 'private' && String(chat.userId) === String(cfg.ownerQQ || '')
+  if (p === 'owner') return chat.kind === 'private' && String(chat.userId) === String(cfg.ownerId || '')
   return false
 }
 

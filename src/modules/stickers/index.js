@@ -150,7 +150,7 @@ export default {
           } else {
             const media = hub.recentMedia(current)
             // 优先主人自己发的，其次这个聊天里最近的
-            const pick = media.filter((x) => x.userId === String(api.config().ownerQQ)).at(-1) || media.at(-1)
+            const pick = media.filter((x) => x.userId === String(api.config().ownerId)).at(-1) || media.at(-1)
             if (!pick) return { ok: false, message: '最近半小时这个聊天里没有人发表情或图片，先把那张发过来' }
             buf = await segmentBytes(pick.seg, api.core.onebot, { maxBytes: 5 * 1024 * 1024 })
           }

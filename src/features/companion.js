@@ -197,7 +197,7 @@ export function createSpeakUp({ getConfig, hub, log, isMuted, memory }) {
       ? `【系统提醒，不是${owner}说的话】你刚才跟${owner}说「${String(hub.lastBotToOwner?.text || '').slice(-60)}」，${owner}已经 ${idle} 分钟没回了。可以轻轻追一句（比如「人呢」「睡着啦？」，或者换个话题），别催、别抱怨；觉得${owner}在忙就只回 [沉默]。`
       : `【系统提醒，不是${owner}说的话】你已经 ${idle > 600 ? '很久' : idle + ' 分钟'}没和${owner}私聊了，想主动找${owner}说点什么。这次的由头可以是：${angle}。优先用手里真实的素材（最近做过的事、记忆里的、聊天流水里能查到的），没有真实素材就别硬找，也不要编；用你自己的口气，一两句就好，别用模板、别解释为什么来找；实在不想说就只回 [沉默]。`
     log.info(`主动搭话（${reason}）`)
-    await hub.pushToSession({ chatId: `private:${cfg.ownerQQ}`, kind: 'private', userId: cfg.ownerQQ, nickname: owner }, [{ type: 'text', text: prompt }], '')
+    await hub.pushToSession({ chatId: `private:${cfg.ownerId}`, kind: 'private', userId: cfg.ownerId, nickname: owner }, [{ type: 'text', text: prompt }], '')
   }
 
   /** 找白名单里的人：不提主人的事，这是她和对方自己的聊天。 */
@@ -217,7 +217,7 @@ export function createSpeakUp({ getConfig, hub, log, isMuted, memory }) {
     const today = new Date().toDateString()
     s.friends = s.friends || {}
     for (const qq of c.allow || []) {
-      if (String(qq) === String(cfg.ownerQQ) || isMuted?.(`private:${qq}`) || memory?.()?.dislikes?.(qq)) continue
+      if (String(qq) === String(cfg.ownerId) || isMuted?.(`private:${qq}`) || memory?.()?.dislikes?.(qq)) continue
       const f = s.friends[qq] || (s.friends[qq] = {})
       if (f.day !== today) Object.assign(f, { day: today, count: 0 })
       if (!f.nextAt) schedule(f, c)
@@ -237,7 +237,7 @@ export function createSpeakUp({ getConfig, hub, log, isMuted, memory }) {
     const c = cfg.speakUp
     if (!cfg.enabled || !c.enabled) return
     if (cfg.ext?.purpose?.enabled === true) return // 目的引擎开着时由它主动找人，两套都跑同一个人会被找两次
-    if (isMuted?.(`private:${cfg.ownerQQ}`)) { // 主人在私聊里让她闭嘴了：只管主人这边，白名单照旧
+    if (isMuted?.(`private:${cfg.ownerId}`)) { // 主人在私聊里让她闭嘴了：只管主人这边，白名单照旧
       const s = load()
       if (!(await tickFriends(cfg, s))) save(s)
       return

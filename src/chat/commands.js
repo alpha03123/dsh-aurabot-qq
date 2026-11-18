@@ -207,7 +207,7 @@ export async function runCommand(cmd, msg, deps) {
     case 'remember': {
       if (!memory) return '记忆模块关着'
       if (!cmd.arg) return '要我记住什么呀？比如 /remember 我不吃香菜'
-      const r = memory.add({ text: cmd.arg, aboutName: cfg.ownerName || '主人', about: cfg.ownerQQ, importance: 0.8, source: 'panel', chatId: msg.chatId })
+      const r = memory.add({ text: cmd.arg, aboutName: cfg.ownerName || '主人', about: cfg.ownerId, importance: 0.8, source: 'panel', chatId: msg.chatId })
       return r.ok ? '记住了' : '没记上：' + (r.message || '')
     }
     case 'reset':

@@ -59,7 +59,7 @@ function makePet({ online = true, dispatchResult = null, throwOnDispatch = false
 
 function runPurpose(hub, pet, extPurpose = {}, extOverrides = {}) {
   const cfg = {
-    enabled: true, ownerQQ: OWNER, ownerName: '主人',
+    enabled: true, ownerId: OWNER, ownerName: '主人',
     speakUp: { enabled: true, awakeFrom: 0, awakeTo: 24, idleMinutes: 30, maxPerDay: 10 },
     ext: { purpose: { enabled: true, minMaterials: 0, ...extPurpose }, pet: { ...extOverrides } },
   }

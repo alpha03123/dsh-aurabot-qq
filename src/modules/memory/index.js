@@ -43,7 +43,7 @@ export default {
           required: ['who'],
           execute: async ({ who }) => memory.lookupPerson(chat, who, senders()),
         }),
-        ...(chat.kind === 'group' || String(chat.userId) === String(api.config().ownerQQ || '') ? [defineTool({
+        ...(chat.kind === 'group' || String(chat.userId) === String(api.config().ownerId || '') ? [defineTool({
           name: 'chat_impression',
           description: chat.kind === 'group' ? '想一想你对这个群的印象：气氛、常聊什么、怎么相处。' : '查你对某个群的印象。group 写群号或群名，不写就列出有印象的群。',
           properties: chat.kind === 'group' ? {} : { group: str('群号或群名，可选') },
@@ -76,7 +76,7 @@ export default {
           execute: async ({ query }) => {
             // 群聊 / 非主人私聊里只翻「这个人自己」的记忆，不能把主人的私事翻出来。
             // F2：群聊的 onlyAbout 必须是本轮说话的人（以前 chat.userId 为空 → 完全不按人物过滤，能翻到不在场的人）。
-            const owner = chat.kind === 'private' && String(chat.userId) === String(api.config().ownerQQ || '')
+            const owner = chat.kind === 'private' && String(chat.userId) === String(api.config().ownerId || '')
             const speakers = owner ? []
               : chat.kind === 'group'
                 // 群聊 = 本轮所有说话人；拿不到本轮记录就退回 hub 能提供的说话人（都拿不到时 fail closed）
@@ -87,7 +87,7 @@ export default {
             const onlyAbout = owner ? undefined : speakers
             const about = owner ? chat.userId : (chat.kind === 'group' ? speakers : chat.userId)
             const vectorHits = await memory.vectorHits(query)
-            const hits = memory.recall(String(query || ''), { about, onlyAbout, requireAbout: !owner, excludeAbout: owner ? '' : api.config().ownerQQ, includeGroup: owner, groupChatId: chat.kind === 'group' ? current : '', limit: 8, where: current + '（翻记忆）', vectorHits })
+            const hits = memory.recall(String(query || ''), { about, onlyAbout, requireAbout: !owner, excludeAbout: owner ? '' : api.config().ownerId, includeGroup: owner, groupChatId: chat.kind === 'group' ? current : '', limit: 8, where: current + '（翻记忆）', vectorHits })
             return hits.length ? { ok: true, message: hits.map((h) => memoryLine(h.it)).join('；') } : { ok: true, message: '没想起相关的事' }
           },
         }),

@@ -38,7 +38,7 @@ export function resolveAudience(cfg, requested) {
   if (!Object.hasOwn(AUDIENCE_RIGHTS, fixed)) throw new Error('说说可见范围配置无效，已停止发布。')
   const mode = requested === 'self' ? 'self' : fixed
   if (!Object.hasOwn(AUDIENCE_RIGHTS, mode)) throw new Error('未知的说说可见范围，已停止发布。')
-  const list = mode === 'selected' || mode === 'excluded' ? parseAudienceQQs(cfg?.diary?.audienceQQs) : []
+  const list = mode === 'selected' || mode === 'excluded' ? parseAudienceQQs(cfg?.diary?.audienceIds) : []
   if ((mode === 'selected' || mode === 'excluded') && !list.length) {
     throw new Error('选择了部分好友范围，但 QQ 名单为空，已停止发布；不会改成公开。')
   }

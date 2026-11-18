@@ -75,7 +75,7 @@ before(async () => {
   process.env.AURABOT_WORKSPACE = join(dataDir, 'ws')
   mock = await startMockOneBot({ selfId: BOT })
   writeFileSync(join(dataDir, 'config.json'), JSON.stringify({
-    enabled: true, dryRun: false, setupDone: true, botQQ: BOT, ownerQQ: OWNER,
+    enabled: true, dryRun: false, setupDone: true, selfId: BOT, ownerId: OWNER,
     allow: { private: [OWNER], groups: ['777'] },
     group: { interjectChance: 0 },
     snowluma: { autoStart: false, autoAttach: false, httpUrl: mock.httpUrl, wsUrl: mock.wsUrl, httpToken: mock.token, wsToken: mock.token, dir: join(dataDir, 'no-snowluma') },

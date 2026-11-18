@@ -236,8 +236,8 @@ export function createSnowLumaManager({ getConfig, log, savePassword }) {
     if (await running()) return { ok: true, message: 'SnowLuma 已经在运行' }
     // 上一轮 DSH 退出时 SnowLuma 可能还没退干净：先看网关/端口，别在端口没释放时硬启
     // （硬启会 bind 失败，变成"WebUI 起来了但 OneBot 没监听"，之后所有消息都发不出去）
-    // ⚠ botQQ 在配置顶层（snowluma 段里没有），这里要和 endpoint() 用同一个来源
-    const ep = readOneBotEndpoint(cfg().dir, getConfig().botQQ)
+    // ⚠ selfId 在配置顶层（snowluma 段里没有），这里要和 endpoint() 用同一个来源
+    const ep = readOneBotEndpoint(cfg().dir, getConfig().selfId)
     if (await gatewayHealthy(ep)) {
       log.info('检测到还活着的 SnowLuma 网关，直接复用（不再启动第二个实例）')
       return { ok: true, message: 'SnowLuma 已经在跑（直接复用）' }
@@ -337,13 +337,13 @@ export function createSnowLumaManager({ getConfig, log, savePassword }) {
       error: p.error || '',
       uin: String(p.account?.uin ?? p.uin ?? ''),
       nickname: p.account?.nickname || '',
-      isBot: String(p.account?.uin ?? p.uin ?? '') === String(getConfig().botQQ),
+      isBot: String(p.account?.uin ?? p.uin ?? '') === String(getConfig().selfId),
     }))
   }
 
   /** 只给机器人号注入；别的号（主人的主号）碰都不碰。 */
   async function attachBot() {
-    const bot = getConfig().botQQ
+    const bot = getConfig().selfId
     let list
     try {
       const j = await api('/api/processes')
@@ -379,7 +379,7 @@ export function createSnowLumaManager({ getConfig, log, savePassword }) {
    * 记住这个进程以后不再碰。返回 true 表示可以用。
    */
   async function confirmLogin(uin) {
-    const bot = String(getConfig().botQQ)
+    const bot = String(getConfig().selfId)
     const pend = pendingVerify
     if (String(uin) === bot) {
       if (pend) {
@@ -493,7 +493,7 @@ export function createSnowLumaManager({ getConfig, log, savePassword }) {
 
   return {
     detect: () => detectInstall(cfg().dir),
-    endpoint: () => readOneBotEndpoint(cfg().dir, getConfig().botQQ),
+    endpoint: () => readOneBotEndpoint(cfg().dir, getConfig().selfId),
     running,
     start,
     stop,

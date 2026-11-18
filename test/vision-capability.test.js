@@ -56,7 +56,7 @@ mkdirSync(dataDir, { recursive: true })
 const OWNER = '10000001'
 const BOT = '20000002'
 writeFileSync(join(dataDir, 'config.json'), JSON.stringify({
-  enabled: true, dryRun: true, setupDone: true, botQQ: BOT, ownerQQ: OWNER,
+  enabled: true, dryRun: true, setupDone: true, selfId: BOT, ownerId: OWNER,
   model: { provider: 'p', model: 'blind', reasoningEffort: '' },
   allow: { private: [], groups: [] },
   snowluma: { autoStart: false, autoAttach: false, dir: join(dataDir, 'none') },

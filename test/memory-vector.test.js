@@ -17,7 +17,7 @@ function setup(t, fetchImpl) {
   const dir = mkdtempSync(join(tmpdir(), 'aurabot-vector-'))
   const old = process.env.AURABOT_DATA_DIR
   process.env.AURABOT_DATA_DIR = dir
-  const cfg = normalize({ ownerQQ: OWNER, memory: { dailyConsolidate: false, vector: { enabled: true, baseUrl: 'http://localhost:1234/v1/', model: 'fake', apiKey: '秘密密钥' } } })
+  const cfg = normalize({ ownerId: OWNER, memory: { dailyConsolidate: false, vector: { enabled: true, baseUrl: 'http://localhost:1234/v1/', model: 'fake', apiKey: '秘密密钥' } } })
   const hub = { chatLogDays: () => [], chatLogOf: () => [], speakersOf: () => [FRIEND] }
   const calls = []
   const fake = fetchImpl || (async (url, options) => {

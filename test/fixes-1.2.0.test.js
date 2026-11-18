@@ -297,7 +297,7 @@ function historyTool({ mode, level = 'chat', chat = { kind: 'group', groupId: '1
   }
   qqTools.setup({
     core: { hub: { turnHasOwner: () => owner, turnSendersAllOwner: () => allOwner, turnSenders: () => senders }, onebot },
-    config: () => ({ botQQ: '1', files: { enabled: false }, allow: { groups: ['100', '200', '300'] }, group: { crossRead: mode } }),
+    config: () => ({ selfId: '1', files: { enabled: false }, allow: { groups: ['100', '200', '300'] }, group: { crossRead: mode } }),
     tool: (builder) => builders.push(builder),
   })
   const tool = builders[0]({ chat, level, sessionId: 's' }).find((x) => x.name === 'chat_history')

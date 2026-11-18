@@ -76,7 +76,7 @@ export default {
     // 自检「听语音」（真 QQ）：拿和某人私聊里最近一条语音，走一遍 get_record → 16k → DSH 识别
     api.route('/voice/asr-last', async (req) => {
       const b = await http.body(req)
-      const uid = Number(b.userId || api.config().ownerQQ)
+      const uid = Number(b.userId || api.config().ownerId)
       const h = await onebot.call('get_friend_msg_history', { user_id: uid, count: 30 })
       const recs = (h?.messages || []).filter((m) => String(m.user_id) === String(uid)).flatMap((m) => (m.message || []).filter((s) => s.type === 'record').map((s) => ({ seg: s, time: m.time })))
       const last = recs.at(-1)

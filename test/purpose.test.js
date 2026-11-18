@@ -55,7 +55,7 @@ function makeHub({ reply = '主人，今天想到一件事想跟你说', lastOwn
 
 function makePurpose(hub, overrides = {}) {
   const cfg = {
-    enabled: true, ownerQQ: OWNER, ownerName: '主人',
+    enabled: true, ownerId: OWNER, ownerName: '主人',
     speakUp: { enabled: false, awakeFrom: 0, awakeTo: 24, idleMinutes: 30, minIntervalMinutes: 5, maxIntervalMinutes: 5, maxPerDay: 10, nudge: true },
     ext: { purpose: { enabled: true, initialDelayMinutes: 1, minMaterials: 0 } },
     ...overrides,
@@ -382,7 +382,7 @@ test('白名单：朋友单独排程，提示词里没有主人的记忆和群�
     { id: 'n1', text: '没写是谁的日记内容', about: '', importance: 0.9, at: now },
   ]
   const cfg = {
-    enabled: true, ownerQQ: OWNER, ownerName: '主人',
+    enabled: true, ownerId: OWNER, ownerName: '主人',
     speakUp: { allow: [FRIEND, OWNER], awakeFrom: 0, awakeTo: 24, idleMinutes: 30, minIntervalMinutes: 5, maxIntervalMinutes: 5, maxPerDay: 10, nudge: false },
     ext: { purpose: { enabled: true, initialDelayMinutes: 1, minMaterials: 0 } },
   }
@@ -408,7 +408,7 @@ test('白名单：没聊过的朋友不找，人设再完整也不凭空开口',
   const FRIEND = '20000010'
   const hub = { ...makeHub(), lastPrivateAt: () => 0 }
   const cfg = {
-    enabled: true, ownerQQ: OWNER, ownerName: '主人',
+    enabled: true, ownerId: OWNER, ownerName: '主人',
     speakUp: { allow: [FRIEND], awakeFrom: 0, awakeTo: 24, idleMinutes: 30, minIntervalMinutes: 5, maxIntervalMinutes: 5, maxPerDay: 10, nudge: false },
     ext: { purpose: { enabled: true, initialDelayMinutes: 1, minMaterials: 0 } },
   }

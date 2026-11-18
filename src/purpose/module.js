@@ -53,7 +53,7 @@ export function purposeConfig(cfg = {}) {
     // 总开关只看本模块自己的设置（ext.purpose.enabled，默认 false）；
     // 与旧的「主动搭话」互不影响——两套同时开会重复打扰，迁移说明里提醒主人别同时开。
     enabled: cfg.enabled !== false && ext.enabled === true,
-    ownerUin: cfg.ownerQQ,
+    ownerId: cfg.ownerId,
     gapMinMs: clampInt(ext.minIntervalMinutes ?? su.minIntervalMinutes, 90, 5, 2880) * MINUTE,
     gapMaxMs: clampInt(ext.maxIntervalMinutes ?? su.maxIntervalMinutes, 240, 5, 2880) * MINUTE,
     initialDelayMinMs: clampInt(ext.initialDelayMinutes, 15, 1, 720) * MINUTE,
@@ -83,7 +83,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
   const moodOf = () => { try { return mood?.() || null } catch { return null } }
   const memoryOf = () => { try { return memory?.() || null } catch { return null } }
   // 下面的 friend 是主动搭话白名单里的 QQ 号，不传就是主人。朋友各有各的状态，素材只看和这个人的私聊、关于这个人的记忆。
-  const chatIdOf = (cfg, friend) => `private:${friend || cfg.ownerQQ}`
+  const chatIdOf = (cfg, friend) => `private:${friend || cfg.ownerId}`
   const lastPrivateAt = (cfg, friend) => friend ? (hub?.lastPrivateAt?.(friend) || 0) : Math.max(hub?.lastOwnerChatAt || 0, hub?.lastBotToOwner?.at || 0)
   const stateFile = (friend) => dataDir('purpose', ...(friend ? ['friends', `${friend}.json`] : ['purpose-state.json']))
   const nudgeFile = () => dataDir('purpose', 'nudge.json')
@@ -167,7 +167,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
   function prepare(cfg, config, state, now = Date.now(), friend = '') {
     const materials = collectMaterials({
       now, config,
-      ownerUin: friend || cfg.ownerQQ,
+      ownerId: friend || cfg.ownerId,
       roleName: ROLE,
       conversations: conversations(cfg, now, friend),
       biliEntries: [], // 首期不接 B站/Qzone 素材，字段留扩展
@@ -198,7 +198,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     const name = friend ? friendName(friend) : cfg.ownerName || '主人'
     const prompt = buildPurposePrompt({
       now, config, mode: 'auto', // 模型直接输出那句话（Aurabot 没有 QQ 发送工具）
-      ownerUin: friend || cfg.ownerQQ,
+      ownerId: friend || cfg.ownerId,
       ownerName: name,
       contextBlocks: [],
       materials: ctx.materials.items,
@@ -402,10 +402,10 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
   async function tick() {
     const cfg = getConfig()
     const config = purposeConfig(cfg)
-    if (!config.enabled || !cfg.ownerQQ) return
+    if (!config.enabled || !cfg.ownerId) return
     if (!isMuted?.(chatIdOf(cfg)) && await tickOne(cfg, config)) return
     for (const qq of cfg.speakUp?.allow || []) {
-      if (String(qq) === String(cfg.ownerQQ) || isMuted?.(chatIdOf(cfg, qq)) || memoryOf()?.dislikes?.(qq)) continue
+      if (String(qq) === String(cfg.ownerId) || isMuted?.(chatIdOf(cfg, qq)) || memoryOf()?.dislikes?.(qq)) continue
       if (await tickOne(cfg, config, String(qq))) return
     }
   }
@@ -416,7 +416,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     const config = purposeConfig(cfg)
     if (!config.enabled) return { outcome: 'disabled' }
     if (isMuted?.(chatIdOf(cfg))) return { outcome: 'muted' }
-    if (!cfg.ownerQQ) return { outcome: 'no-owner' }
+    if (!cfg.ownerId) return { outcome: 'no-owner' }
     const state = loadState(config)
     return runOnce({ reason, config, state, force: true })
   }

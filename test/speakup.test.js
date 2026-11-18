@@ -17,7 +17,7 @@ before(async () => {
 
 function setup(hubState, speakUp = {}) {
   const pushed = []
-  const cfg = normalize({ enabled: true, ownerQQ: OWNER, speakUp: { enabled: true, awakeFrom: 0, awakeTo: 24, minIntervalMinutes: 5, maxIntervalMinutes: 5, ...speakUp } })
+  const cfg = normalize({ enabled: true, ownerId: OWNER, speakUp: { enabled: true, awakeFrom: 0, awakeTo: 24, minIntervalMinutes: 5, maxIntervalMinutes: 5, ...speakUp } })
   const hub = { ...hubState, pushToSession: async (chat, content) => pushed.push({ chat, text: content[0].text }) }
   const s = createSpeakUp({ getConfig: () => cfg, hub, log: { info() {} } })
   return { s, pushed }
