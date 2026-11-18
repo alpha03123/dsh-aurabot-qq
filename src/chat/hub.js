@@ -168,6 +168,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   const pauses = new Set() // 拆条间隔：卸载时立即结束，后面的消息不再投递
   const replyWaits = new Set() // 正在等回复的后台轮次：卸载时立即拒绝，不用等模型或超时
   const deliveries = new Map() // chatId → 最近一次 turn/end 投递的 Promise（autonomy 等需确认是否真发出了消息）
+  const releaseWaiters = new Map() // chatId → Set<done>  等这个聊天这一轮说完、发完（release）的后台调用方
   const groupMembers = new Map() // groupId → { at, list }  群成员（真 @ 时按名字找人，缓存 10 分钟）
   const noticesFor = new Map() // chatId → [一句话]  下次交给她时带上的群事件（撤回、禁言、进群……）
   const saidElsewhere = new Map() // chatId → [{ at, text }]  别处安排她在这里发的话，下次这个聊天交给她时补进去
@@ -1831,6 +1832,11 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   function release(chatId) {
     busy.delete(chatId)
     running.delete(chatId)
+    const waiters = releaseWaiters.get(chatId)
+    if (waiters) {
+      releaseWaiters.delete(chatId)
+      for (const done of [...waiters]) done('done')
+    }
     const p = pending.get(chatId)
     if (p && p.waiting) {
       p.waiting = false
@@ -2371,6 +2377,27 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   }
 
   /** 插件卸载：停掉所有计时器 / 等待，撤掉仍存活会话里挂的工具与上下文。 */
+  /**
+   * 等这个聊天手上这一轮说完、发完。pushToSession 只把话塞进 DSH 队列就返回（followup 不等整轮），
+   * 所以「她到底开没开口」要等到 release 才知道。返回 'done' / 'idle'（本来就没在跑）/ 'timeout' / 'disposed'。
+   */
+  function waitDelivery(chatId, timeoutMs = 180000) {
+    if (disposed) return Promise.resolve('disposed')
+    if (!running.has(chatId) && !busy.has(chatId) && !deliveries.has(chatId)) return Promise.resolve('idle')
+    return new Promise((resolve) => {
+      let set = releaseWaiters.get(chatId)
+      if (!set) releaseWaiters.set(chatId, (set = new Set()))
+      const done = (how) => {
+        clearTimeout(timer)
+        set.delete(done)
+        resolve(how)
+      }
+      const timer = setTimeout(() => done('timeout'), timeoutMs)
+      timer.unref?.()
+      set.add(done)
+    })
+  }
+
   function dispose() {
     if (disposed) return
     disposed = true
@@ -2386,6 +2413,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       try { wait.reject(disposedError()) } catch (error) {}
     }
     replyWaits.clear()
+    for (const waiters of releaseWaiters.values()) for (const done of [...waiters]) done('disposed')
+    releaseWaiters.clear()
     clearSlowNotices()
     slowNoticeSent.clear()
     for (const rec of [...mounts]) unmount(rec)
@@ -2432,7 +2461,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     checkSendableFile,
     sendSegments,
     pushToSession,
-    waitDelivery: (chatId) => deliveries.get(chatId) || Promise.resolve(null),
+    waitDelivery,
     runSystemTurn,
     runSubagentTurn,
     subagentFor,
