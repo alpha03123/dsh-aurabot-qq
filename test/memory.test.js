@@ -133,8 +133,8 @@ test('整理：群聊和空间里的事按 QQ 号记到人头上；空间动态�
   logs.set(today, [...(logs.get(today) || []), { chatId: 'qzone', who: '阿花', uid: '30000003', text: '发了说说：周末去看海了' }])
   const n = asked.length
   await mem.consolidate({ includeToday: true })
-  const qz = asked.slice(n).find((a) => a.system.includes('QQ 空间里的动态'))
-  assert.ok(qz && qz.text.includes('阿花(30000003)'), '空间流水带着 QQ 号交给模型')
+  const qz = asked.slice(n).find((a) => a.system.includes('动态频道里的帖子'))
+  assert.ok(qz && qz.text.includes('阿花(30000003)'), '动态流水带着用户 ID 交给模型')
   assert.ok(!asked.slice(n).some((a) => a.system.includes('{"insights"') && a.text.includes('看海')), '空间不回顾相处经验')
   const hit = mem.list('看海')[0]
   assert.equal(hit.about, '30000003')
