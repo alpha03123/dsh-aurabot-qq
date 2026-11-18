@@ -101,7 +101,7 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
         cfg,
         ...(target ? { model: target } : {}),
         system: '你给表情包起名字。只输出一行：不超过 12 个字的中文备注，描述这个表情表达的情绪或内容（例如「委屈巴巴的小猫」「得意地叉腰」）。然后空格，再写 1~3 个标签，从这些里挑：' + DEFAULT_TAGS.join('、') + '。格式：备注 #标签1 #标签2',
-        text: hint ? `QQ 给的描述是「${hint}」。请看图起名。` : '请看图起名。',
+        text: hint ? `平台给的描述是「${hint}」。请看图起名。` : '请看图起名。',
         images: [{ data: buf.toString('base64'), mediaType: mime }],
         // ⚠ 别给太小：模型会先思考，120 这种上限会被思考吃光，正文是空的（实测踩过）
         maxTokens: 1000,

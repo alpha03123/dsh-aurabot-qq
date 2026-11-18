@@ -41,7 +41,7 @@ const MAX_MESSAGE_IMAGES = 8 // 一条消息最多给她看几张，合并转发
 export const WORKSPACE_DIR = process.env.AURABOT_WORKSPACE || (existsSync(LEGACY_WORKSPACE) ? LEGACY_WORKSPACE : join(homedir(), 'Aurabot', 'qq-chats'))
 /** 现在用的工作区目录：面板里填了就用填的，否则默认。 */
 export const workspaceDirOf = (cfg) => String(cfg?.workspaceDir || '').trim() || WORKSPACE_DIR
-export const WORKSPACE_TITLE = 'Aurabot · QQ'
+export const WORKSPACE_TITLE = 'Aurabot · Discord'
 const SOURCE_KIND = 'aurabot'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -276,8 +276,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     for (const qq of new Set([ev.user_id, ev.operator_id, ev.sender_id].filter(Boolean))) {
       try {
         const m = groupId ? await onebot.call('get_group_member_info', { group_id: oid(groupId), user_id: oid(qq) }, { timeoutMs: 3000, retries: 0 }) : null
-        names.set(String(qq), `${m?.card || m?.nickname || 'QQ 用户'}(${qq})`)
-      } catch (error) { names.set(String(qq), `QQ 用户(${qq})`) }
+        names.set(String(qq), `${m?.card || m?.nickname || '用户'}(${qq})`)
+      } catch (error) { names.set(String(qq), `用户(${qq})`) }
     }
     if (disposed) return
     const note = noticeText(ev, { selfId: cfg.selfId, name: (qq) => names.get(String(qq)) || String(qq), ownMessage: (id) => sentIds.has(String(id)) })
@@ -360,9 +360,9 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
 
   function titleFor(chat) {
     const owner = getConfig().ownerName || '主人'
-    if (chat.kind === 'system') return `QQ · ${chat.title || '后台'}`
-    if (chat.kind === 'group') return `QQ 群 · ${groupNames.get(chat.groupId) || chat.groupId}`
-    return chat.userId === getConfig().ownerId ? `QQ · ${owner}私聊` : `QQ 私聊 · ${chat.nickname || chat.userId}`
+    if (chat.kind === 'system') return `Aurabot · ${chat.title || '后台'}`
+    if (chat.kind === 'group') return `频道 · ${groupNames.get(chat.groupId) || chat.groupId}`
+    return chat.userId === getConfig().ownerId ? `${owner}私聊` : `私聊 · ${chat.nickname || chat.userId}`
   }
 
   async function createSession(chat, level) {
@@ -1689,7 +1689,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       `【群聊 ${name}】刚才新说的（${fresh.length} 条）${hint}\n${numbered.join('\n')}\n\n` +
       '把这一段当成整体来回：一般说一两句就好，回给最需要回的那个人或者整个话题，不要一条一条地挨个回。\n' +
       '大多数时候直接说就行。只有想专门接其中某一条、而直接说别人会看不出你在回谁时（比如那条已经被后面的话刷上去了、或者你在回某个人随口一提的事），才在那句话开头写 <reply:编号>，会以「引用回复」发出；一次最多引用一条。\n' +
-      '要 @ 某个人（对方会收到提醒），写 <at:QQ号>，QQ 号就是上面名字后面括号里的数字。'
+      '要 @ 某个人（对方会收到提醒），写 <at:用户ID>，用户 ID 就是上面名字后面括号里的数字。'
     // 引用里的图 / 表情包：有空位就带上（最多 2 张）
     const quotedImages = []
     if (imageRoom > 0) {

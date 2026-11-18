@@ -326,7 +326,7 @@ test('发送失败沿用原流程：不保存画作、不记成功经历', async
   const dir = sandbox(t), s = drawTool(config(), { sendSegments: async () => false })
   const out = await s.tool.execute({ prompt: '猫', image: 'last' })
   assert.equal(out.ok, false)
-  assert.match(out.message, /没有发到 QQ/)
+  assert.match(out.message, /没有发出去/)
   assert.equal(s.events.length, 0)
   assert.ok(!readdirSync(dir).includes('imagegen'))
 })

@@ -73,7 +73,7 @@ export function purposeConfig(cfg = {}) {
 export function cleanReply(raw, options) {
   let s = String(raw ?? '')
   const cut = /(^|\n)\s*(?:[【\[]\s*(?:目的|需求|情绪|类型|状态|待续)\s*[】\]]|[【\[]?\s*内部备忘)/.exec(s)
-  if (cut) s = s.slice(0, cut.index) // 内部备忘不发到 QQ
+  if (cut) s = s.slice(0, cut.index) // 内部备忘不发出去
   s = s.replace(/^[「“"'']+/, '').replace(/[」”"'']+$/, '')
   s = s.replace(new RegExp(`^${escRe(options?.roleName || ROLE)}\\s*[:：]\\s*`), '')
   s = cleanOutboundText(s, options).trim()
@@ -309,7 +309,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     let genError = null
     try {
       log.info?.(`目的（${reason}）：${picked.purpose.text}`)
-      raw = await hub.runSystemTurn('purpose', 'QQ · 主动搭话（目的回合）', prompt, { timeoutMs: 180000, noTools: true, key: friend })
+      raw = await hub.runSystemTurn('purpose', '主动搭话（目的回合）', prompt, { timeoutMs: 180000, noTools: true, key: friend })
     } catch (error) {
       genError = error
       log.warn?.('目的：生成出错：', error?.message)
@@ -372,7 +372,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     const owner = cfg.ownerName || '主人'
     const prompt = `【系统提醒，不是${owner}说的话】你刚才跟${owner}说「${String(lb.text || '').slice(-60)}」，${owner}已经 ${idle} 分钟没回了。可以轻轻追一句（比如「人呢」「睡着啦？」，或者换个话题），别催、别抱怨；觉得${owner}在忙就只回 ${SILENCE}。这一轮不能用工具，直接输出那句话。`
     try {
-      const raw = await hub.runSystemTurn('purpose-nudge', 'QQ · 主动搭话（追问）', prompt, { timeoutMs: 120000, noTools: true })
+      const raw = await hub.runSystemTurn('purpose-nudge', '主动搭话（追问）', prompt, { timeoutMs: 120000, noTools: true })
       const text = cleanReply(raw, { warn: (message) => log.warn?.(`目的：${message}`) })
       if (text) await hub.deliver(chatIdOf(cfg), text, { own: true, userText: MOOD_PREFIX })
     } catch (error) {

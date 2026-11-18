@@ -83,7 +83,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   }
 
   async function think(prompt) {
-    return hub.runSystemTurn('bili', 'QQ · 刷B站', `【刷 B 站，不是聊天，这一轮不会发到聊天里】\n${prompt}`, { timeoutMs: 180000 })
+    return hub.runSystemTurn('bili', '刷B站', `【刷 B 站，不是聊天，这一轮不会发到聊天里】\n${prompt}`, { timeoutMs: 180000 })
   }
 
   /** 这一轮搜什么：她自己的兴趣 + 记忆里你喜欢的东西 + 面板里填的关键词，让她挑 3 个。 */
@@ -136,7 +136,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   async function sendShot({ chatId, query = '' } = {}) {
     const g = getConfig()
     if (!g.enabled || !g.bili.enabled) return { ok: false, sent: false, message: '插件或 B 站没打开' }
-    if (!/^(private|group):\d+$/.test(String(chatId || ''))) return { ok: false, sent: false, message: '没有可发送的 QQ 会话' }
+    if (!/^(private|group):\d+$/.test(String(chatId || ''))) return { ok: false, sent: false, message: '没有可发送的会话' }
     const it = shots.pick(query)
     if (!it) {
       return {
@@ -150,7 +150,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     try { r = await hub.sendImage(chatId, shotPath(it)) } catch (error) {
       return { ok: false, sent: false, message: '图没发出去：' + error.message }
     }
-    if (String(r?.message_id || '').startsWith('sim-')) return { ok: true, sent: false, simulated: true, message: '模拟发送：未实际发到 QQ' }
+    if (String(r?.message_id || '').startsWith('sim-')) return { ok: true, sent: false, simulated: true, message: '模拟发送：未实际发出' }
     if (r?.message_id === undefined) return { ok: false, sent: false, message: '图没发出去或未收到消息回执，看日志' }
     const st = load()
     record(st, { kind: 'shot', title: it.title, bvid: it.bvid, text: `第 ${clockOf(it.sec)} 的截图` })

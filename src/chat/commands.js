@@ -50,7 +50,7 @@ const COMMANDS = {
   mood: '看她现在的心情',
   diary: '马上写一篇空间日记',
   remember: '让她记住一件事，如 /remember 我不吃香菜',
-  speak: '管主动搭话白名单：/speak 看名单，/speak add QQ 号 加人，/speak del QQ 号 移除',
+  speak: '管主动搭话白名单：/speak 看名单，/speak add 用户ID 加人，/speak del 用户ID 移除',
   reset: '这个聊天重新开始（旧的对话在 DSH 侧栏里还能找回）',
   on: '打开总开关',
   off: '关掉总开关（之后除了命令什么都不回）',
@@ -131,9 +131,9 @@ export async function runCommand(cmd, msg, deps) {
       const c = getConfig()
       const [verb = '', target = ''] = String(cmd.arg || '').split(/\s+/)
       const list = c.speakUp.allow || []
-      if (!verb) return list.length ? `主动搭话白名单：${list.join('、')}` : '主动搭话白名单是空的，用 /speak add QQ 号 加人'
+      if (!verb) return list.length ? `主动搭话白名单：${list.join('、')}` : '主动搭话白名单是空的，用 /speak add 用户ID 加人'
       const qq = target.replace(/\D/g, '')
-      if (!/^\d{5,}$/.test(qq) || !/^(add|加|添加|del|rm|删|删除|移除)$/.test(verb)) return '用法：/speak add QQ 号，或 /speak del QQ 号'
+      if (!/^\d{5,}$/.test(qq) || !/^(add|加|添加|del|rm|删|删除|移除)$/.test(verb)) return '用法：/speak add 用户ID，或 /speak del 用户ID'
       if (/^(add|加|添加)$/.test(verb)) {
         if (list.includes(qq)) return `${qq} 已经在白名单里了`
         // 要能聊得上：顺手加进私聊白名单

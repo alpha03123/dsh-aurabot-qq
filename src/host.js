@@ -538,7 +538,7 @@ export function apply(ctx) {
     let off = null
     try { off = ctx.on('approval/request', (request, next) => approvalRelay.onRequest(request, next)) } catch (error) { log.debug('挂审批应答失败：', error.message) }
     return () => { try { if (typeof off === 'function') off() } catch (error) {} }
-  }, 'aurabot: QQ 审批')
+  }, 'aurabot: 聊天审批')
   ctx.effect(() => {
     let off = null
     try { off = ctx.on('tools/pre-execute', (exec, next) => dangerGuard.preExecute(exec, next)) } catch (error) { log.debug('挂危险命令确认失败：', error.message) }
@@ -1269,7 +1269,7 @@ export function apply(ctx) {
     if (!cfg.enabled) return { ok: false, message: '先打开总开关' }
     if (cfg.dryRun) return { ok: false, message: '现在是试运行，先关掉试运行再测' }
     const r = await hub.sendText(`private:${cfg.ownerId}`, `【Aurabot 自测】${personaName(cfg.persona?.current)}到此一游～`)
-    return r ? { ok: true, message: '发给主人了，去 QQ 看看' } : { ok: false, message: '没发出去（看日志）' }
+    return r ? { ok: true, message: '发给主人了，去 Discord 看看' } : { ok: false, message: '没发出去（看日志）' }
   })
 
   route('/sessions/reset', async () => {
@@ -1307,7 +1307,7 @@ export function apply(ctx) {
     const title = String(b.title || '').slice(0, 30) || '开场（她是谁）'
     const text = String(b.text || '').slice(0, 4000)
     const others = (Array.isArray(b.others) ? b.others : []).map((x) => String(x).slice(0, 30)).slice(0, 20)
-    const system = '你在帮人改一个 QQ 聊天角色的人设。人设按【标题】分节，你一次只改其中一节。' +
+    const system = '你在帮人改一个聊天角色的人设。人设按【标题】分节，你一次只改其中一节。' +
       '只输出这一节改好后的正文：不要写标题，不要加粗、不要 Markdown 标题，不要任何解释。原来是「- 」开头的条目就继续用条目，一条一行、短句。'
     const ask = [
       `角色：${String(b.name || '她').slice(0, 30)}`,
@@ -1384,7 +1384,7 @@ export function apply(ctx) {
         const buf = await toImageBuffer(await local.call('image', { prompt: '一条胖乎乎的蓝色小鱼，可爱，插画', size: cfg.imageGen.size || '1024x1024' }))
         return { ok: true, message: `画好了（${Math.round(buf.length / 1024)} KB）`, image: buf.toString('base64') }
       }
-      return { ok: false, message: '这一项没法单独试：翻唱换声去 QQ 里点首歌，语音识别发条语音条试试' }
+      return { ok: false, message: '这一项没法单独试：翻唱换声去聊天里点首歌，语音识别发条语音试试' }
     } catch (error) {
       return { ok: false, message: '出错了：' + error.message }
     }

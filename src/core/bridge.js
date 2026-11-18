@@ -28,7 +28,7 @@ export function createBridge({ ctx, getConfig, setConfig, hub, mods, log, versio
   function canSend(target) {
     const cfg = getConfig()
     const [kind, id] = String(target || '').split(':')
-    if (!id || !['private', 'group'].includes(kind)) return '目标要写成 private:QQ号 或 group:群号'
+    if (!id || !['private', 'group'].includes(kind)) return '目标要写成 private:用户ID 或 group:频道ID'
     if (cfg.bridge.allowTargets === 'owner') return kind === 'private' && id === cfg.ownerId ? '' : '设置成了只能发给主人'
     const ok = kind === 'group' ? cfg.allow.groups : [cfg.ownerId, ...cfg.allow.private]
     return ok.includes(id) ? '' : '不在白名单里，不能发'
@@ -101,7 +101,7 @@ export function createBridge({ ctx, getConfig, setConfig, hub, mods, log, versio
       defineTool({
         name: 'aurabot_send',
         description: '让 Aurabot 插件里的 AI 伙伴替你在 Discord 上发一条消息。target 写 private:用户ID 或 group:频道ID，不填就发给主人。text 是要发的话，可以用 ||| 分多条、<voice>…</voice> 发语音。',
-        properties: { target: str('private:QQ号 / group:群号，可不填（发给主人）'), text: str('要发的话') },
+        properties: { target: str('private:用户ID / group:频道ID，可不填（发给主人）'), text: str('要发的话') },
         required: ['text'],
         execute: async (args) => ops.send(args),
       }),

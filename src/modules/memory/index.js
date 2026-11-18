@@ -38,8 +38,8 @@ export default {
       return [
         defineTool({
           name: 'lookup_person',
-          description: '查你对某个人的整体印象和人物关系。聊到不在眼前的人、别人问你觉得谁怎么样时用；具体的事用 recall_memory。who 写名字、称呼或 QQ 号。',
-          properties: { who: str('名字、称呼或 QQ 号') },
+          description: '查你对某个人的整体印象和人物关系。聊到不在眼前的人、别人问你觉得谁怎么样时用；具体的事用 recall_memory。who 写名字、称呼或用户 ID。',
+          properties: { who: str('名字、称呼或用户 ID') },
           required: ['who'],
           execute: async ({ who }) => memory.lookupPerson(chat, who, senders()),
         }),

@@ -25,7 +25,7 @@ export default {
         // 表情包关着就不挂「发表情」（整理表情库的工具照样留着）
         ...(api.config().stickers.enabled ? [defineTool({
           name: 'send_sticker',
-          description: '在当前 QQ 聊天里发一张表情包。name 写表情的名字或情绪（如「委屈」「开心」「早晚安」），会在表情库里模糊匹配。一般直接在回复里写 <sticker:名字> 就行，这个工具用于回复之外单独补发。',
+          description: '在当前聊天里发一张表情包。name 写表情的名字或情绪（如「委屈」「开心」「早晚安」），会在表情库里模糊匹配。一般直接在回复里写 <sticker:名字> 就行，这个工具用于回复之外单独补发。',
           properties: { name: str('表情名字或情绪关键词') },
           required: ['name'],
           execute: async ({ name }) => {
@@ -130,7 +130,7 @@ export default {
       // 传 painting（画作编号）时存的是她自己刚画的那张
       tools.push(defineTool({
         name: 'save_sticker',
-        description: '把这个聊天里刚发来的那张表情包 / 图片收进你的表情库（同时收藏到 QQ）。主人说「存一下这个表情」「导入这个表情」「收藏这张」时用。传 painting（画作编号，如 #1）时，存的是你自己刚画的那张图。name 是不超过 12 个字的备注，可以不填（会自动看图起名）。',
+        description: '把这个聊天里刚发来的那张表情包 / 图片收进你的表情库。主人说「存一下这个表情」「导入这个表情」「收藏这张」时用。传 painting（画作编号，如 #1）时，存的是你自己刚画的那张图。name 是不超过 12 个字的备注，可以不填（会自动看图起名）。',
         properties: {
           name: str('备注（≤12 字，可不填）'),
           tags: { type: 'array', items: { type: 'string' }, description: '标签，如 开心/委屈（可不填）' },
