@@ -83,6 +83,7 @@ export function parseMessageEvent(event, selfId, { faceName } = {}) {
         }
         break
       case 'record':
+      case 'audio': // Discord 的语音消息 / 音频附件
         records.push(seg)
         break
       case 'video':

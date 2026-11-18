@@ -15,7 +15,7 @@ import { parseReply, bubbleDelay, wantsVoice, cleanOutboundText, cleanOutboundSe
 import { decideGroupReply, engagedHint, pickAutoReply, pickDirectRequester, policyFor, sameNameNote, topicRelevance } from './group-policy.js'
 import { checkAllowed, levelFor, presetFor, isOwner } from './access.js'
 import { fetchImage, segmentBytes } from '../core/net.js'
-import { toMono16k } from '../voice/wav.js'
+import { anyToMono16k } from '../voice/wav.js'
 import { mimeOf } from './inbound.js'
 import { findFfmpeg, findSharp, shrinkImage, shrinkWithSharp } from '../core/img.js'
 import { redact } from '../core/redact.js'
@@ -1245,31 +1245,33 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     return Boolean(q && q.ok && q.isBot)
   }
 
+  /** 收到的语音 → 16kHz 单声道 WAV：Discord 语音消息带直链（ogg/opus），下下来用 ffmpeg 转 */
+  async function recordWav(rec) {
+    const d = rec.data || {}
+    const url = String(d.url || (/^(https?:\/\/|base64:\/\/)/i.test(String(d.file || '')) ? d.file : ''))
+    if (!url) throw new Error('语音没有下载地址')
+    const raw = await fetchImage(url, { maxBytes: 30 * 1024 * 1024 })
+    return anyToMono16k(raw, findFfmpeg(getConfig().bili?.ffmpegPath || ''))
+  }
+
   async function transcribe(msg) {
     for (const rec of msg.records) {
       // 本地接口接管：用用户自己的识别服务（最先试）
       if (localApi?.active('asr')) {
         try {
-          const info = await onebot.call('get_record', { file: rec.data?.file, out_format: 'wav' }, { timeoutMs: 30000 })
-          const raw = info?.base64 ? Buffer.from(info.base64, 'base64') : await fetchImage(info?.file || info?.url, { maxBytes: 30 * 1024 * 1024 })
+          const wav = await recordWav(rec)
           const { writeFileSync, mkdirSync } = await import('node:fs')
           const { join } = await import('node:path')
           const dir = localApi.dir() + '/out'
           mkdirSync(dir, { recursive: true })
           const file = join(dir, `asr-${Date.now()}.wav`)
-          writeFileSync(file, toMono16k(raw))
+          writeFileSync(file, wav)
           const r = await localApi.call('asr', { file })
           const text = String(typeof r === 'string' ? r : r?.text || '').trim()
           if (text) return `[语音] ${text}`
         } catch (error) {
           log.debug('本地接口语音识别失败：', error.message)
         }
-      }
-      try {
-        const r = await onebot.call('fetch_ptt_text', { message_id: Number(msg.messageId) || msg.messageId }, { timeoutMs: 20000 })
-        if (r?.text) return `[语音] ${r.text}`
-      } catch (error) {
-        log.debug('QQ 语音转文字失败：', error.message)
       }
       try {
         const text = await localTranscribe(rec)
@@ -1284,7 +1286,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
 
   /**
    * DSH 自带识别（SenseVoice）：resolve({audio}) → transcribe(spec, signal)，音频必须是 16kHz 单声道 PCM16 WAV。
-   * QQ 语音是 silk：先让网关 get_record 转成 wav，再重采样。
+   * Discord 语音消息是 ogg/opus：下载后用 ffmpeg 转成 wav。
    */
   async function localTranscribe(rec) {
     const stt = dsh.get('speechToText')
@@ -1297,9 +1299,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       try { stt.prepare(pid) } catch (error) {}
       throw new Error(`识别模型还在准备（${prov.preparation.phase}）`)
     }
-    const info = await onebot.call('get_record', { file: rec.data?.file, out_format: 'wav' }, { timeoutMs: 30000 })
-    const raw = info?.base64 ? Buffer.from(info.base64, 'base64') : await fetchImage(info?.file || info?.url, { maxBytes: 30 * 1024 * 1024 })
-    const spec = stt.resolve({ audio: new Uint8Array(toMono16k(raw)) })
+    const spec = stt.resolve({ audio: new Uint8Array(await recordWav(rec)) })
     const r = await stt.transcribe(spec, AbortSignal.timeout(60000))
     const text = typeof r === 'string' ? r : r?.text || r?.transcript
     return text ? String(text).trim() : ''

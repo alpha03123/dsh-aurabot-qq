@@ -484,9 +484,24 @@ test('语音条不把 QQ 表情/emoji 念出来（face 标签和 emoji 在 TTS �
   }
 })
 
-test('听语音：收到语音先转文字再交给她', async () => {
-  mock.push(priv(OWNER, [{ type: 'record', data: { file: 'abc.amr' } }]))
-  await until(() => fake.turns.at(-1)?.userText.includes('[语音] 今天想吃白米饭'))
+test('听语音：Discord 语音消息下载下来、转成 16k WAV 交给 DSH 识别，再交给她', async () => {
+  // 一段 0.2 秒、22050Hz 的 WAV（是 WAV 就不走 ffmpeg，直接重采样）
+  const pcm = Buffer.alloc(22050 * 0.2 * 2)
+  const hdr = Buffer.alloc(44)
+  hdr.write('RIFF', 0); hdr.writeUInt32LE(36 + pcm.length, 4); hdr.write('WAVE', 8); hdr.write('fmt ', 12)
+  hdr.writeUInt32LE(16, 16); hdr.writeUInt16LE(1, 20); hdr.writeUInt16LE(1, 22); hdr.writeUInt32LE(22050, 24); hdr.writeUInt32LE(44100, 28); hdr.writeUInt16LE(2, 32); hdr.writeUInt16LE(16, 34)
+  hdr.write('data', 36); hdr.writeUInt32LE(pcm.length, 40)
+  let heard = null
+  fake.ctx.services.speechToText = { snapshot: () => null, resolve: ({ audio }) => { heard = audio; return {} }, transcribe: async () => '今天想吃白米饭' }
+  try {
+    mock.push(priv(OWNER, [{ type: 'audio', data: { file: 'base64://' + Buffer.concat([hdr, pcm]).toString('base64'), filename: 'voice-message.ogg' } }]))
+    await until(() => fake.turns.at(-1)?.userText.includes('[语音] 今天想吃白米饭'))
+    const wav = Buffer.from(heard)
+    assert.equal(wav.readUInt32LE(24), 16000, '交给识别的是 16kHz')
+    assert.equal(wav.readUInt16LE(22), 1, '单声道')
+  } finally {
+    delete fake.ctx.services.speechToText
+  }
 })
 
 test('引用消息：私聊能看到被引用的内容；引用她自己时标「你」', async () => {

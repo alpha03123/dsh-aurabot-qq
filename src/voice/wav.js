@@ -58,3 +58,24 @@ export function toMono16k(buf, target = 16000) {
   }
   return buildWav(out, target)
 }
+
+/**
+ * 任意音频（Discord 语音消息是 ogg/opus）用 ffmpeg 转成 16kHz 单声道 PCM16 WAV。
+ * 已经是 WAV 的不走 ffmpeg，直接重采样。
+ */
+export async function anyToMono16k(buf, ffmpeg) {
+  if (buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WAVE') return toMono16k(buf)
+  if (!ffmpeg) throw new Error('没找到 ffmpeg，转不了这段语音')
+  const { spawn } = await import('node:child_process')
+  return new Promise((resolve, reject) => {
+    const p = spawn(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav', 'pipe:1'], { windowsHide: true })
+    const out = []
+    let err = ''
+    p.stdout.on('data', (d) => out.push(d))
+    p.stderr.on('data', (d) => { err += d })
+    p.on('error', reject)
+    p.on('close', (code) => (code === 0 ? resolve(Buffer.concat(out)) : reject(new Error(`ffmpeg 转语音失败（${code}）：${err.slice(0, 160)}`))))
+    p.stdin.on('error', () => {})
+    p.stdin.end(buf)
+  })
+}
