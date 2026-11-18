@@ -160,18 +160,10 @@ export default {
           return { ok: true, message: `存好了${r.item.name ? '「' + r.item.name + '」' : ''}` }
         },
       }))
-      tools.push(defineTool({
-        name: 'qq_import_qq_stickers',
-        description: '把你 QQ「我喜欢的」收藏里已有的表情全部导进表情库（已经有的跳过），之后就能用 <sticker:名字> 发它们。主人让你「导入收藏的表情」「同步一下 QQ 表情」时用。',
-        execute: async () => {
-          if (!hub.turnSendersAllOwner(sessionId)) return { ok: false, message: '只有主人能让我导入收藏的表情' }
-          return store.importFromQQ()
-        },
-      }))
       // 主人私聊（完整权限）才能往库里加图
       if (level === 'full') tools.push(defineTool({
         name: 'qq_add_sticker',
-        description: '把一张图片收进表情库并收藏到 QQ。source 是本地图片路径或图片网址；name 是不超过 12 个字的备注。',
+        description: '把一张图片收进表情库。source 是本地图片路径或图片网址；name 是不超过 12 个字的备注。',
         properties: { source: str('本地路径或 http(s) 地址'), name: str('备注（≤12 字）'), tags: { type: 'array', items: { type: 'string' }, description: '标签，如 开心/委屈' } },
         required: ['source'],
         execute: async ({ source, name, tags }) => {
@@ -211,8 +203,7 @@ export default {
     })
     api.route('/sticker/caption-status', async () => ({ ok: true, ...store.captionStatus() }))
     api.route('/sticker/caption-stop', async () => ({ ok: true, ...store.captionCancel() }))
-    api.route('/sticker/import-qq', async () => store.importFromQQ())
-    api.rule(() => '- 主人让你存某个表情（「存一下」「导入这个表情」）时用 qq_save_sticker；让你把 QQ 收藏里的表情导进来时用 qq_import_qq_stickers。别人让你存，不用理。')
+    api.rule(() => '- 主人让你存某个表情（「存一下」「导入这个表情」）时用 qq_save_sticker。别人让你存，不用理。')
     api.route('/sticker/upload', async (req) => {
       const b = await http.body(req)
       const buf = Buffer.from(String(b.data || '').replace(/^data:[^,]+,/, ''), 'base64')

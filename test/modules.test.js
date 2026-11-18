@@ -390,30 +390,6 @@ function fakePng(w, h, salt = 0) {
   return b
 }
 
-test('#3 表情：从 QQ 收藏导入（已有的跳过、不再往 QQ 里加一遍）；主人让她存刚发的那张', async () => {
-  const fav = [fakePng(200, 200, 1), fakePng(200, 200, 2)].map((b) => 'base64://' + b.toString('base64'))
-  mock.state.favorites = fav
-  const adds = mock.calls.filter((c) => c.action === 'add_custom_face').length
-  const r = (await fake.call('/sticker/import-qq')).json()
-  assert.equal(r.ok, true, r.message)
-  assert.equal(r.added, 2)
-  assert.equal((await fake.call('/sticker/import-qq')).json().existed, 2, '第二次全是已有的')
-  assert.equal(mock.calls.filter((c) => c.action === 'add_custom_face').length, adds, '没往 QQ 收藏里重复加')
-  const lib = (await fake.call('/stickers')).json().items
-  assert.equal(lib.filter((i) => i.from === 'qq').length, 2)
-
-  // 主人私聊发来一张表情，再让她存（模拟测试里调工具）
-  const png = fakePng(180, 180, 7)
-  mock.push(priv('看这个'))
-  mock.push({ message_type: 'private', sub_type: 'friend', user_id: Number(OWNER), message_id: 777, sender: { user_id: Number(OWNER), nickname: 'xiaoming' }, message: [{ type: 'image', data: { file: 'base64://' + png.toString('base64'), sub_type: 1, summary: '[动画表情]' } }] })
-  await sleep(500)
-  const t = (await fake.call('/modules/tool', { as: 'owner', kind: 'private', name: 'qq_save_sticker', args: { name: '测试表情' } })).json()
-  assert.equal(t.ok, true, t.message)
-  assert.match(t.result.message, /存好了|已经有这张/)
-  const other = (await fake.call('/modules/tool', { as: 'other', kind: 'private', name: 'qq_save_sticker', args: {} })).json()
-  assert.ok(!other.ok || other.result.ok === false, '别人让她存不行')
-})
-
 test('#3 控制台密码：不合格的不会只改配置；主人设的密码要真的去 SnowLuma 改', async () => {
   const before = api.getConfig().snowluma.webuiPassword
   const r = (await fake.call('/save', { snowluma: { webuiPassword: 'weak' } })).json()

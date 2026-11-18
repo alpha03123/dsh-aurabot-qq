@@ -418,17 +418,17 @@ test('群聊刹车：主动接话才歇着，群友 @ / 叫名字 / 追问都能
   await until(() => fake.turns.length > turns)
 })
 
-test('看图：主人发来表情包，她能看到图；表情被收藏并起了备注', async () => {
+test('看图：主人发来表情包，她能看到图；表情收进本地表情库并起了备注（不再同步 QQ 收藏）', async () => {
   const png = fakePng(240, 240, 1)
   mock.push(priv(OWNER, [{ type: 'mface', data: { emoji_id: 'x1', summary: '[开心]', file: 'base64://' + png.toString('base64') } }]))
   await until(() => fake.turns.at(-1)?.images === 1)
   assert.match(fake.turns.at(-1).reply, /可爱/)
-  await until(() => mock.sent('add_custom_face').length === 1)
-  await until(() => mock.sent('modify_custom_face').length === 1)
-  assert.equal(mock.sent('modify_custom_face')[0].params.desc, '可爱的小鲸鱼')
-  const lib = JSON.parse(readFileSync(join(dataDir, 'stickers', 'index.json'), 'utf8'))
+  const libOf = () => { try { return JSON.parse(readFileSync(join(dataDir, 'stickers', 'index.json'), 'utf8')) } catch { return { items: [] } } }
+  await until(() => libOf().items[0]?.name === '可爱的小鲸鱼')
+  const lib = libOf()
   assert.equal(lib.items.length, 1)
   assert.deepEqual(lib.items[0].tags, ['开心', '卖萌'])
+  assert.equal(mock.sent('add_custom_face').length, 0, '不往 QQ 收藏里加')
 })
 
 test('普通照片不收进表情库', async () => {
@@ -436,7 +436,7 @@ test('普通照片不收进表情库', async () => {
   mock.push(priv(OWNER, [{ type: 'image', data: { sub_type: 0, file: 'base64://' + photo.toString('base64') } }]))
   await until(() => fake.turns.at(-1)?.images === 1 && fake.turns.length > 0)
   await sleep(300)
-  assert.equal(mock.sent('add_custom_face').length, 1, '数量没变')
+  assert.equal(JSON.parse(readFileSync(join(dataDir, 'stickers', 'index.json'), 'utf8')).items.length, 1, '数量没变')
 })
 
 test('语音：回复里的 <voice> 变成 QQ 语音条', { skip: process.platform !== 'win32' && '依赖 Windows TTS 引擎' }, async () => {
