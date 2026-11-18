@@ -820,7 +820,7 @@ export function createModules({ ctx, core, getConfig, setConfig, logger, version
 
   function promptFor(id) {
     const dir = id ? join(userDir(), id) : userDir()
-    return `帮我修改 Aurabot（大肥鱼 QQ 插件）的扩展模块：${dir}\n`
+    return `帮我修改 Aurabot（Discord 聊天伙伴插件）的扩展模块：${dir}\n`
       + `先完整读一遍「${join(userDir(), DOC)}」了解模块怎么写、能用哪些接口，再按我的要求改：\n`
       + '【这里写你想让她多会什么、改成什么样】\n'
       + `只改 ${userDir()} 里的文件，不要动插件本身的代码；改完保存会自动重新加载，到面板「已安装」页看有没有报错，再告诉我怎么试。`

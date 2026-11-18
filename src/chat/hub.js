@@ -3,6 +3,7 @@
 //   发：DSH 会话一轮结束 → 取最终正文 → 拆条 / 语音 / 表情 → 发回原来的 QQ 会话
 // 每个 QQ 会话一个 DSH 会话，统一放在「Aurabot · QQ」工作区，主人可以在 DSH 侧栏点开看、插手。
 
+import { personaName } from '../persona/personas.js'
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs'
@@ -1451,7 +1452,9 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
 
     let mode = 'must'
     if (msg.kind === 'group') {
-      const pol0 = policyFor(cfg.group, cfg.group.overrides, msg.groupId)
+      const pol00 = policyFor(cfg.group, cfg.group.overrides, msg.groupId)
+      // 没设唤醒词：叫她的名字就算叫到
+      const pol0 = (pol00.wakeWords || []).length ? pol00 : { ...pol00, wakeWords: [personaName(cfg.persona?.current, '')].filter(Boolean) }
       // 心情好更爱插话，心情差少插话
       const pol = { ...pol0, interjectChance: Math.min(1, pol0.interjectChance * mood().chatty) }
       // 群里最近在聊的（窗口内最后几条）和她有多相关

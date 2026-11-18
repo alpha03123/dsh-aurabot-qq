@@ -314,7 +314,7 @@ test('silent：模型只输出内部备忘（跳过）也被清洗成 silent', a
 
 test('清洗：去掉备忘段、引号和「大肥鱼：」前缀', () => {
   assert.equal(cleanReply('「主人，晚上一起打游戏吗」\n【目的】邀请主人玩游戏\n【状态】完成'), '主人，晚上一起打游戏吗')
-  assert.equal(cleanReply('大肥鱼：想你了'), '想你了')
+  assert.equal(cleanReply('大肥鱼：想你了', { roleName: '大肥鱼' }), '想你了')
 })
 
 // ---------- 素材适配（记忆 importance 0~1 → 0~100） ----------

@@ -9,6 +9,7 @@
 // 现有的「主动搭话」模块（speakup，src/features/companion.js）保持默认实现不变，
 // 想换引擎的主人自己开关，迁移说明见 docs/PURPOSE_MODULE_API.md。
 
+import { personaName } from '../persona/personas.js'
 import { dataDir, readJson, writeJson } from '../core/store.js'
 import { cleanOutboundText } from '../chat/reply.js'
 import {
@@ -22,8 +23,9 @@ import {
 } from './engine.js'
 
 const MINUTE = 60_000
-// 她的自称：用于聊天流水标注与「名字：」前缀清洗（与 Aurabot 的桌宠形象同名）。
-const ROLE = '大肥鱼'
+// 她的自称：用于聊天流水标注与「名字：」前缀清洗，跟当前人格的名字走（原来写死「大肥鱼」）。
+let ROLE = 'Aurabot'
+const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 // mood 模块靠 userText 的「【系统提醒」前缀把主动回合判成 origin='speak-up'（mood/index.js 的判定），
 // deliver 路径本身没有 userText，这里补一个同款前缀，保住心情判定链路。
 const MOOD_PREFIX = '【系统提醒，不是主人说的话】（她主动找你）'
@@ -67,19 +69,21 @@ export function purposeConfig(cfg = {}) {
   })
 }
 
-/** 模型回包清洗：去掉备忘段、引号、「大肥鱼：」前缀；空/沉默返回 ''。 */
+/** 模型回包清洗：去掉备忘段、引号、「名字：」前缀；空/沉默返回 ''。 */
 export function cleanReply(raw, options) {
   let s = String(raw ?? '')
   const cut = /(^|\n)\s*(?:[【\[]\s*(?:目的|需求|情绪|类型|状态|待续)\s*[】\]]|[【\[]?\s*内部备忘)/.exec(s)
   if (cut) s = s.slice(0, cut.index) // 内部备忘不发到 QQ
   s = s.replace(/^[「“"'']+/, '').replace(/[」”"'']+$/, '')
-  s = s.replace(new RegExp(`^${ROLE}\\s*[:：]\\s*`), '')
+  s = s.replace(new RegExp(`^${escRe(options?.roleName || ROLE)}\\s*[:：]\\s*`), '')
   s = cleanOutboundText(s, options).trim()
   if (!s || s.replace(/\s/g, '').startsWith(SILENCE)) return ''
   return s
 }
 
 export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, memory, personaText, pet: petOf }) {
+  const roleNow = () => (ROLE = personaName(getConfig().persona?.current))
+  roleNow()
   const moodOf = () => { try { return mood?.() || null } catch { return null } }
   const memoryOf = () => { try { return memory?.() || null } catch { return null } }
   // 下面的 friend 是主动搭话白名单里的 QQ 号，不传就是主人。朋友各有各的状态，素材只看和这个人的私聊、关于这个人的记忆。
@@ -149,7 +153,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
             time: Number(e.t) || 0,
             isSelf: e.who === 'bot',
             isOwner: e.chatId === ownerKey && e.who !== 'bot',
-            sender: e.who === 'bot' ? ROLE : String(e.uid || '群友'),
+            sender: e.who === 'bot' ? roleNow() : String(e.uid || '群友'),
           })
         }
       }
@@ -168,7 +172,7 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     const materials = collectMaterials({
       now, config,
       ownerId: friend || cfg.ownerId,
-      roleName: ROLE,
+      roleName: roleNow(),
       conversations: conversations(cfg, now, friend),
       biliEntries: [], // 首期不接 B站/Qzone 素材，字段留扩展
       memoryRecords: memoryRecords(friend),
@@ -181,10 +185,10 @@ export function createPurpose({ getConfig, setConfig, hub, log, isMuted, mood, m
     })
     const { goals, observations } = formGoalHypotheses({
       materials: materials.items, goals: state.goals, observations: state.observations,
-      drives, now, lastMasterAt, config, roleName: ROLE, persona,
+      drives, now, lastMasterAt, config, roleName: roleNow(), persona,
     })
     const seeds = minePurposeSeeds({
-      materials: materials.items, now, roleName: ROLE, config,
+      materials: materials.items, now, roleName: roleNow(), config,
       drives, history: state.history, lastMasterAt,
     })
     return { materials, persona, lastMasterAt, drives, goals, observations, seeds }

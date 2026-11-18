@@ -50,7 +50,7 @@ test('回复按行拆成多条气泡；列表、代码、长文不拆；最多 5
 })
 
 const base = (o) => ({
-  policy: policyFor({}, {}, 1),
+  policy: { ...policyFor({}, {}, 1), wakeWords: ['大肥鱼', '肥鱼'] },
   mentioned: false,
   repliedToBot: false,
   text: '今天吃什么',

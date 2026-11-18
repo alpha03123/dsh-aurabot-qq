@@ -1695,7 +1695,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       saveImpressions(chatId, result, human)
       for (const x of arr.slice(0, 12)) {
         if (!x || !x.text || !hasHuman) continue
-        if (/^(我|大肥鱼)/.test(String(x.about || '')) || String(x.about || '') === '大肥鱼') continue
+        { const ab = String(x.about || ''); if (ab.startsWith('我') || (roleName() && (ab === roleName() || ab.startsWith(roleName())))) continue }
         if (!ownerScope && looksLikeRuleMemory(x.text)) continue
         if (x.speaker && !/^\d+$/.test(String(x.speaker).trim())) continue
         const rawSpeaker = String(x.speaker ?? '').replace(/\D/g, '')

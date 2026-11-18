@@ -211,7 +211,7 @@ test('空间和桌宠的独立路径复用同一清洗，截断及去 HTML 前�
   const qzone = createQzone({ getConfig: () => s.cfg, log: s.log, onebot: { async call(action, params) { calls.push({ action, params }); return { tid: '1' } } } })
   await qzone.post(block)
   assert.equal(calls.length, 0)
-  assert.equal(cleanReply(`大肥鱼：${block}`), '')
+  assert.equal(cleanReply(`大肥鱼：${block}`, { roleName: '大肥鱼' }), '')
   assert.equal(cleanReply(`前${block}后`), '前后')
 })
 

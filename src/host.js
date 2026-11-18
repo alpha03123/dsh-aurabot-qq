@@ -27,7 +27,7 @@ import { mimeOf } from './chat/inbound.js'
 import { dataDir, ensureDir } from './core/store.js'
 import { createUpdateChecker, changelogSection } from './core/update.js'
 import { parseCommand, runCommand, createMutes, commandList } from './chat/commands.js'
-import { listPersonas, readPersona, savePersona, deletePersona, currentPersonaText, rulesText, seedPersonas } from './persona/personas.js'
+import { listPersonas, readPersona, savePersona, deletePersona, currentPersonaText, rulesText, seedPersonas, personaName } from './persona/personas.js'
 import { createModules, API_VERSION } from './core/modules.js'
 import { createCommunity } from './core/community.js'
 import { createApprovalRelay } from './security/approval.js'
@@ -1221,7 +1221,7 @@ export function apply(ctx) {
     if (body.existingConnection && !(cfg.enabled && onebotState === 'connected' && loginOk)) return { ok: false, message: 'QQ 网关还没通过机器人号核对，请先连接并核对后再进入面板' }
     setConfig({ ...cfg, setupDone: true })
     log.info('首次使用向导完成')
-    return { ...(await overview()), message: '设置完成，大肥鱼可以上线啦' }
+    return { ...(await overview()), message: `设置完成，${personaName(cfg.persona?.current)}可以上线啦` }
   })
   route('/snowluma/processes', async () => {
     try { return { ok: true, list: await snowluma.processes() } } catch (error) { return { ok: false, message: error.message, list: [] } }
@@ -1268,7 +1268,7 @@ export function apply(ctx) {
   route('/test-send', async () => {
     if (!cfg.enabled) return { ok: false, message: '先打开总开关' }
     if (cfg.dryRun) return { ok: false, message: '现在是试运行，先关掉试运行再测' }
-    const r = await hub.sendText(`private:${cfg.ownerId}`, '【Aurabot 自测】大肥鱼到此一游～')
+    const r = await hub.sendText(`private:${cfg.ownerId}`, `【Aurabot 自测】${personaName(cfg.persona?.current)}到此一游～`)
     return r ? { ok: true, message: '发给主人了，去 QQ 看看' } : { ok: false, message: '没发出去（看日志）' }
   })
 
@@ -1376,7 +1376,7 @@ export function apply(ctx) {
     const slot = String((await readBody(req)).slot || '')
     try {
       if (slot === 'tts') {
-        const file = fileOf(await local.call('tts', { text: '你好呀，我是大肥鱼，这是本地语音测试。' }))
+        const file = fileOf(await local.call('tts', { text: `你好呀，我是${personaName(cfg.persona?.current)}，这是本地语音测试。` }))
         if (!file || !existsSync(file)) return { ok: false, message: '脚本没返回音频文件' }
         return { ok: true, message: `念好了：${file}` }
       }
