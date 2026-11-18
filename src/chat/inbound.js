@@ -48,22 +48,26 @@ export function parseMessageEvent(event, selfId, { faceName } = {}) {
   const records = []
   const forwards = [] // 合并转发的 id
   const files = []
+  // onebots 桥给的 ID 是 { string: 原始 ID, number: 映射数字 } 对象；Aurabot 这边统一用映射数字
+  const idOf = (v) => (v && typeof v === 'object' ? (v.number ?? v.string ?? '') : (v ?? ''))
   for (const seg of segmentsOf(event)) {
     const d = seg.data || {}
     switch (seg.type) {
       case 'text':
         texts.push(String(d.text ?? ''))
         break
-      case 'at':
-        if (String(d.qq) === 'all') { atAllIndexes.add(texts.length); texts.push('@全体成员 ') }
-        else if (self && String(d.qq) === self) mentioned = true
+      case 'at': {
+        const who = String(idOf(d.qq ?? d.user_id))
+        if (who === 'all') { atAllIndexes.add(texts.length); texts.push('@全体成员 ') }
+        else if (self && who === self) mentioned = true
         else {
           atOthers = true
-          texts.push(`@${d.name || d.qq} `)
+          texts.push(`@${d.name || who} `)
         }
         break
+      }
       case 'reply':
-        replyId = String(d.id ?? '')
+        replyId = String(idOf(d.id ?? d.message_id))
         break
       case 'face': {
         // QQ 系统表情按名字给她看（「[捂脸]」），认不出才写「[表情]」
@@ -89,8 +93,9 @@ export function parseMessageEvent(event, selfId, { faceName } = {}) {
         texts.push('[视频]')
         break
       case 'file':
-        texts.push(`[文件 ${d.name || d.file || ''}]`)
-        files.push({ name: String(d.name || d.file || ''), size: Number(d.size ?? d.file_size) || 0, id: String(d.id ?? d.file_id ?? ''), url: String(d.url || ''), hash: String(d.file_hash || ''), busid: Number(d.busid) || 0 })
+        // Discord 附件的文件名在 filename 里，file 是附件 ID
+        texts.push(`[文件 ${d.name || d.filename || d.file || ''}]`)
+        files.push({ name: String(d.name || d.filename || d.file || ''), size: Number(d.size ?? d.file_size) || 0, id: String(d.id ?? d.file_id ?? ''), url: String(d.url || ''), hash: String(d.file_hash || ''), busid: Number(d.busid) || 0 })
         break
       case 'flash_file':
         texts.push(d.title ? `[闪传文件：${String(d.title)}]` : '[闪传文件]')

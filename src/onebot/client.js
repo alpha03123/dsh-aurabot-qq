@@ -8,7 +8,8 @@ const RETRY_DELAYS = [1000, 3000, 5000]
 
 export class OneBotError extends Error {
   constructor(action, data, { transport = false, uncertain = false } = {}) {
-    super(`${action} 失败：${data?.message || data?.wording || data?.retcode || '未知错误'}`)
+    // onebots 桥把错误原因放在 msg 里（retcode 一律 -1），先读它
+    super(`${action} 失败：${data?.message || data?.wording || data?.msg || data?.retcode || '未知错误'}`)
     this.action = action
     this.data = data
     // transport = 根本没连上网关（可以重试）；业务错误（retcode 不为 0、超时但也可能已经发出去）不重试

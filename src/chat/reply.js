@@ -435,9 +435,45 @@ function capBubbles(items) {
  * 一段文字拆成几条气泡：真人打字是一行一条发出去的。
  * 有代码块、或者是长篇内容（比如帮主人查东西的结果）就整段发，不拆。
  */
+/** Discord 单条消息上限 2000 字，留点余量 */
+export const MESSAGE_MAX = 1900
+
+/**
+ * 超长文字按段落 / 行切成不超过 max 的几段；切在代码块中间时把代码块补齐，下一段重新开。
+ */
+export function chunkText(text, max = MESSAGE_MAX) {
+  const t = String(text || '')
+  if (t.length <= max) return t ? [t] : []
+  const out = []
+  let cur = ''
+  let fence = '' // 当前所在代码块的开头那行（```js），不在代码块里就是空
+  const flush = () => {
+    if (!cur.trim() || (fence && cur.trim() === fence)) { cur = fence ? fence + '\n' : ''; return }
+    out.push(fence ? cur.replace(/\n?$/, '\n```') : cur.replace(/\n+$/, ''))
+    cur = fence ? fence + '\n' : ''
+  }
+  for (const raw of t.split('\n')) {
+    let line = raw
+    // 单行就超长：硬切
+    while (line.length > max - 8) {
+      if (cur.trim()) flush()
+      const room = max - 8 - cur.length
+      cur += line.slice(0, room)
+      line = line.slice(room)
+      flush()
+    }
+    if (cur.length + line.length + 1 > max - 4) flush()
+    cur += line + '\n'
+    if (/^\s*```/.test(line)) fence = fence ? '' : line.trim()
+  }
+  if (cur.trim()) out.push(cur.replace(/\n+$/, ''))
+  return out
+}
+
 export function splitLines(text) {
   const t = String(text || '').trim()
   if (!t) return []
+  if (t.length > MESSAGE_MAX) return chunkText(t)
   if (t.includes('```') || t.length > 240) return [t]
   const lines = t.split(/\n+/).map((s) => s.trim()).filter(Boolean)
   if (lines.length <= 1) return lines

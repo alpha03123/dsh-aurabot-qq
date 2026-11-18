@@ -37,7 +37,8 @@ export default {
     })
     api.every(60_000, () => qzone.tick(), '空间日记')
 
-    api.tool(({ chat, level }) => (level === 'full' && chat.kind !== 'system' ? defineTool({
+    // 空间日记关着时不挂这个工具（Discord 上没有 QQ 空间）
+    api.tool(({ chat, level }) => (level === 'full' && chat.kind !== 'system' && api.config().diary?.enabled !== false ? defineTool({
       name: 'qq_send_qzone',
       description: '在你自己的 QQ 空间发一条说说。content 是正文（第一人称，口语）；images 可选，本地路径或网址。',
       properties: {

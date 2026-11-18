@@ -193,7 +193,8 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   }
 
   /** 刷一轮。force = 面板里手动点的（不占每天的次数）。 */
-  async function run({ force = false } = {}) {
+  // allowShare=false：只看不分享（autonomy 按「主动找主人」额度决定这一轮能不能分享）
+  async function run({ force = false, allowShare = true } = {}) {
     const c = cfg()
     if (busy) return { ok: false, message: '正在刷' }
     if (!c.enabled && !force) return { ok: false, message: 'B 站没打开' }
@@ -259,7 +260,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         }
         if (c.like && !getConfig().dryRun) api.likeVideo(v.aid).catch(() => {})
         const share = cleanOutboundText(d.share, { warn: (message) => log.warn(`B 站分享：${message}`) }).trim()
-        if (share && !isSilence(share) && c.shareToOwner && getConfig().ownerQQ && d === shareOne && !justTalked) {
+        if (allowShare && share && !isSilence(share) && c.shareToOwner && getConfig().ownerQQ && d === shareOne && !justTalked) {
           await hub.sendText(`private:${getConfig().ownerQQ}`, `${share}\n${link(v.bvid)}`)
           shared++
           record(s, { kind: 'share', title: v.title, bvid: v.bvid, text: share })
@@ -269,7 +270,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       // 刷完按概率顺手甩一张截图给主人：默认概率和发一张表情包一样，0 = 从不
       let shotSent = 0
       const shotTo = getConfig().ownerQQ ? `private:${getConfig().ownerQQ}` : ''
-      if (shotTo && c.enabled && getConfig().enabled && !getConfig().dryRun && Number(c.shotChance) > 0) {
+      if (allowShare && shotTo && c.enabled && getConfig().enabled && !getConfig().dryRun && Number(c.shotChance) > 0) {
         const pool = looked.filter((x) => x.shotIds && x.shotIds.length)
         if (pool.length && Math.random() < Number(c.shotChance)) {
           const x = pool[Math.floor(Math.random() * pool.length)]

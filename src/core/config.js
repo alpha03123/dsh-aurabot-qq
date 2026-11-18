@@ -16,9 +16,10 @@ export const DEFAULTS = {
   ownerName: '主人',
   ownerLevel: 'full', // full | social | chat
   approvalNotify: true, // DSH 要授权时把请求发到主人私聊
-  qqApi: { enabled: true }, // 她能用 qq_api_call 调 QQ 接口：别人只能查当前群，写操作只听主人
+  qqApi: { enabled: false }, // 她能用 qq_api_call 调 QQ 接口：别人只能查当前群，写操作只听主人
   approvalViaQQ: true, // 主人私聊会话要授权时，在 QQ 回复「确认」直接批准这一次
-  profilePerms: { qqNickname: 'owner', qqSignature: 'owner', qqAvatar: 'owner', biliSign: 'owner', biliAvatar: 'owner', biliComment: 'owner', qqFriendRequest: 'owner', whitelist: 'owner', douyinBrowse: 'owner', douyinLike: 'owner', douyinComment: 'owner', douyinShareOwner: 'owner', douyinDm: 'owner' }, // 改资料类操作（含抖音浏览 / 点赞 / 评论 / 分享）的权限：off 关 / owner 仅主人私聊 / all 所有人。抖音项默认仅主人，总开关默认关
+  // QQ 资料类操作在 Discord 上用不了，默认关
+  profilePerms: { qqNickname: 'off', qqSignature: 'off', qqAvatar: 'off', biliSign: 'owner', biliAvatar: 'owner', biliComment: 'owner', qqFriendRequest: 'off', whitelist: 'owner', douyinBrowse: 'owner', douyinLike: 'owner', douyinComment: 'owner', douyinShareOwner: 'owner', douyinDm: 'owner' }, // 改资料类操作（含抖音浏览 / 点赞 / 评论 / 分享）的权限：off 关 / owner 仅主人私聊 / all 所有人。抖音项默认仅主人，总开关默认关
   longTasks: true, // 长任务模式：主人私聊（完整权限）额外挂 dsh-tool-jobs + dsh-tool-schedule，会多一点工具定义、稍慢
   // 后台子智能体委派（默认关）：模块用 hub.runSubagentTurn 派子智能体时，正常要求「主人开口」的来源；
   // 定时任务这类没人应答的场合，只有打开这个开关才允许派活。关着 = 一律拒绝（一审 #177 的审批策略）。
@@ -104,7 +105,7 @@ export const DEFAULTS = {
   },
   stickers: {
     enabled: true,
-    faces: true, // 回复里能夹 QQ 自带的小黄脸（<face:名字>）
+    faces: false, // 回复里能夹 QQ 自带的小黄脸（<face:名字>）；Discord 上会变乱码，默认关
     autoChance: 0.35, // 文字回复自动配一张表情的概率
     collect: true, // 偷表情
     // 怎么偷：auto = 看到就收（默认，保持原行为）；ask = 她挑（先记着，喜欢才凭编号收）；owner = 只听主人的（只有主人语境下才提示/允许收）
@@ -118,7 +119,7 @@ export const DEFAULTS = {
     captionModel: { provider: '', model: '' },
   },
   diary: {
-    enabled: true,
+    enabled: false,
     timesPerDay: 2,
     windowStart: '10:00',
     windowEnd: '23:30',
@@ -217,7 +218,7 @@ export const DEFAULTS = {
     peakWeekend: false, // 周末是否也算峰时（默认不算，周末全天可逛）
   },
   qzoneSocial: {
-    enabled: true,
+    enabled: false,
     replyOwn: true, // 回复自己说说下别人的新评论
     commentFriends: true, // 逛好友动态，偶尔评论
     friendChance: 0.3, // 看到一条好友说说时互动（点赞 + 可能评论）的概率
@@ -227,7 +228,7 @@ export const DEFAULTS = {
     intervalMin: 30, // 多久逛一次空间
   },
   speakUp: {
-    enabled: true, // 只在和主人的私聊里主动找你，群里不会
+    enabled: false, // 只在和主人的私聊里主动找你，群里不会
     idleMinutes: 40,
     minIntervalMinutes: 60,
     maxIntervalMinutes: 180,
