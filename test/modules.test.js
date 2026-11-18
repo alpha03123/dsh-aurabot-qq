@@ -390,21 +390,6 @@ function fakePng(w, h, salt = 0) {
   return b
 }
 
-test('#3 控制台密码：不合格的不会只改配置；主人设的密码要真的去 SnowLuma 改', async () => {
-  const before = api.getConfig().snowluma.webuiPassword
-  const r = (await fake.call('/save', { snowluma: { webuiPassword: 'weak' } })).json()
-  assert.equal(r.ok, false)
-  assert.match(r.message, /控制台密码没改.*至少 10 位/)
-  assert.equal(api.getConfig().snowluma.webuiPassword, before)
-  const { passwordProblems } = await import('../src/snowluma/manager.js')
-  assert.deepEqual(passwordProblems('Abcdefgh1!'), [])
-  assert.deepEqual(passwordProblems('abc def'), ['至少 10 位', '要有大写字母', '要有符号（比如 ! @ #）', '不能有空格'])
-  // 这台测试机没装 SnowLuma：好密码也改不了，会说清原因，配置不动
-  const g = (await fake.call('/save', { snowluma: { webuiPassword: 'Abcdefgh1!' } })).json()
-  assert.equal(g.ok, false)
-  assert.equal(api.getConfig().snowluma.webuiPassword, before)
-})
-
 test('#1 重新连接：等结果再回话，连上了就说连上了', async () => {
   const r = (await fake.call('/onebot/reconnect')).json()
   assert.equal(r.ok, true, r.message)

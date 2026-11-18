@@ -1166,7 +1166,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     }
     const out = { ok: false, who: '', uid: '', text: '', images: [], stickers: [], records: 0, isBot: false, at: 0, chatId }
     try {
-      const m = await onebot.call('get_msg', { message_id: oid(id) }, { timeoutMs: 5000, retries: 0 })
+      // v12 / Discord 取单条消息要知道在哪个频道：带上群（频道）或私聊对象
+      const m = await onebot.call('get_msg', { message_id: oid(id), ...(ctx?.groupId ? { group_id: oid(ctx.groupId) } : ctx?.userId ? { user_id: oid(ctx.userId) } : {}) }, { timeoutMs: 5000, retries: 0 })
       const sender = m?.sender || {}
       out.uid = String(sender.user_id ?? m?.user_id ?? '')
       out.who = String(sender.card || sender.nickname || out.uid || '某人')

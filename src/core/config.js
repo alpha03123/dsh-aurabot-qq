@@ -23,9 +23,9 @@ export const DEFAULTS = {
   // 定时任务这类没人应答的场合，只有打开这个开关才允许派活。关着 = 一律拒绝（一审 #177 的审批策略）。
   subagentBackground: false,
   allow: { private: [], groups: [] }, // 主人永远能私聊，不用写进白名单
-  // 用什么接 QQ：snowluma = 插件帮你管 SnowLuma（Windows）；onebot = 接你已有的 OneBot v11 机器人（NapCat、LLOneBot、Lagrange、Docker 里的 SnowLuma……），
-  // 这时只按下面 snowluma.httpUrl / wsUrl / token 去连，不启动、不注入任何东西
-  gateway: 'snowluma',
+  // 怎么接 Discord：discord = 插件自己拉起内嵌的协议桥（bridge/，onebots + Discord 适配器，OneBot v12）；
+  // onebot = 接一个已经在跑的 OneBot 服务，只按下面 onebot.* 的地址去连，不启动任何东西
+  gateway: 'discord',
   workspaceDir: '', // QQ 会话放在哪个文件夹（DSH 里的「Aurabot · QQ」工作区）；留空 = 默认（用户目录下 Aurabot\\qq-chats）
   // 发文件（#52）：默认开但限制很多——她只能把 QQ 工作区（workspaceDir）和 dirs 里列的目录中的文件当文件发出去；
   // 单个文件有大小上限；主人私聊里能触发，群里只在主人开口那一轮能触发（可以发给白名单里的人和群）。日志里会记下发了什么。
@@ -43,18 +43,20 @@ export const DEFAULTS = {
   // 聊天回复/工具/审批/定时任务本身不变。offPeakHolidays 是中国法定节假日（北京时间日期 'YYYY-MM-DD'）。
   cost: { offPeak: false, offPeakHolidays: [] },
   update: { unstable: null }, // 订阅不稳定版本（beta、rc）；null = 没选过，按正在用的版本定
-  snowluma: {
-    dir: 'C:\\Aurabot\\snowluma', // 主人自己下载解压到这里（EULA 不允许自动部署）
-    autoStart: true, // 随 DSH 启动它（只启动主人已安装并同意过协议的副本）
-    webuiPort: 5099,
-    webuiPassword: '', // 插件自动生成并保存（第一次启动 SnowLuma 时）；用来调 /api/processes 只给机器人号注入
-    passwordAuto: false,
-    autoAttach: true, // 自动给机器人号所在的 QQ 进程注入（绝不碰别的号）
-    httpUrl: '', // 留空 = 从 SnowLuma 配置里自动读
+  discord: {
+    token: '', // 机器人 token（Discord 开发者后台 → Bot）
+    proxyUrl: '', // 连 Discord 走的代理，比如 http://127.0.0.1:7897；直连就留空
+    accessToken: '', // 插件和协议桥之间的访问令牌，第一次启动时自动生成
+    autoStart: true, // 随 DSH 拉起协议桥
+  },
+  onebot: {
+    protocol: 'v11', // 已有服务说的协议：v11 / v12
+    httpUrl: '',
     wsUrl: '',
     httpToken: '',
     wsToken: '',
   },
+
   model: { provider: '', model: '', reasoningEffort: 'low', vision: 'auto' }, // 留空 = 跟随 DSH 默认；vision: auto/on/off
   // 按聊天选模型（主人在面板「模型」页设）：私聊 QQ 号 > 群号 > 所有私聊 / 所有群默认 > 上面的全局模型；没写的一级退到下一级
   chatModels: { privateDefault: { provider: '', model: '', reasoningEffort: '' }, groupDefault: { provider: '', model: '', reasoningEffort: '' }, privates: {}, groups: {} },
@@ -325,6 +327,17 @@ export function migrateLegacyKeys(raw) {
     if (out.diary.audienceIds === undefined) out.diary.audienceIds = out.diary.audienceQQs
     delete out.diary.audienceQQs
   }
+  if (isObj(out.snowluma)) {
+    const sl = out.snowluma
+    const hasUrl = Boolean(sl.httpUrl || sl.wsUrl)
+    if (hasUrl) {
+      out.onebot = { ...(isObj(out.onebot) ? out.onebot : {}) }
+      for (const k of ['httpUrl', 'wsUrl', 'httpToken', 'wsToken']) if (out.onebot[k] === undefined && sl[k]) out.onebot[k] = sl[k]
+    }
+    if (out.gateway === 'onebot' || (hasUrl && out.gateway !== 'discord')) out.gateway = 'onebot'
+    else if (out.gateway === 'snowluma') out.gateway = 'discord'
+    delete out.snowluma
+  } else if (out.gateway === 'snowluma') out.gateway = 'discord'
   // QQ 专属、已删掉的功能的配置
   for (const k of ['qqApi', 'qzoneSocial', 'titleFilter']) delete out[k]
   return out
@@ -339,7 +352,11 @@ export function normalize(raw) {
   c.ownerId = qq(c.ownerId)
   c.approvalNotify = bool(c.approvalNotify, true)
   c.approvalViaChat = bool(c.approvalViaChat, true)
-  c.gateway = c.gateway === 'onebot' ? 'onebot' : 'snowluma'
+  c.gateway = c.gateway === 'onebot' ? 'onebot' : 'discord'
+  c.onebot.protocol = c.onebot.protocol === 'v12' ? 'v12' : 'v11'
+  for (const k of ['httpUrl', 'wsUrl', 'httpToken', 'wsToken']) c.onebot[k] = String(c.onebot[k] ?? '').trim()
+  for (const k of ['token', 'proxyUrl', 'accessToken']) c.discord[k] = String(c.discord[k] ?? '').trim()
+  c.discord.autoStart = bool(c.discord.autoStart, true)
   // 只认绝对路径（Windows 的 D:\\… 或 Linux 的 /…），别的当没填
   c.workspaceDir = String(c.workspaceDir || '').trim()
   if (c.workspaceDir && !/^([a-zA-Z]:[\\/]|\/)/.test(c.workspaceDir)) c.workspaceDir = ''
@@ -515,7 +532,6 @@ export function normalize(raw) {
   for (const k of ['atOwnerOnLikeChance', 'minimize', 'socialInterruptBrowse', 'replyPollMinutes']) delete d[k]
 
   delete c.mood.maxInjectPerDay // 旧版的「每天最多提醒几次」，现在心情明显时每轮都会带上
-  c.snowluma.webuiPort = num(c.snowluma.webuiPort, 5099, 1, 65535)
   // 老配置只有一个 consolidateAt：换成两个时间点（它 + 12 小时后）
   if (!Array.isArray(raw?.memory?.consolidateTimes) && raw?.memory?.consolidateAt) {
     const [hh, mm] = hhmm(raw.memory.consolidateAt, '04:00').split(':').map(Number)
@@ -638,7 +654,7 @@ export function normalize(raw) {
 }
 
 // 面板里不回传原文的字段：路径（几层都行）
-const SECRETS = [['snowluma', 'webuiPassword'], ['snowluma', 'httpToken'], ['snowluma', 'wsToken'], ['imageGen', 'apiKey'], ['memory', 'vector', 'apiKey'], ['song', 'neteaseCookie'], ['bili', 'cookie'], ['bili', 'sessdata'], ['bili', 'biliJct'], ['heybox', 'cookie'], ['bridge', 'token']]
+const SECRETS = [['discord', 'token'], ['discord', 'accessToken'], ['onebot', 'httpToken'], ['onebot', 'wsToken'], ['imageGen', 'apiKey'], ['memory', 'vector', 'apiKey'], ['song', 'neteaseCookie'], ['bili', 'cookie'], ['bili', 'sessdata'], ['bili', 'biliJct'], ['heybox', 'cookie'], ['bridge', 'token']]
 // 扩展模块设置里的密码类字段（模块加载时登记）：['ext', 模块id, 字段]
 const extraSecrets = new Map()
 export function registerSecretField(path) { extraSecrets.set(path.join('\u0000'), path) }

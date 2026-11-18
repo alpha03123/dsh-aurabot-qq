@@ -1,0 +1,14 @@
+{
+  "name": "aurabot-discord-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aurabot 内嵌的 Discord ↔ OneBot v12 协议桥（onebots + Discord 适配器），由 Aurabot 以子进程拉起",
+  "type": "module",
+  "main": "start.mjs",
+  "dependencies": {
+    "@onebots/adapter-discord": "3.0.19",
+    "@onebots/core": "1.2.13",
+    "@onebots/protocol-onebot-v12": "3.0.19",
+    "onebots": "1.2.19"
+  }
+}

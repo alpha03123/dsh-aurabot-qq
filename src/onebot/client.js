@@ -1,5 +1,7 @@
-// OneBot v11 客户端：HTTP 调接口，WS（Universal）收事件，断线自动重连。
-// 只依赖 Node 自带的 fetch / WebSocket。
+// OneBot 客户端：HTTP 调接口，WS 收事件，断线自动重连。只依赖 Node 自带的 fetch / WebSocket。
+// endpoint().protocol === 'v12' 时（内嵌的 Discord 协议桥）两头过翻译层：内部照旧按 v11 的动作名和事件形状写。
+
+import { toV12Call, fromV12Event } from './v12.js'
 
 const RECONNECT_MIN = 2000
 const RECONNECT_MAX = 30000
@@ -69,6 +71,14 @@ export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelay
   /** 走一次 HTTP 或 WS；网络层失败标成 transport，业务错误照原样抛。 */
   async function callOnce(action, params, timeoutMs, generation) {
     const ep = endpoint()
+    if (ep.protocol === 'v12') {
+      const tr = toV12Call(action, params)
+      return tr.map(await callRaw(ep, tr.action, tr.params, timeoutMs, generation))
+    }
+    return callRaw(ep, action, params, timeoutMs, generation)
+  }
+
+  async function callRaw(ep, action, params, timeoutMs, generation) {
     if (ep.httpUrl) {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), timeoutMs)
@@ -192,6 +202,12 @@ export function createOneBotClient({ endpoint, onEvent, onState, log, retryDelay
       }
       if (data && data.post_type) {
         try { onEvent(data) } catch (error) { log.warn('处理事件出错：', error.message) }
+      } else if (data && data.type && !data.echo) {
+        // v12 事件：翻成内部（v11 形状）再交出去
+        const ev = fromV12Event(data)
+        if (ev) {
+          try { onEvent(ev) } catch (error) { log.warn('处理事件出错：', error.message) }
+        }
       }
     }
     sock.onclose = (ev) => {

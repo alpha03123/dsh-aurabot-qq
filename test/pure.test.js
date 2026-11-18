@@ -288,12 +288,19 @@ test('#6 头像来源：显式网址直接给网关；「刚才那张」和「�
   assert.equal(avatarSource('base64://AAAA').ok, false)
 })
 
-test('#28 QQ 网关：默认 SnowLuma；接自己的 OneBot 机器人时用 onebot；乱填的回到 SnowLuma', async () => {
+test('网关：默认用内嵌 Discord 协议桥；接已有 OneBot 服务时用 onebot；老的 SnowLuma 配置自动迁移', async () => {
   const { normalize } = await import('../src/core/config.js')
-  assert.equal(normalize({}).gateway, 'snowluma')
-  assert.equal(normalize({ gateway: 'onebot', snowluma: { wsUrl: 'ws://napcat:3001' } }).gateway, 'onebot')
-  assert.equal(normalize({ gateway: 'onebot', snowluma: { wsUrl: 'ws://napcat:3001' } }).snowluma.wsUrl, 'ws://napcat:3001')
-  assert.equal(normalize({ gateway: 'whatever' }).gateway, 'snowluma')
+  assert.equal(normalize({}).gateway, 'discord')
+  assert.equal(normalize({ gateway: 'whatever' }).gateway, 'discord')
+  assert.equal(normalize({ gateway: 'onebot', onebot: { wsUrl: 'ws://x:3001', protocol: 'v12' } }).onebot.protocol, 'v12')
+  // 老配置：snowluma 里填了地址 → 接已有服务，地址搬到 onebot
+  const old = normalize({ gateway: 'onebot', snowluma: { wsUrl: 'ws://napcat:3001', wsToken: 't' } })
+  assert.equal(old.gateway, 'onebot')
+  assert.equal(old.onebot.wsUrl, 'ws://napcat:3001')
+  assert.equal(old.onebot.protocol, 'v11')
+  assert.equal('snowluma' in old, false)
+  // 老配置：只装过 SnowLuma、没填地址 → 用内嵌协议桥
+  assert.equal(normalize({ gateway: 'snowluma', snowluma: { dir: 'C:/a' } }).gateway, 'discord')
 })
 
 test('#32 工作区位置：面板填的绝对路径优先，相对路径 / 乱填的当没填', async () => {
