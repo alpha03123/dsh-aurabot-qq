@@ -102,8 +102,7 @@ function config(patch = {}) {
   return normalize({ enabled: true, dryRun: true, setupDone: true, ownerQQ: OWNER, botQQ: BOT,
     allow: { private: [OTHER], groups: [] }, voice: { enabled: false }, merge: { enabled: false },
     stickers: { collect: true, caption: false, autoChance: 0 },
-    snowluma: { autoStart: false, autoAttach: false, dir: join(root, 'no-snowluma') },
-    profilePerms: { qqNickname: 'owner' }, ...patch })
+    snowluma: { autoStart: false, autoAttach: false, dir: join(root, 'no-snowluma') }, ...patch })
 }
 
 function setup(t, { cfg = config(), brain = async () => '', hooks, buildTools, onebot, onCommand, onActivity } = {}) {
@@ -124,7 +123,7 @@ test('同一会话连续重载两轮：旧工具、上下文、限制全部清�
   process.env.AURABOT_DATA_DIR = data
   writeFileSync(join(data, 'config.json'), JSON.stringify(config({ bridge: { dshTools: true } })))
   const fake = createFakeDsh({ brain: async ({ callTool }) => {
-    await callTool('qq_set_nickname', { name: '大肥鱼' })
+    await callTool('qq_whitelist', { action: 'remove', kind: 'group', id: '99999' })
     return ''
   } })
   t.after(() => fake.dispose())
@@ -144,8 +143,8 @@ test('同一会话连续重载两轮：旧工具、上下文、限制全部清�
     assert.equal(agent, originalAgent, '重载应复用原来的 agent')
     assert.ok(agent.contexts.has('aurabot-context'))
     assert.ok(agent.denied.has('aurabot_qq_send'), '联动全局工具应在 QQ 会话中被屏蔽')
-    assert.notEqual(agent.tools.get('qq_set_nickname'), previousTool, '每次加载应绑定新工具')
-    previousTool = agent.tools.get('qq_set_nickname')
+    assert.notEqual(agent.tools.get('qq_whitelist'), previousTool, '每次加载应绑定新工具')
+    previousTool = agent.tools.get('qq_whitelist')
     for (const call of fake.turns.at(-1).toolCalls) assert.equal(call.result.ok, true, `${call.name}: ${call.result.message || ''}`)
     fake.dispose()
     assert.deepEqual([...agent.tools.keys()], ['external-tool'], '卸载后仅保留外部工具')

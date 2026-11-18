@@ -727,7 +727,6 @@ export function apply(ctx) {
       mood: use('mood')?.state?.() ?? { value: 0, label: '心情模块关着', reason: '', history: [] },
       stickers: { count: stickers.library().items.length },
       diary: diary ? { next: diary.nextTime(), last: diary.history()[0] || null } : { next: 0, last: null },
-      qzoneSocial: use('qzone-social')?.state?.() ?? null,
       speakUp: use('speakup')?.state?.() ?? { count: 0 },
       purpose: purposeOverview(),
       pet: petStatus(),

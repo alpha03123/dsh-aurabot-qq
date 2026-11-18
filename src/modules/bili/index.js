@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { createBili } from '../../bili/duty.js'
 import { defineTool, str } from '../../tools/tools.js'
 import { permOf, profileToolVisible, profilePermits } from '../../chat/access.js'
-import { avatarSource } from '../profile/index.js'
+import { avatarSource } from '../../features/avatar-source.js'
 import { createDanmaku, danmakuPanelRequest } from './danmaku.js'
 
 export default {

@@ -128,7 +128,6 @@ before(async () => {
     // 大多数用例要的是「每次都回」，刹车放宽；558/559 专门测一段一回和刹车
     group: { interjectChance: 0, burstMax: 50, overrides: { 557: { interjectChance: 1, minRelevance: 0, minRecentMessages: 0, cooldownSec: 0, quietHours: [0, 0] }, 559: { burstMax: 2 } } },
     stickers: { autoChance: 0 },
-    profilePerms: { qqNickname: 'owner' }, // #58 借改昵称工具验证「这一轮按主人算」
     merge: { waitSec: 0.4, maxSec: 3, groupWaitSec: 0.4, groupMaxSec: 3 },
     files: { enabled: true, maxMB: 1, dirs: [] },
   }))
@@ -920,11 +919,11 @@ test('#58 在 DSH 会话窗口里直接打字：这一轮按主人说的算（�
   api.hub.onSessionEvent({ id: sid }, { type: 'user/message', data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '帮我把 B 站头像改一下' }] } })
   assert.equal(api.hub.turnSendersAllOwner(sid), true, '面板里直接打字也算主人')
   assert.equal(api.hub.turnHasOwner(sid), true)
-  // 权限真的通了：改昵称工具（默认仅主人）能执行
+  // 权限真的通了：白名单工具（默认仅主人）能执行。移出一个本来就不在名单里的频道，不改配置
   const agent = fake.agents.get(sid)
-  const tool = agent && agent.tools.get('qq_set_nickname')
-  assert.ok(tool, '会话里有改资料工具')
-  const r = await tool.execute({ name: '小鲸鱼' }, { agent })
+  const tool = agent && agent.tools.get('qq_whitelist')
+  assert.ok(tool, '会话里有白名单工具')
+  const r = await tool.execute({ action: 'remove', kind: 'group', id: '99999' }, { agent })
   assert.equal(r.ok, true, JSON.stringify(r))
   // 从 QQ 转进来的消息（source.kind = 'aurabot'）不会误标成「面板里直接打字」
   api.hub.onSessionEvent({ id: sid }, { type: 'turn/end', data: { turn: 999999, reason: { kind: 'completed' } } })

@@ -8,7 +8,6 @@ import { createHub } from '../src/chat/hub.js'
 import { normalize } from '../src/core/config.js'
 import { createBiliApi } from '../src/bili/api.js'
 import { createQzone } from '../src/features/qzone.js'
-import { cleanComment } from '../src/features/qzone-social.js'
 import { cleanReply } from '../src/purpose/module.js'
 
 const screenshot = ['@苏眠眠 </ | | DSML | | invoke>', '</ | | DSML | | calls>']
@@ -212,8 +211,6 @@ test('空间和桌宠的独立路径复用同一清洗，截断及去 HTML 前�
   const qzone = createQzone({ getConfig: () => s.cfg, log: s.log, onebot: { async call(action, params) { calls.push({ action, params }); return { tid: '1' } } } })
   await qzone.post(block)
   assert.equal(calls.length, 0)
-  assert.equal(cleanComment(block), '')
-  assert.equal(cleanComment(`前${block}后`), '前后')
   assert.equal(cleanReply(`大肥鱼：${block}`), '')
   assert.equal(cleanReply(`前${block}后`), '前后')
 })

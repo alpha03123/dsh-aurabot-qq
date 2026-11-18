@@ -116,6 +116,7 @@ test('白名单：所有人档，群友也能改（权限由面板决定）', as
 test('纯函数：cleanId / planWhitelist', () => {
   assert.equal(cleanId(' 40004 '), '40004')
   assert.equal(cleanId('12'), '')
-  assert.equal(cleanId('1234567890123'), '')
+  assert.equal(cleanId('1322145178253000724'), '1322145178253000724', 'Discord snowflake 也认')
+  assert.equal(cleanId('123456789012345678901'), '')
   assert.equal(planWhitelist({ ownerQQ: '1', allow: { private: [], groups: [] } }, { action: 'add', kind: 'group', id: '12345' }).next[0], '12345')
 })
