@@ -3,6 +3,7 @@
 import { extname } from 'node:path'
 import { fetchImage } from '../core/net.js'
 import { cleanText, clipText } from '../core/text.js'
+import { oid } from '../onebot/client.js'
 
 const MAX_BYTES = 2 * 1024 * 1024
 const MAX_CHARS = 20000
@@ -19,8 +20,8 @@ async function fileUrl(onebot, chat, file) {
   if (file.url) return file.url
   if (!file.id) return ''
   const r = chat.kind === 'group'
-    ? await onebot.call('get_group_file_url', { group_id: Number(chat.groupId), file_id: file.id, ...(file.busid ? { busid: file.busid } : {}) }, { timeoutMs: 15000 })
-    : await onebot.call('get_private_file_url', { user_id: Number(chat.userId), file_id: file.id, file_hash: file.hash || '' }, { timeoutMs: 15000 })
+    ? await onebot.call('get_group_file_url', { group_id: oid(chat.groupId), file_id: file.id, ...(file.busid ? { busid: file.busid } : {}) }, { timeoutMs: 15000 })
+    : await onebot.call('get_private_file_url', { user_id: oid(chat.userId), file_id: file.id, file_hash: file.hash || '' }, { timeoutMs: 15000 })
   return String(r?.url || '')
 }
 

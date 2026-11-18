@@ -1,5 +1,6 @@
 // 内置模块：基础 QQ 工具。翻聊天记录；主人私聊里还能让她主动给别人发消息、发文件。
 
+import { oid } from '../../onebot/client.js'
 import { defineTool, str, int } from '../../tools/tools.js'
 import { readQqFile } from '../../features/qq-file.js'
 import { parseMessageEvent } from '../../chat/inbound.js'
@@ -7,7 +8,7 @@ import { parseMessageEvent } from '../../chat/inbound.js'
 /** 真实网关对不在群里的人也回成功、角色写 member，只有 join_time 是空的：没有它就不算成员。 */
 async function isGroupMember(onebot, groupId, userId) {
   try {
-    const m = await onebot.call('get_group_member_info', { group_id: Number(groupId), user_id: Number(userId), no_cache: true }, { timeoutMs: 10000 })
+    const m = await onebot.call('get_group_member_info', { group_id: oid(groupId), user_id: oid(userId), no_cache: true }, { timeoutMs: 10000 })
     return String(m?.user_id) === String(userId) && Number(m?.join_time) > 0
   } catch (error) { return false }
 }
@@ -96,7 +97,7 @@ export default {
         execute: async ({ count, group, before }) => {
           const n = Math.max(1, Math.min(50, Number(count) || 20))
           const anchor = String(before ?? '').trim()
-          if (anchor && (!/^-?\d+$/.test(anchor) || !Number.isSafeInteger(Number(anchor)) || Number(anchor) === 0)) return { ok: false, message: 'before 要填有效的消息 ID' }
+          if (anchor && (!/^-?\d+$/.test(anchor) || /^-?0+$/.test(anchor))) return { ok: false, message: 'before 要填有效的消息 ID' }
           const cfg = api.config()
           let groupId = chat.kind === 'group' ? chat.groupId : ''
           let elsewhere = false
@@ -109,11 +110,11 @@ export default {
             groupId = hit.id
             elsewhere = hit.id !== String(chat.groupId || '')
           }
-          const page = { count: anchor ? n + 1 : n, ...(anchor ? { message_id: Number(anchor), reverse_order: true } : {}) }
+          const page = { count: anchor ? n + 1 : n, ...(anchor ? { message_id: oid(anchor), reverse_order: true } : {}) }
           const r = groupId
-            ? await onebot.call('get_group_msg_history', { group_id: Number(groupId), ...page }, { timeoutMs: 15000 })
-            : await onebot.call('get_friend_msg_history', { user_id: Number(chat.userId), ...page }, { timeoutMs: 15000 })
-          const msgs = (r?.messages || []).filter((m) => !anchor || String(m.message_id) !== String(Number(anchor))).slice(-n)
+            ? await onebot.call('get_group_msg_history', { group_id: oid(groupId), ...page }, { timeoutMs: 15000 })
+            : await onebot.call('get_friend_msg_history', { user_id: oid(chat.userId), ...page }, { timeoutMs: 15000 })
+          const msgs = (r?.messages || []).filter((m) => !anchor || String(m.message_id) !== String(oid(anchor))).slice(-n)
           if (!msgs.length) return { ok: true, message: '没翻到聊天记录' }
           const self = String(api.config().selfId)
           const lines = msgs.map((m) => {

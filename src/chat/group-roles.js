@@ -1,5 +1,6 @@
 // 她在每个群里的身份（群主 / 管理员 / 普通成员）：决定能不能做群管。查一次缓存 10 分钟。
 
+import { oid } from '../onebot/client.js'
 const TTL = 10 * 60_000
 export const ROLE_LABEL = { owner: '群主', admin: '管理员', member: '普通成员' }
 
@@ -8,7 +9,7 @@ export function createGroupRoles({ onebot, getConfig, log }) {
   const inflight = new Map()
 
   async function fetchRole(gid) {
-    const r = await onebot.call('get_group_member_info', { group_id: Number(gid), user_id: Number(getConfig().selfId), no_cache: true }, { timeoutMs: 8000 })
+    const r = await onebot.call('get_group_member_info', { group_id: oid(gid), user_id: oid(getConfig().selfId), no_cache: true }, { timeoutMs: 8000 })
     const role = ['owner', 'admin', 'member'].includes(r && r.role) ? r.role : 'member'
     cache.set(String(gid), { role, at: Date.now() })
     return role

@@ -25,7 +25,7 @@ import { stripFaceTags, splitSpeakable } from './speech.js'
 import { expandMentions, hasMention } from './mentions.js'
 import { cleanContent, cleanText } from '../core/text.js'
 import { createRecentMedia } from './recent-media.js'
-import { isDefiniteFailure } from '../onebot/client.js'
+import { isDefiniteFailure, oid } from '../onebot/client.js'
 import { grantOwner } from '../core/workspace-move.js'
 import { withPromptCapture, currentPromptSources, memoryPromptRanges } from '../security/leak-guard.js'
 import { noticeText } from './notices.js'
@@ -217,7 +217,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     const hit = groupMembers.get(groupId)
     if (hit && Date.now() - hit.at < 10 * 60_000) return hit.list
     try {
-      const r = await onebot.call('get_group_member_list', { group_id: Number(groupId) }, { timeoutMs: 15000 })
+      const r = await onebot.call('get_group_member_list', { group_id: oid(groupId) }, { timeoutMs: 15000 })
       const list = Array.isArray(r) ? r : r?.data || []
       groupMembers.set(groupId, { at: Date.now(), list })
       return list
@@ -274,7 +274,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     const names = new Map()
     for (const qq of new Set([ev.user_id, ev.operator_id, ev.sender_id].filter(Boolean))) {
       try {
-        const m = groupId ? await onebot.call('get_group_member_info', { group_id: Number(groupId), user_id: Number(qq) }, { timeoutMs: 3000, retries: 0 }) : null
+        const m = groupId ? await onebot.call('get_group_member_info', { group_id: oid(groupId), user_id: oid(qq) }, { timeoutMs: 3000, retries: 0 }) : null
         names.set(String(qq), `${m?.card || m?.nickname || 'QQ 用户'}(${qq})`)
       } catch (error) { names.set(String(qq), `QQ 用户(${qq})`) }
     }
@@ -636,7 +636,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     }
     const action = tgt.kind === 'group' ? 'send_group_msg' : 'send_private_msg'
     const sourceGroupId = tgt.kind === 'private' ? privateSources.get(tgt.id) : ''
-    const params = tgt.kind === 'group' ? { group_id: Number(tgt.id), message } : { user_id: Number(tgt.id), ...(sourceGroupId ? { group_id: Number(sourceGroupId) } : {}), message }
+    const params = tgt.kind === 'group' ? { group_id: oid(tgt.id), message } : { user_id: oid(tgt.id), ...(sourceGroupId ? { group_id: oid(sourceGroupId) } : {}), message }
     try {
       const r = await onebot.call(action, params, timeoutMs ? { timeoutMs } : undefined)
       if (r && r.message_id !== undefined) {
@@ -731,7 +731,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (!target) return
     if (!cfg.enabled || cfg.dryRun) return log.info(`试运行（没真戳）→ ${chatId}：戳了戳 ${target}`)
     try {
-      await onebot.call('send_poke', { user_id: Number(target), ...(group ? { group_id: Number(group) } : {}) }, { timeoutMs: 10000 })
+      await onebot.call('send_poke', { user_id: oid(target), ...(group ? { group_id: oid(group) } : {}) }, { timeoutMs: 10000 })
       log.info(`${chatId}：她戳了戳 ${target}`)
     } catch (error) {
       log.debug('戳一戳失败：', error.message)
@@ -809,8 +809,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (cfg.dryRun) { log.info(`试运行（没真发）→ ${chatId}：[文件] ${label}`); return null }
     const action = tgt.kind === 'group' ? 'upload_group_file' : 'upload_private_file'
     const params = tgt.kind === 'group'
-      ? { group_id: Number(tgt.id), file: src, name: label }
-      : { user_id: Number(tgt.id), file: src, name: label }
+      ? { group_id: oid(tgt.id), file: src, name: label }
+      : { user_id: oid(tgt.id), file: src, name: label }
     const srcLabel = external ? (src.startsWith('base64://') ? 'base64' : '外部地址') : size < 1024 ? size + ' B' : Math.round(size / 1024) + ' KB'
     try {
       const r = await onebot.call(action, params, { timeoutMs: FILE_TIMEOUT_MS })
@@ -1109,7 +1109,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (groupNames.has(gid)) return groupNames.get(gid)
     try {
       // 查群名是锦上添花：失败就退回群号，别在网关抖动时白等重试
-      const info = await onebot.call('get_group_info', { group_id: Number(gid) }, { retries: 0 })
+      const info = await onebot.call('get_group_info', { group_id: oid(gid) }, { retries: 0 })
       if (info?.group_name) groupNames.set(gid, info.group_name)
     } catch (error) {}
     return groupNames.get(gid) || gid
@@ -1134,9 +1134,9 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (!ctx || (!ctx.userId && !ctx.groupId)) return null
     const group = Boolean(ctx.groupId)
     const action = group ? 'get_group_msg_history' : 'get_friend_msg_history'
-    const base = group ? { group_id: Number(ctx.groupId) } : { user_id: Number(ctx.userId) }
+    const base = group ? { group_id: oid(ctx.groupId) } : { user_id: oid(ctx.userId) }
     // 先用引用 id 当锚点（能取到更早的消息），拿不到再退回「最近 30 条」
-    const anchor = /^-?\d+$/.test(id) ? Number(id) : 0
+    const anchor = /^-?\d+$/.test(id) ? oid(id) : 0
     const attempts = anchor
       ? [{ ...base, message_id: anchor, count: 5, reverse_order: false }, { ...base, count: 30 }]
       : [{ ...base, count: 30 }]
@@ -1165,7 +1165,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     }
     const out = { ok: false, who: '', uid: '', text: '', images: [], stickers: [], records: 0, isBot: false, at: 0, chatId }
     try {
-      const m = await onebot.call('get_msg', { message_id: Number(id) || id }, { timeoutMs: 5000, retries: 0 })
+      const m = await onebot.call('get_msg', { message_id: oid(id) }, { timeoutMs: 5000, retries: 0 })
       const sender = m?.sender || {}
       out.uid = String(sender.user_id ?? m?.user_id ?? '')
       out.who = String(sender.card || sender.nickname || out.uid || '某人')
@@ -1599,15 +1599,15 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     pokeAt.set(chatId, Date.now())
     let nickname = poker
     try {
-      const info = group ? await onebot.call('get_group_member_info', { group_id: Number(group), user_id: Number(poker) }, { timeoutMs: 5000 }) : await onebot.call('get_stranger_info', { user_id: Number(poker) }, { timeoutMs: 5000 })
+      const info = group ? await onebot.call('get_group_member_info', { group_id: oid(group), user_id: oid(poker) }, { timeoutMs: 5000 }) : await onebot.call('get_stranger_info', { user_id: oid(poker) }, { timeoutMs: 5000 })
       nickname = info?.card || info?.nickname || poker
     } catch (error) {}
     if (disposed) return
     log.info(`${chatId}：${nickname} 戳了戳她`)
     await onMessage({
       post_type: 'message', message_type: group ? 'group' : 'private', sub_type: group ? 'normal' : 'friend',
-      self_id: Number(self), user_id: Number(poker), ...(group ? { group_id: Number(group) } : {}), message_id: 0,
-      sender: { user_id: Number(poker), nickname, card: nickname },
+      self_id: oid(self), user_id: oid(poker), ...(group ? { group_id: oid(group) } : {}), message_id: 0,
+      sender: { user_id: oid(poker), nickname, card: nickname },
       message: [{ type: 'at', data: { qq: self } }, { type: 'text', data: { text: ` [戳了戳你${ev.action ? '：' + ev.action + (ev.suffix || '') : ''}]` } }],
     })
   }
@@ -1846,7 +1846,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (disposed) return
     const cfg = getConfig()
     if (chat.kind !== 'private' || !cfg.enabled || cfg.dryRun || typing.has(key)) return
-    const ping = () => { if (!disposed) onebot.call('set_input_status', { user_id: Number(chat.userId), event_type: 1 }, { timeoutMs: 5000 }).catch(() => {}) }
+    const ping = () => { if (!disposed) onebot.call('set_input_status', { user_id: oid(chat.userId), event_type: 1 }, { timeoutMs: 5000 }).catch(() => {}) }
     ping()
     const started = Date.now()
     const t = setInterval(() => {
@@ -1894,8 +1894,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       const tgt = targetOf(chat.chatId)
       if (!tgt) return content
       const r = tgt.kind === 'group'
-        ? await onebot.call('get_group_msg_history', { group_id: Number(tgt.id), count }, { timeoutMs: 8000 })
-        : await onebot.call('get_friend_msg_history', { user_id: Number(tgt.id), count }, { timeoutMs: 8000 })
+        ? await onebot.call('get_group_msg_history', { group_id: oid(tgt.id), count }, { timeoutMs: 8000 })
+        : await onebot.call('get_friend_msg_history', { user_id: oid(tgt.id), count }, { timeoutMs: 8000 })
       const list = Array.isArray(r) ? r : (r?.messages || [])
       const lines = flatHistory(list).slice(-count)
       if (!lines.length) return content

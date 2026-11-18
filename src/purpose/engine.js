@@ -70,7 +70,7 @@ function clip(text, max = 120) {
 
 /** 群聊素材里常带 QQ 号；给主人看的摘要不带号，只留事。 */
 function redactNumbers(text) {
-  return String(text ?? '').replace(/\b\d{6,12}\b/g, '[号码]');
+  return String(text ?? '').replace(/\b\d{6,20}\b/g, '[号码]');
 }
 
 export function localDateKey(at = Date.now()) {

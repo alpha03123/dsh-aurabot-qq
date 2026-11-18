@@ -30,7 +30,7 @@ export function memberNames(members) {
  */
 export function resolveMember(who, byName, qqs) {
   const w = String(who || '').replace(/^@/, '').trim()
-  if (/^\d{5,12}$/.test(w)) return w
+  if (/^\d{5,20}$/.test(w)) return w
   const hit = byName.get(w)
   return hit && hit.size === 1 ? [...hit][0] : ''
 }

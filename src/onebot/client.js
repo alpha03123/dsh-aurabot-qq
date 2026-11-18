@@ -6,6 +6,19 @@ const RECONNECT_MAX = 30000
 // 网关短暂不可用（SnowLuma 刚被重启、端口还没释放）时，发消息别直接丢：等一会儿再试
 const RETRY_DELAYS = [1000, 3000, 5000]
 
+/**
+ * 交给网关的 ID：安全整数范围内照旧用数字（QQ 号、桥映射出来的短号），超出的（Discord 18~19 位 snowflake）保持字符串，
+ * 不然 Number() 会悄悄把末几位改掉。
+ */
+export function oid(v) {
+  const s = String(v ?? '').trim()
+  if (/^-?\d+$/.test(s)) {
+    const n = Number(s)
+    if (Number.isSafeInteger(n)) return n
+  }
+  return s
+}
+
 export class OneBotError extends Error {
   constructor(action, data, { transport = false, uncertain = false } = {}) {
     // onebots 桥把错误原因放在 msg 里（retcode 一律 -1），先读它
