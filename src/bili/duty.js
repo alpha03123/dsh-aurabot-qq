@@ -83,7 +83,8 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   }
 
   async function think(prompt) {
-    return hub.runSystemTurn('bili', '刷B站', `【刷 B 站，不是聊天，这一轮不会发到聊天里】\n${prompt}`, { timeoutMs: 180000 })
+    const nowStr = new Date().toLocaleString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false })
+    return hub.runSystemTurn('bili', '刷B站', `【刷 B 站，不是聊天，这一轮不会发到聊天里；现在是 ${nowStr}】\n${prompt}`, { timeoutMs: 180000 })
   }
 
   /** 这一轮搜什么：她自己的兴趣 + 记忆里你喜欢的东西 + 面板里填的关键词，让她挑 3 个。 */
@@ -225,7 +226,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       if (!looked.length) return { ok: false, message: '视频都打不开' }
       const commentLeft = c.comment && canPost(s) ? Math.max(0, c.maxCommentsPerDay - s.comments) : 0
       const out = await think(`你在 B 站刷到了这几个视频：\n\n${looked.map((x, i) => `【${i + 1}】${x.digest}`).join('\n\n')}\n\n` +
-        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受", "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）", "share":"想私聊分享给${owner()}的话（觉得${owner()}会喜欢才写，不然空字符串）", "remember":"值得记住的一件事（没有就空字符串）"}。` +
+        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受", "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）", "share":"想私聊分享给${owner()}的话（系统会自动把视频链接附在后面，直接按顺手分享的口吻聊就行，别问「要不要发你」；真的觉得${owner()}会喜欢、或和最近聊过的有关才写，不然空字符串）", "remember":"值得记住的一件事（没有就空字符串）"}。` +
         `这次最多评论 ${commentLeft} 个。只输出 JSON 数组。`)
       const decisions = pickJson(out, [])
       let commented = 0

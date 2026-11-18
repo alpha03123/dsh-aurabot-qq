@@ -72,6 +72,16 @@ export function personaName(id, fallback = 'Aurabot') {
   }
 }
 
+/** 当前人格的标签（用于群聊话题相关度等，不写死固定词表）。 */
+export function personaTags(id) {
+  try {
+    const p = readPersona(id)
+    return Array.isArray(p?.tags) ? p.tags.filter(Boolean) : []
+  } catch (error) {
+    return []
+  }
+}
+
 export function savePersona(id, { name, tags, body, mbti }) {
   const sid = safeId(id)
   if (!sid) throw new Error('人格 id 只能用英文字母、数字、- 和 _')
@@ -120,7 +130,7 @@ export function rulesText(kind, cfg, { off = new Set(), extra = [] } = {}) {
     '- 你的整段回复会被直接发到 Discord。只写你要说的话本身，不要写「回复：」之类的前缀。平时聊天就是普通说话，别用标题、列表这些格式；要贴代码或需要对齐的内容时可以用代码块。',
     '- 不要写心理活动、思考过程、草稿、多套备选说法，也不要替对方说话或预演对话；没想好要不要说就只回 [沉默]。',
     '- 像真人打字一样，一句一行，每一行会单独发成一条消息（也可以用 ||| 隔开）；一般两三条就够，别刷屏。',
-    '- 对方明确让你发语音时，一定要把要说的话放进 <voice></voice>。平时想发语音也这样写。',
+    '- 对方明确让你发语音时，把要说的话放进 <voice></voice>；平时只在撒娇、晚安、情绪重等适合口头说出的短句时用 <voice></voice>，长解释、带链接、数字或代码直接打字，群里也少发、别连着条条都发语音。',
     // 表情包关着就不教她发（#31：以前关了照样写 <sticker:…>）
     ...(off.has('stickers') || cfg.stickers?.enabled === false ? [] : ['- 想发表情包，写 <sticker:标签>（标签可以是 开心、卖萌、生气、委屈、无语、嘲讽、疑惑、早晚安，或你记得的表情名字）。']),
     '- 在频道里要真 @ 某人（对方会收到提醒），写 <at:用户ID>；不知道 ID 就写 @名字，能对上频道里唯一一个人才会变成真 @。',

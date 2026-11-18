@@ -120,14 +120,14 @@ for (const target of ['group:9', 'private:1', 'private:2']) {
     assert.equal(s.sent.length, 0)
     assert.ok(s.warnings.some((line) => line.includes('整段都是工具调用')))
     await s.hub.sendText(target, `正常${closing}正文`, '42', undefined, '22')
-    assert.deepEqual(s.sent[0].message, [quote, at, text(' '), text('正常正文')])
+    assert.deepEqual(s.sent[0].message, [quote, text('正常正文')])
   })
 }
 
-test('正常群聊引用和真实 @ 保留，模型正文里的 @ 不受影响', async (t) => {
+test('正常群聊引用不重复 @，模型正文里的 @ 不受影响', async (t) => {
   const s = setup(t)
   await s.hub.deliver('group:9', `你好${closing}`, { autoReply: { mid: '42', uid: '22', direct: true }, simulate: true })
-  assert.deepEqual(s.sent[0].message, [quote, at, text(' '), text('你好')])
+  assert.deepEqual(s.sent[0].message, [quote, text('你好')])
   await s.hub.sendText('group:9', `@苏眠眠 你好${closing}`)
   assert.ok(s.sent[1].message.some((seg) => seg.type === 'at' && seg.data.qq === '22'))
   assert.ok(s.sent[1].message.some((seg) => seg.type === 'text' && seg.data.text.includes('你好')))

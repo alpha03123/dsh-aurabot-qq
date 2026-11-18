@@ -11,7 +11,7 @@ import { join } from 'node:path'
 const dataDir = mkdtempSync(join(tmpdir(), 'aurabot-http-tts-'))
 process.env.AURABOT_DATA_DIR = dataDir
 
-const { httpSynth } = await import('../src/voice/tts.js')
+const { httpSynth, textToSpeech } = await import('../src/voice/tts.js')
 const { normalize } = await import('../src/core/config.js')
 
 const wav = Buffer.alloc(800)
@@ -182,4 +182,12 @@ test('归一化之后再发请求：手写成对象的 headers 和 body 也能�
   assert.equal(hits[0].method, 'POST')
   assert.equal(hits[0].headers.authorization, 'Bearer;abc')
   assert.equal(JSON.parse(hits[0].body).request.text, '你好')
+})
+
+test('指定引擎失败时不回退 Windows 机器音，直接抛错让上层改发文字', async () => {
+  respond = (res) => { res.writeHead(500); res.end('boom') }
+  await assert.rejects(
+    () => textToSpeech('你好', { engine: 'http', http: { urlTemplate: `${base}/tts?text={text}` } }),
+    /500/,
+  )
 })

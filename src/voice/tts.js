@@ -289,24 +289,16 @@ export async function textToSpeech(text, opt = {}, log) {
   let engine = ''
   const local = { cosyvoice: cosyvoiceSynth, gptsovits: gptsovitsSynth, http: httpSynth }[opt.engine]
   if (local) {
-    try {
-      file = await local(clean, opt[opt.engine] || {})
-      engine = opt.engine
-    } catch (error) {
-      log?.warn(`${opt.engine} 失败：${error.message} → 改用 Windows 语音`)
-    }
-  } else if (opt.engine !== 'windows' && edgeInstalled()) {
-    try {
-      file = await edgeSynth(clean, opt.voice || 'zh-CN-XiaoyiNeural', opt.rate, opt.pitch)
-      engine = 'edge'
-    } catch (error) {
-      log?.warn(error.message, '→ 改用 Windows 语音')
-    }
-  }
-  if (!file) {
-    if (!WIN) throw new Error('语音没合成出来：Linux / macOS 上没有 Windows 自带语音可以兜底，先在「语音」页装好 edge-tts，或者用本地 TTS 服务')
+    file = await local(clean, opt[opt.engine] || {})
+    engine = opt.engine
+  } else if (opt.engine === 'windows') {
+    if (!WIN) throw new Error('Windows 语音只能在 Windows 上用')
     file = await windowsSynth(clean)
     engine = 'windows'
+  } else {
+    if (!edgeInstalled()) throw new Error('语音没合成出来：还没装 edge-tts 语音组件')
+    file = await edgeSynth(clean, opt.voice || 'zh-CN-XiaoyiNeural', opt.rate, opt.pitch)
+    engine = 'edge'
   }
   for (const conv of voiceConverters) {
     try {

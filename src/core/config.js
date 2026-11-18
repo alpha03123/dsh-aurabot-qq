@@ -85,7 +85,7 @@ export const DEFAULTS = {
   // 按群头衔不回：勾选的群里，专属头衔正好是 title 的成员（一般是别的机器人）说话、戳她都不理。没勾群就不起作用
   voice: {
     enabled: true,
-    // auto = 先 edge-tts，不行用 Windows 语音；edge / windows / cosyvoice / gptsovits / http = 指定引擎（失败都会退回 Windows 语音）
+    // auto / edge = 用 edge-tts（失败直接改发文字）；windows = Windows 语音；cosyvoice / gptsovits / http = 指定引擎（失败改发文字）
     engine: 'auto',
     cosyvoice: { url: 'http://127.0.0.1:50000', mode: 'sft', spkId: '中文女', instruct: '', sampleRate: 22050 },
     gptsovits: { url: 'http://127.0.0.1:9880', refAudio: '', promptText: '', promptLang: 'zh', textLang: 'zh' },
@@ -94,7 +94,7 @@ export const DEFAULTS = {
     voice: 'zh-CN-XiaoyiNeural',
     rate: '+0%',
     pitch: '+0Hz',
-    autoChance: 0.15, // 短回复自动变语音的概率
+    autoChance: 0, // 不再强行把短回复随机转语音，交回模型通过 <voice> 自行决定
     autoMaxChars: 80,
     asr: true, // 听语音
     emojiSeparate: true, // 语音条里的表情/emoji 不念出来，单独补一条文字发出去
@@ -104,7 +104,7 @@ export const DEFAULTS = {
   },
   stickers: {
     enabled: true,
-    autoChance: 0.35, // 文字回复自动配一张表情的概率
+    autoChance: 0, // 不再随机往回复末尾硬塞表情包，交回模型通过 <sticker:标签> 自行决定
     collect: true, // 偷表情
     // 怎么偷：auto = 看到就收（默认，保持原行为）；ask = 她挑（先记着，喜欢才凭编号收）；owner = 只听主人的（只有主人语境下才提示/允许收）
     collectMode: 'auto',
@@ -405,7 +405,7 @@ export function normalize(raw) {
   g.ownerBrief.enabled = bool(g.ownerBrief.enabled, false)
   g.ownerBrief.lines = num(g.ownerBrief.lines, 12, 1, BIG)
   g.ownerBrief.groups = qqList(g.ownerBrief.groups)
-  c.voice.autoChance = num(c.voice.autoChance, 0.15, 0, 1)
+  c.voice.autoChance = num(c.voice.autoChance, 0, 0, 1)
   c.voice.autoMaxChars = num(c.voice.autoMaxChars, 80, 1, BIG)
   c.voice.emojiSeparate = c.voice.emojiSeparate !== false
   // 通用 HTTP 引擎（接火山 / 阿里 / 讯飞这类云 TTS）：method 只认 GET / POST，其余当 GET；
@@ -417,7 +417,7 @@ export function normalize(raw) {
   c.voice.http.headers = headerLines(c.voice.http.headers)
   c.voice.http.body = bodyText(c.voice.http.body)
   c.voice.http.sampleRate = num(c.voice.http.sampleRate, 24000, 8000, 48000)
-  c.stickers.autoChance = num(c.stickers.autoChance, 0.35, 0, 1)
+  c.stickers.autoChance = num(c.stickers.autoChance, 0, 0, 1)
   c.stickers.collectMode = ['ask', 'auto', 'owner'].includes(c.stickers.collectMode) ? c.stickers.collectMode : 'auto'
   c.stickers.maxPerHour = num(c.stickers.maxPerHour, 20, 0, BIG)
   c.stickers.maxLibrary = num(c.stickers.maxLibrary, 300, 1, BIG)

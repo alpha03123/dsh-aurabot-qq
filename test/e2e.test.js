@@ -222,7 +222,7 @@ test('群聊：没叫她不回；@她必回（群聊 preset，只有主人那一
   assert.match(turn.userText, /今天天气不错/, '带上了群里刚才的聊天')
   const reply = sentTo('group', '555').at(-1).params.message
   assert.equal(reply[0].type, 'reply', '回复引用了对方的消息')
-  assert.deepEqual(reply[1], { type: 'at', data: { qq: '777' } }, '回复真实 @ 对方')
+  assert.equal(reply.some((s) => s.type === 'at'), false, '引用回复本身带提醒，不重复 @ 对方')
   const agent = fake.agents.get(turn.sessionId)
   assert.ok(!agent.tools.has('post_update'), '群聊会话没有发空间这类主人工具')
   assert.ok(agent.tools.has('send_chat_message'), '群聊会话有跨聊天发送工具，但 execute 里只放行「这一轮说话的全是主人」')
@@ -338,7 +338,7 @@ test('群聊：她还在回上一段时新来的消息先攒着，回完再一�
   assert.ok(['补充一句A', '补充一句B', '补充一句C'].every((w) => mine[1].userText.includes(w)))
 })
 
-test('群聊被引用：引用她的消息后，回复引用并 @ 对方', async () => {
+test('群聊被引用：引用她的消息后，只发引用回复不再重复 @ 对方', async () => {
   const outgoing = await api.hub.sendText('group:555', '前一条测试消息')
   const sentId = String(outgoing.message_id)
   const target = grp('555', '779', [{ type: 'reply', data: { id: sentId } }, ...text('谢谢你')])
@@ -347,10 +347,10 @@ test('群聊被引用：引用她的消息后，回复引用并 @ 对方', async
   await until(() => sentTo('group', '555').length > n)
   const segs = sentTo('group', '555').at(-1).params.message
   assert.deepEqual(segs[0], { type: 'reply', data: { id: String(target.message_id) } })
-  assert.deepEqual(segs[1], { type: 'at', data: { qq: '779' } })
+  assert.equal(segs.some((s) => s.type === 'at'), false, '引用回复本身带提醒，不再多 @ 一次')
 })
 
-test('群聊引用回复：她写 <reply:编号>，发出去的那条带上对应消息的引用', async () => {
+test('群聊引用回复：她写 <reply:编号>，发出去的那条只带引用不重复 @', async () => {
   const at = (t) => [{ type: 'at', data: { qq: BOT } }, { type: 'text', data: { text: ' ' + t } }]
   const first = grp('558', '730', text('先随便说一句'), '壬')
   const target = grp('558', '731', at('引用测试 这条要被引用'), '癸')
@@ -360,7 +360,7 @@ test('群聊引用回复：她写 <reply:编号>，发出去的那条带上对�
   await until(() => sentTo('group', '558').length >= n + 2)
   const [quoted, plain] = sentTo('group', '558').slice(n)
   assert.deepEqual(quoted.params.message[0], { type: 'reply', data: { id: String(target.message_id) } })
-  assert.deepEqual(quoted.params.message[1], { type: 'at', data: { qq: '731' } })
+  assert.equal(quoted.params.message.some((s) => s.type === 'at'), false, '引用回复不再多 @ 一次')
   assert.equal(quoted.params.message.at(-1).data.text, '收到这条啦')
   assert.equal(plain.params.message[0].type, 'text', '其余的照常发，不引用')
 })

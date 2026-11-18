@@ -79,6 +79,7 @@ export function apply(ctx) {
       wrongAccount = ''
       if (onebotState === 'connected') onebot.restart()
     }
+    if (before.persona?.current !== cfg.persona?.current) syncDiscordNickname?.()
     secrets()
     if (bridge && before.bridge.dshTools !== cfg.bridge.dshTools) bridge.refresh()
     if (mods && (JSON.stringify(before.modules) !== JSON.stringify(cfg.modules) || before.safeMode !== cfg.safeMode)) mods.sync().catch(() => {})
@@ -131,6 +132,12 @@ export function apply(ctx) {
   let hub = null
   let dangerGuard = null // 危险命令确认（security.dangerConfirm 开着才生效）
   let approvalRelay = null // DSH 要授权时在 QQ 私聊问主人（approvalViaChat 开着才生效）
+  function syncDiscordNickname() {
+    if (cfg.gateway !== 'discord' || onebotState !== 'connected' || !loginOk) return
+    const nick = personaName(cfg.persona?.current, '')
+    if (!nick) return
+    onebot.call('set_self_nickname', { nickname: nick }, { retries: 0, timeoutMs: 10000 }).catch(() => {})
+  }
   async function checkLogin() {
     verifying = true
     pendingEvents = []
@@ -153,6 +160,7 @@ export function apply(ctx) {
       if (String(uin) === String(cfg.selfId)) {
         loginOk = true
         wrongAccount = ''
+        syncDiscordNickname()
         // 把核对期间攒下的补上（按到达顺序）
         const queued = pendingEvents
         pendingEvents = []
@@ -1238,6 +1246,7 @@ export function apply(ctx) {
   route('/persona/save', async (req) => {
     const b = await readBody(req)
     const p = savePersona(b.id, b)
+    if (b.id === cfg.persona.current) syncDiscordNickname()
     return { ok: true, persona: p, message: '人格已保存，下一轮起生效' }
   })
   route('/persona/delete', async (req) => {

@@ -242,7 +242,7 @@ DiscordAdapter.prototype.getGroupMemberList = async function (uin, params) {
   return (Array.isArray(list) ? list : []).filter((m) => m?.user?.id).map((m) => ({ group_id: params.group_id, user_id: this.createId(m.user.id), user_name: memberName(m) }));
 };
 
-// set_input_status → 「正在输入」；其他照常
+// set_input_status → 「正在输入」；set_self_nickname → 同步各服务器昵称；其他照常
 const origExecute = OneBotV12ActionService.prototype.execute;
 OneBotV12ActionService.prototype.execute = async function (action, params = {}) {
   if (action === "set_input_status") {
@@ -252,6 +252,21 @@ OneBotV12ActionService.prototype.execute = async function (action, params = {}) 
       : await dmChannelOf(adapter, accountId, adapter.coerceId(String(params.user_id)).string);
     if (channelId) await adapter.requireBot(accountId).getREST().request(`/channels/${channelId}/typing`, { method: "POST" });
     return {};
+  }
+  if (action === "set_self_nickname") {
+    const { adapter, accountId } = this.context;
+    const rest = adapter.requireBot(accountId).getREST();
+    const nick = String(params.nickname || "").trim().slice(0, 32);
+    if (!nick) return { ok: false };
+    const guilds = await rest.request("/users/@me/guilds");
+    const list = Array.isArray(guilds) ? guilds : [];
+    for (const g of list) {
+      if (!g?.id) continue;
+      try {
+        await rest.request(`/guilds/${g.id}/members/@me`, { method: "PATCH", body: { nick } });
+      } catch {}
+    }
+    return { ok: true, count: list.length };
   }
   return origExecute.call(this, action, params);
 };

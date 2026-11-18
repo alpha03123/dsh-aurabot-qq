@@ -106,6 +106,12 @@ export function parseMessageEvent(event, selfId, { faceName } = {}) {
       case 'poke':
         texts.push('[戳一戳]')
         break
+      case 'sticker':
+        texts.push(d.name ? `[贴纸：${String(d.name)}]` : '[贴纸]')
+        break
+      case 'embed':
+        texts.push(d.title ? `[卡片：${String(d.title)}]` : '[卡片消息]')
+        break
       case 'forward': {
         // QQ 合并转发（Discord 没有这种消息段，留个占位）
         texts.push('[转发的消息]')
