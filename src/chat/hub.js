@@ -959,9 +959,19 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       const spoken = items.filter((i) => i.kind === 'text').map((i) => i.value).join('，')
       if (spoken && spoken.length <= 300) items = [{ kind: 'voice', value: spoken }, ...items.filter((i) => i.kind !== 'text')]
     }
+    // 面板里手动调高了才会按概率把短回复变语音 / 补一张表情（默认 0：交给她自己写 <voice> / <sticker:…>）
+    const texts = items.filter((i) => i.kind === 'text')
+    if (cfg.voice.enabled && cfg.voice.autoChance > 0 && items.length === texts.length && texts.length > 0) {
+      const all = texts.map((t) => t.value).join('，')
+      if (all.length <= cfg.voice.autoMaxChars && Math.random() < cfg.voice.autoChance) items = [{ kind: 'voice', value: all }]
+    }
     const inGroup = chatId.startsWith('group:')
     // 群里别刷屏：一段最多 3 条
     if (inGroup && items.length > 3) items = items.slice(0, 3)
+    if (cfg.stickers.enabled && cfg.stickers.autoChance > 0 && !items.some((i) => i.kind === 'sticker') && !(inGroup && items.length >= 2) && Math.random() < cfg.stickers.autoChance) {
+      const pick = stickers.pickForReply(texts.map((t) => t.value).join(' '))
+      if (pick) items.push({ kind: 'sticker', value: pick })
+    }
     if (hooks?.items) {
       try {
         const next = await hooks.items(items, { chatId, text, userText: opts.userText || '' })
