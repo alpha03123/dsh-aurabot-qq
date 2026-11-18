@@ -25,6 +25,6 @@ test('和语音混排及语音里的换行都正确处理', () => {
 })
 
 test('代码示例中的字面量保持原样，示例外的 br 仍换行', () => {
-  assert.deepEqual(texts(parseReply('例如 `<br>` 表示换行<br>结束')), ['例如 <br> 表示换行', '结束'])
+  assert.deepEqual(texts(parseReply('例如 `<br>` 表示换行<br>结束')), ['例如 `<br>` 表示换行', '结束'], 'Discord 会渲染行内代码，反引号保留')
   assert.ok(texts(parseReply('示例：\n```html\n第一行<br>第二行\n```')).join('\n').includes('第一行<br>第二行'))
 })

@@ -483,8 +483,13 @@ export function splitLines(text) {
   return lines
 }
 
+/** Discord 会渲染 Markdown：代码块、粗体照留，只去掉标题（# 在 Discord 里是超大号字）。 */
+function tidyForDiscord(text) {
+  return String(text || '').replace(/^#{1,6}\s+/gm, '').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 function pushText(items, s) {
-  const t = stripMarkdown(String(s || '').replace(/<\/?reply[^>]*>/g, '')) // 写坏的引用标签直接去掉
+  const t = tidyForDiscord(String(s || '').replace(/<\/?reply[^>]*>/g, '')) // 写坏的引用标签直接去掉
   if (!t || isSilence(t)) return
   for (const line of splitLines(t)) if (!isSilence(line)) items.push({ kind: 'text', value: line })
 }
