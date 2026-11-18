@@ -301,6 +301,8 @@ export function apply(ctx) {
       send: (message, info) => mods.filter('send', message, info),
       model: (sel, chat) => mods.filterSync('model', sel, chat),
       poke: (ev) => mods.claim('poke', ev),
+      // 本地改（2026-11-17，autonomy 用）：私聊这条要不要晚点交给她（她在忙 / 睡着了）。返回毫秒，0 = 照常
+      hold: (ms, info) => mods.filter('reply/hold', ms, info),
     },
   })
 

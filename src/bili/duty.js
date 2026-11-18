@@ -90,10 +90,11 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   async function chooseKeywords() {
     const c = cfg()
     const interests = [...(c.keywords || []), ...(getConfig().group.interests || [])]
-    const about = (memory?.list?.('') || []).filter((m) => String(m.about) === String(getConfig().ownerQQ) || /喜欢|爱|想|在玩|在看|追/.test(m.text)).slice(0, 12).map((m) => m.text)
-    const recent = (memory?.recentEvents?.(72, 6) || []).filter((m) => (m.tags || []).includes('B站')).map((m) => m.text)
+    // 本地改（2026-11-17）：她自己看过 / 做过的事（seen、经历）不算「关于主人的事」，否则「我想补几部番」会被当成主人推荐的
+    const about = (memory?.list?.('') || []).filter((m) => m.kind !== 'seen' && m.source !== 'event' && (String(m.about) === String(getConfig().ownerQQ) || /喜欢|爱|想|在玩|在看|追/.test(m.text))).slice(0, 12).map((m) => m.text)
+    const recent = (memory?.recentEvents?.(72, 8) || []).filter((m) => m.kind === 'seen' || (m.tags || []).includes('B站')).slice(0, 6).map((m) => m.text)
     try {
-      const out = await think(`你想去 B 站刷点视频。你感兴趣的：${interests.join('、') || '随便看看'}。\n你记得的关于${owner()}和大家的事：\n${about.map((t) => '- ' + t).join('\n') || '（暂无）'}\n最近刷过的：\n${recent.map((t) => '- ' + t).join('\n') || '（暂无）'}\n\n挑 3 个这次想搜的关键词（可以是你自己想看的，也可以是${owner()}可能喜欢、你想分享给${owner()}的），别和最近刷过的重复。只输出 JSON 数组，例如 ["白米饭 做法","猫咪 搞笑"]。`)
+      const out = await think(`你想去 B 站刷点视频。你感兴趣的：${interests.join('、') || '随便看看'}。\n你记得的关于${owner()}和大家的事：\n${about.map((t) => '- ' + t).join('\n') || '（暂无）'}\n你自己最近刷过 / 看过的：\n${recent.map((t) => '- ' + t).join('\n') || '（暂无）'}\n\n挑 3 个这次想搜的关键词（可以是你自己想看的，也可以是${owner()}可能喜欢、你想分享给${owner()}的），别和最近刷过的重复。只输出 JSON 数组，例如 ["白米饭 做法","猫咪 搞笑"]。`)
       const arr = pickJson(out, []).map((k) => String(k).trim()).filter(Boolean)
       if (arr.length) return arr.slice(0, 3)
     } catch (error) {
@@ -228,6 +229,10 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       const decisions = pickJson(out, [])
       let commented = 0
       let shared = 0
+      // 本地改（2026-11-17）：一轮最多分享一个（想分享的里面随机挑一个）；主人 15 分钟内刚聊过就先不发
+      const wantShare = (Array.isArray(decisions) ? decisions : []).filter((d) => d && String(d.share || '').trim() && !isSilence(String(d.share)))
+      const shareOne = wantShare.length ? wantShare[Math.floor(Math.random() * wantShare.length)] : null
+      const justTalked = Date.now() - Math.max(hub.lastOwnerChatAt || 0, hub.lastBotToOwner?.at || 0) < 15 * 60_000
       const felt = new Map() // bvid → 她自己的一句感受，发截图时配着用
       for (const d of Array.isArray(decisions) ? decisions : []) {
         const x = looked[(Number(d.i) || 0) - 1]
@@ -254,7 +259,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         }
         if (c.like && !getConfig().dryRun) api.likeVideo(v.aid).catch(() => {})
         const share = cleanOutboundText(d.share, { warn: (message) => log.warn(`B 站分享：${message}`) }).trim()
-        if (share && !isSilence(share) && c.shareToOwner && getConfig().ownerQQ) {
+        if (share && !isSilence(share) && c.shareToOwner && getConfig().ownerQQ && d === shareOne && !justTalked) {
           await hub.sendText(`private:${getConfig().ownerQQ}`, `${share}\n${link(v.bvid)}`)
           shared++
           record(s, { kind: 'share', title: v.title, bvid: v.bvid, text: share })

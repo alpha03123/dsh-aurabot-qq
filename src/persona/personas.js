@@ -63,12 +63,33 @@ export function readPersona(id) {
   return { ...parsePersona(safeId(id), readFileSync(f, 'utf8')), raw: readFileSync(f, 'utf8') }
 }
 
-export function savePersona(id, { name, tags, body }) {
+/** 本地改（2026-11-17）：当前人格的名字（后台提示词里别再写死「大肥鱼」）；读不到返回 fallback */
+export function personaName(id, fallback = '大肥鱼') {
+  try {
+    const p = readPersona(id)
+    return (p && String(p.name || '').trim()) || fallback
+  } catch (error) {
+    return fallback
+  }
+}
+
+export function savePersona(id, { name, tags, body, mbti }) {
   const sid = safeId(id)
   if (!sid) throw new Error('人格 id 只能用英文字母、数字、- 和 _')
   if (!String(body || '').trim()) throw new Error('人格内容不能是空的')
   mkdirSync(dir(), { recursive: true })
-  const head = `---\nname: ${String(name || sid).replace(/\n/g, ' ')}\ntags: [${(tags || []).join(', ')}]\n---\n\n`
+  // 本地改（2026-11-17）：保留原文件里 name/tags 以外的头部字段（比如 mbti，自主生活靠它），也可以直接传 mbti
+  let extra = ''
+  try {
+    const f = join(dir(), `${sid}.md`)
+    if (existsSync(f)) {
+      const m = readFileSync(f, 'utf8').match(/^---\n([\s\S]*?)\n---/)
+      if (m) extra = m[1].split('\n').filter((l) => l.trim() && !/^(name|tags|mbti)\s*:/i.test(l)).map((l) => l + '\n').join('')
+      if (!mbti && m) mbti = (m[1].match(/^mbti\s*:\s*([EI][NS][TF][JP])\s*$/im) || [])[1]
+    }
+  } catch (error) {}
+  const mbtiLine = /^[EI][NS][TF][JP]$/i.test(String(mbti || '').trim()) ? `mbti: ${String(mbti).trim().toUpperCase()}\n` : ''
+  const head = `---\nname: ${String(name || sid).replace(/\n/g, ' ')}\ntags: [${(tags || []).join(', ')}]\n${mbtiLine}${extra}---\n\n`
   writeFileSync(join(dir(), `${sid}.md`), head + String(body).trim() + '\n', 'utf8')
   return readPersona(sid)
 }

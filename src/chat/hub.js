@@ -1549,13 +1549,30 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       for (const c of qImgs) content.push(c)
     }
     if (disposed) return
+    // 本地改（2026-11-17）：私聊可以让模块决定晚点再交给她（她在忙 / 睡着了），晚交期间的消息照常攒在一起。
+    // 放在 logChat 之前：模块看到的「上一条」时间还是旧的，才判断得出是不是正聊着。
+    let holdMs = 0
+    if (msg.kind === 'private' && hooks?.hold) {
+      try {
+        const p0 = pending.get(msg.chatId)
+        holdMs = Math.max(0, Number(await hooks.hold(0, {
+          chatId: msg.chatId, userId: msg.userId, nickname: msg.nickname, text,
+          owner: isOwner(cfg, msg.userId), queued: p0 ? p0.count : 0, heldUntil: p0?.holdUntil || 0,
+          lastInAt: lastPrivateAt.get(msg.userId) || 0,
+          lastOutAt: msg.userId === cfg.ownerQQ ? (lastBotToOwner?.at || 0) : 0,
+        })) || 0)
+      } catch (error) {
+        log.warn('扩展模块决定晚回出错：', error.message)
+      }
+      if (disposed) return
+    }
     logChat(msg.chatId, msg.nickname, text, msg.userId)
     lastChatAt = now
     if (msg.kind === 'private' && msg.userId === cfg.ownerQQ) lastOwnerChatAt = now
     if (msg.kind === 'private') lastPrivateAt.set(msg.userId, now)
     onActivity?.({ kind: 'in', chatId: msg.chatId, userId: msg.userId, nickname: msg.nickname, text, direct: msg.kind === 'private' || msg.mentioned || mode === 'must', owner: isOwner(cfg, msg.userId) })
 
-    enqueue({ chatId: msg.chatId, kind: msg.kind, userId: msg.userId, groupId: msg.groupId, nickname: msg.nickname }, content, msg.userId, wantsVoice(msg.text), mode, { stickerPick })
+    enqueue({ chatId: msg.chatId, kind: msg.kind, userId: msg.userId, groupId: msg.groupId, nickname: msg.nickname }, content, msg.userId, wantsVoice(msg.text), mode, { stickerPick, holdMs })
   }
 
   /** 把消息里的「[合并转发]」换成里面的聊天记录，里面的图片并进这条消息一起给她看。 */
@@ -1747,6 +1764,13 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     p.wantVoice = p.wantVoice || wantVoice
     pending.set(chat.chatId, p)
     clearTimeout(p.timer)
+    // 晚回（模块决定的）：每条消息都重新问一次，最新的答案说了算（急事可以把等待缩短）
+    if (extra.holdMs !== undefined && chat.kind === 'private') p.holdUntil = extra.holdMs > 0 ? Date.now() + extra.holdMs : 0
+    if (p.holdUntil && p.holdUntil > Date.now()) {
+      p.timer = setTimeout(() => flush(chat.chatId), p.holdUntil - Date.now())
+      p.timer.unref?.()
+      return
+    }
     if (!m.enabled) return flush(chat.chatId)
     // 群里大家一来一回说得慢，多等一会儿把一段话攒齐
     const group = chat.kind === 'group'
