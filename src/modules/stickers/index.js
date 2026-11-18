@@ -188,13 +188,13 @@ export default {
     })
     api.route('/sticker/delete', async (req) => {
       const b = await http.body(req)
-      return store.remove(b.md5, { fromQQ: b.fromQQ !== false })
+      return store.remove(b.md5)
     })
     // 多选批量删除：面板上一次删几十张，不用一张张点、一张张确认
     api.route('/sticker/delete-batch', async (req) => {
       const b = await http.body(req)
       const list = Array.isArray(b.md5s) ? b.md5s : b.md5 ? [b.md5] : []
-      return store.removeMany(list, { fromQQ: b.fromQQ !== false })
+      return store.removeMany(list)
     })
     // 批量补名字 / 标签：POST 立刻返回，后台一张张看图起名，进度用下面的 status 查
     api.route('/sticker/caption-all', async (req) => {

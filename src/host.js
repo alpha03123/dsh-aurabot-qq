@@ -661,7 +661,7 @@ export function apply(ctx) {
       return
     }
     // 内嵌协议桥：没在跑就拉起来（接已有 OneBot 服务时不管）
-    if (cfg.gateway === 'discord' && cfg.discord.autoStart && !discord.running()) {
+    if (cfg.gateway === 'discord' && cfg.discord.autoStart && !discord.running() && !discord.held()) {
       const r = await discord.start()
       if (!r.ok) log.warn('协议桥：', r.message)
     }
@@ -1155,7 +1155,7 @@ export function apply(ctx) {
 
   // 内嵌协议桥
   route('/discord/start', async () => { const r = await discord.start(); if (r.ok && cfg.enabled) onebot.restart(); return r })
-  route('/discord/stop', async () => discord.stop())
+  route('/discord/stop', async () => discord.stop({ hold: true }))
   route('/discord/restart', async () => { wrongAccount = ''; const r = await discord.restart(); if (r.ok && cfg.enabled) onebot.restart(); return r })
   route('/commands', async () => ({ ok: true, list: commandList(mods.commands()) }))
   // 更新：检查 GitHub 上有没有新版本；这次更新了什么
@@ -1508,15 +1508,7 @@ export function apply(ctx) {
     try { unlinkSync(AVATAR()) } catch (error) {}
     return { ok: true, message: '恢复成默认头像了', avatar: avatarInfo() }
   })
-  route('/avatar/sync-qq', async () => {
-    const buf = existsSync(AVATAR()) ? readFileSync(AVATAR()) : readFileSync(join(ROOT, 'assets', 'dafeiyu.jpg'))
-    try {
-      await onebot.call('set_qq_avatar', { file: 'base64://' + buf.toString('base64') })
-      return { ok: true, message: '已经设成机器人号的 QQ 头像' }
-    } catch (error) {
-      return { ok: false, message: 'QQ 头像没换成：' + error.message }
-    }
-  })
+
 
   log.info(`Aurabot v${VERSION} 已加载｜总开关 ${cfg.enabled ? '开' : '关'}｜试运行 ${cfg.dryRun ? '开' : '关'}｜工作区 ${workspaceDirOf(cfg)}`)
 

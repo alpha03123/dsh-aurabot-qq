@@ -167,9 +167,6 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
         it.name = name || item.summary || '表情'
         it.tags = tags.length ? tags : it.tags
         saveLibrary(l)
-        if (it.emojiId && it.name) {
-          try { await onebot.call('modify_custom_face', { emoji_id: it.emojiId, desc: it.name.slice(0, 20) }) } catch (error) { log.warn('写回 QQ 备注失败：', error.message) }
-        }
         log.info(`表情 ${md5.slice(0, 8)} 起名「${it.name}」${it.tags.length ? ' #' + it.tags.join(' #') : ''}`)
       }).catch((error) => log.warn('表情起名收尾出错：', error.message))
     }
@@ -217,40 +214,30 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
     saveLibrary(lib)
   }
 
-  async function remove(md5, { fromQQ = true } = {}) {
+  async function remove(md5) {
     const lib = loadLibrary()
     const it = lib.items.find((i) => i.md5 === md5)
     if (!it) return { ok: false, reason: '没有这张' }
-    if (fromQQ && it.emojiId) {
-      try { await onebot.call('delete_custom_face', { emoji_id: it.emojiId }) } catch (error) { log.warn('从 QQ 收藏里删除失败：', error.message) }
-    }
     try { unlinkSync(join(dir(), it.file)) } catch (error) {}
     lib.items = lib.items.filter((i) => i.md5 !== md5)
     saveLibrary(lib)
     return { ok: true }
   }
 
-  /** 一次删一批：面板多选后一键删掉。fromQQ = 连 QQ 收藏里的那张一起删。 */
-  async function removeMany(md5s, { fromQQ = true } = {}) {
+  /** 一次删一批：面板多选后一键删掉。 */
+  async function removeMany(md5s) {
     const list = [...new Set((Array.isArray(md5s) ? md5s : []).map((x) => String(x || '').trim()).filter(Boolean))]
     if (!list.length) return { ok: false, removed: 0, message: '没选表情' }
     const found = loadLibrary().items.filter((i) => list.includes(i.md5))
     if (!found.length) return { ok: false, removed: 0, message: '这些表情已经不在库里了' }
-    let qqFailed = 0
-    if (fromQQ && !getConfig().dryRun) {
-      for (const it of found) {
-        if (!it.emojiId) continue
-        try { await onebot.call('delete_custom_face', { emoji_id: it.emojiId }) } catch (error) { qqFailed++; log.warn('从 QQ 收藏里删除失败：', error.message) }
-      }
-    }
     for (const it of found) { try { unlinkSync(join(dir(), it.file)) } catch (error) {} }
     const gone = new Set(found.map((i) => i.md5))
     // 重新读一遍再写：后台可能刚给别的表情起完名，别把那些改动冲掉
     const fresh = loadLibrary()
     fresh.items = fresh.items.filter((i) => !gone.has(i.md5))
     saveLibrary(fresh)
-    log.info(`批量删掉 ${found.length} 张表情${fromQQ ? '' : '（QQ 收藏保留）'}`)
-    return { ok: true, removed: found.length, qqFailed, message: `删掉了 ${found.length} 张${qqFailed ? `（${qqFailed} 张没从 QQ 收藏删掉）` : ''}` }
+    log.info(`批量删掉 ${found.length} 张表情`)
+    return { ok: true, removed: found.length, message: `删掉了 ${found.length} 张` }
   }
 
   function rename(md5, name, tags) {
@@ -260,7 +247,6 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
     if (name !== undefined) it.name = String(name).trim().slice(0, 12)
     if (tags !== undefined) it.tags = [...new Set((Array.isArray(tags) ? tags : []).map((t) => String(t).replace(/^#/, '').trim().slice(0, 8)).filter(Boolean))].slice(0, 5)
     saveLibrary(lib)
-    if (it.emojiId && !getConfig().dryRun) onebot.call('modify_custom_face', { emoji_id: it.emojiId, desc: it.name }).catch(() => {})
     return { ok: true, item: it }
   }
 
@@ -364,9 +350,6 @@ export function createStickerStore({ dsh, getConfig, onebot, log }) {
         cur.name = name
         if (tags.length) cur.tags = tags
         saveLibrary(l)
-        if (cur.emojiId && !getConfig().dryRun) {
-          try { await onebot.call('modify_custom_face', { emoji_id: cur.emojiId, desc: cur.name.slice(0, 20) }) } catch (error) { log.warn('写回 QQ 备注失败：', error.message) }
-        }
         job.ok++
         job.last = cur.name
         job.done++

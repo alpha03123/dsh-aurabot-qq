@@ -59,6 +59,7 @@ export function createDiscordBridge({ getConfig, saveDiscord, rootDir, dataDir, 
   let backoff = RESTART_MIN
   let lastError = ''
   let startedAt = 0
+  let held = false // 面板上手动点了「停止」：看门狗别再自动拉起，等手动启动
 
   const cfg = () => getConfig().discord || {}
 
@@ -88,6 +89,7 @@ export function createDiscordBridge({ getConfig, saveDiscord, rootDir, dataDir, 
     if (disposed) return { ok: false, message: '插件已卸载' }
     if (proc && ready) return { ok: true, message: '协议桥已经在跑了' }
     if (starting) return starting
+    held = false
     const inst = detect()
     if (!inst.installed) return { ok: false, message: `协议桥还没装好：在 ${dir} 里运行一次 npm install` }
     if (!inst.hasToken) return { ok: false, message: '还没填 Discord 机器人 token' }
@@ -155,7 +157,8 @@ export function createDiscordBridge({ getConfig, saveDiscord, rootDir, dataDir, 
     return starting
   }
 
-  async function stop() {
+  async function stop({ hold = false } = {}) {
+    if (hold) held = true
     stopping = true
     clearTimeout(restartTimer)
     const child = proc
@@ -176,6 +179,7 @@ export function createDiscordBridge({ getConfig, saveDiscord, rootDir, dataDir, 
     stop,
     async restart() { await stop(); return start() },
     running: () => Boolean(proc && ready),
+    held: () => held,
     /** 给网关客户端的连接地址；桥没起来时地址为空（客户端会等着重连） */
     endpoint() {
       const t = cfg().accessToken || ''
@@ -185,7 +189,7 @@ export function createDiscordBridge({ getConfig, saveDiscord, rootDir, dataDir, 
     },
     /** 连上的号对不对：没填机器人 ID 就用桥报上来的（顺手存进配置），填了就核对 */
     status() {
-      return { ...detect(), running: Boolean(proc && ready), botUserId: ready?.botUserId || '', startedAt, lastError, pid: proc?.pid || 0 }
+      return { ...detect(), running: Boolean(proc && ready), held, botUserId: ready?.botUserId || '', startedAt, lastError, pid: proc?.pid || 0 }
     },
     dispose() {
       disposed = true

@@ -624,7 +624,7 @@ test('面板接口：概览、人格切换', async () => {
   await fake.call('/persona/use', { id: 'dafeiyu' })
 })
 
-test('头像：上传自定义头像、同步成 QQ 头像、恢复默认', async () => {
+test('头像：上传自定义头像、恢复默认', async () => {
   const before = (await fake.call('/avatar')).raw()
   assert.ok(before.length > 1000, '默认头像是插件自带的那张')
   const png = fakePng(200, 200, 7)
@@ -633,8 +633,6 @@ test('头像：上传自定义头像、同步成 QQ 头像、恢复默认', asyn
   assert.equal((await fake.call('/state')).json().avatar.custom, true)
   assert.deepEqual(Buffer.from((await fake.call('/avatar')).raw()), png)
   assert.equal((await fake.call('/avatar/upload', { data: Buffer.from('not an image at all').toString('base64') })).json().ok, false)
-  assert.equal((await fake.call('/avatar/sync-qq')).json().ok, true)
-  assert.ok(mock.sent('set_qq_avatar')[0].params.file.startsWith('base64://'))
   await fake.call('/avatar/reset')
   assert.equal((await fake.call('/state')).json().avatar.custom, false)
   assert.equal((await fake.call('/avatar')).raw().length, before.length)
