@@ -17,16 +17,16 @@ before(async () => {
 
 function setup(hubState, speakUp = {}) {
   const pushed = []
-  const cfg = normalize({ enabled: true, ownerQQ: OWNER, speakUp: { awakeFrom: 0, awakeTo: 24, minIntervalMinutes: 5, maxIntervalMinutes: 5, ...speakUp } })
+  const cfg = normalize({ enabled: true, ownerQQ: OWNER, speakUp: { enabled: true, awakeFrom: 0, awakeTo: 24, minIntervalMinutes: 5, maxIntervalMinutes: 5, ...speakUp } })
   const hub = { ...hubState, pushToSession: async (chat, content) => pushed.push({ chat, text: content[0].text }) }
   const s = createSpeakUp({ getConfig: () => cfg, hub, log: { info() {} } })
   return { s, pushed }
 }
 const min = 60_000
 
-test('默认打开，只找主人私聊', () => {
+test('fork 里默认关（主动找主人统一走 autonomy），打开后只找主人私聊', () => {
   const c = normalize({}).speakUp
-  assert.equal(c.enabled, true)
+  assert.equal(c.enabled, false)
   assert.equal(c.nudge, true)
 })
 

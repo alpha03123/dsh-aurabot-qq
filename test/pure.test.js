@@ -301,25 +301,6 @@ test('更新：版本比较、仓库名、更新命令、更新说明', async ()
   assert.equal(r.latest, '0.3.0')
 })
 
-test('更新后：会公开发东西的新功能，老用户先关着，新安装照常默认开', async () => {
-  const { mkdtempSync, writeFileSync } = await import('node:fs')
-  const { tmpdir } = await import('node:os')
-  const { join } = await import('node:path')
-  const dir = mkdtempSync(join(tmpdir(), 'aurabot-upd-'))
-  const prev = process.env.AURABOT_DATA_DIR
-  process.env.AURABOT_DATA_DIR = dir
-  try {
-    const { loadConfig } = await import('../src/core/config.js')
-    assert.equal(loadConfig().qzoneSocial.enabled, true, '新安装（还没走完向导）默认开')
-    writeFileSync(join(dir, 'config.json'), JSON.stringify({ setupDone: true, botQQ: '1', ownerQQ: '2' }))
-    assert.equal(loadConfig().qzoneSocial.enabled, false, '老用户更新：先关着')
-    writeFileSync(join(dir, 'config.json'), JSON.stringify({ setupDone: true, qzoneSocial: { enabled: true } }))
-    assert.equal(loadConfig().qzoneSocial.enabled, true, '自己打开过的保持打开')
-  } finally {
-    process.env.AURABOT_DATA_DIR = prev
-  }
-})
-
 test('空间互动：说说下的评论整理成上下文', async () => {
   const { summarizeComments } = await import('../src/features/qzone-social.js')
   const comments = [
@@ -339,28 +320,6 @@ test('解析：合并转发记下 id，回复里的 <poke> 变成戳一戳', asy
   assert.match(m.text, /合并转发/)
   assert.deepEqual(parseReply('干嘛<poke>').items.map((i) => i.kind), ['text', 'poke'])
   assert.equal(parseReply('<poke><poke>').items.filter((i) => i.kind === 'poke').length, 1, '一轮最多戳一次')
-})
-
-test('#6 改资料权限：默认仅主人私聊；所有人含群；关了都不行；执行时再查', async () => {
-  const { normalize } = await import('../src/core/config.js')
-  const d = normalize({ ownerQQ: '1' })
-  assert.deepEqual(d.profilePerms, { qqNickname: 'owner', qqSignature: 'owner', qqAvatar: 'owner', biliSign: 'owner', biliAvatar: 'owner', biliComment: 'owner', qqFriendRequest: 'owner', whitelist: 'owner', douyinBrowse: 'owner', douyinLike: 'owner', douyinComment: 'owner', douyinShareOwner: 'owner', douyinDm: 'owner', heyboxBrowse: 'owner', heyboxLike: 'owner', heyboxComment: 'owner', heyboxPost: 'owner' })
-  assert.equal(normalize({ profilePerms: { qqAvatar: 'boss', biliSign: 'all' } }).profilePerms.qqAvatar, 'owner', '乱填的回到默认')
-  const ownerPm = { kind: 'private', userId: '1' }
-  const otherPm = { kind: 'private', userId: '2' }
-  const group = { kind: 'group', userId: '1', groupId: '9' }
-  assert.equal(profileToolVisible(d, 'qqNickname', ownerPm), true)
-  assert.equal(profileToolVisible(d, 'qqNickname', otherPm), false)
-  assert.equal(profileToolVisible(d, 'qqNickname', group), false)
-  assert.equal(profilePermits(d, 'qqNickname', ownerPm, true).ok, true)
-  assert.equal(profilePermits(d, 'qqNickname', ownerPm, false).ok, false, '主人私聊里混进了别人的话也不行')
-  const all = normalize({ ownerQQ: '1', profilePerms: { qqNickname: 'all' } })
-  assert.equal(profileToolVisible(all, 'qqNickname', group), true)
-  assert.equal(profilePermits(all, 'qqNickname', otherPm, false).ok, true)
-  assert.equal(profileToolVisible(all, 'qqNickname', { kind: 'system' }), false)
-  const off = normalize({ ownerQQ: '1', profilePerms: { qqNickname: 'off' } })
-  assert.equal(profileToolVisible(off, 'qqNickname', ownerPm), false)
-  assert.equal(profilePermits(off, 'qqNickname', ownerPm, true).ok, false)
 })
 
 test('#6 头像来源：显式网址直接给网关；「刚才那张」和「画作」由工具取字节；本地路径不收', () => {

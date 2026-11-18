@@ -102,7 +102,8 @@ function config(patch = {}) {
   return normalize({ enabled: true, dryRun: true, setupDone: true, ownerQQ: OWNER, botQQ: BOT,
     allow: { private: [OTHER], groups: [] }, voice: { enabled: false }, merge: { enabled: false },
     stickers: { collect: true, caption: false, autoChance: 0 },
-    snowluma: { autoStart: false, autoAttach: false, dir: join(root, 'no-snowluma') }, ...patch })
+    snowluma: { autoStart: false, autoAttach: false, dir: join(root, 'no-snowluma') },
+    profilePerms: { qqNickname: 'owner' }, ...patch })
 }
 
 function setup(t, { cfg = config(), brain = async () => '', hooks, buildTools, onebot, onCommand, onActivity } = {}) {
