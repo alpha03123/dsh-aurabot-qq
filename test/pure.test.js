@@ -273,12 +273,8 @@ test('更新：版本比较、仓库名、更新命令、更新说明', async ()
   assert.equal(r.latest, '0.3.0')
 })
 
-test('解析：合并转发记下 id，回复里的 <poke> 变成戳一戳', async () => {
-  const { parseMessageEvent } = await import('../src/chat/inbound.js')
+test('解析：回复里的 <poke> 变成戳一戳', async () => {
   const { parseReply } = await import('../src/chat/reply.js')
-  const m = parseMessageEvent({ message_type: 'group', group_id: 1, user_id: 2, message: [{ type: 'forward', data: { id: 'abc' } }] }, '9')
-  assert.deepEqual(m.forwards, ['abc'])
-  assert.match(m.text, /合并转发/)
   assert.deepEqual(parseReply('干嘛<poke>').items.map((i) => i.kind), ['text', 'poke'])
   assert.equal(parseReply('<poke><poke>').items.filter((i) => i.kind === 'poke').length, 1, '一轮最多戳一次')
 })

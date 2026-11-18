@@ -81,7 +81,6 @@ export const DEFAULTS = {
   // 主人私聊里问起群里的事：把最近 24 小时的群聊流水补进这一轮（默认关，开启前先把群加进白名单）
   group: { ...DEFAULT_GROUP_POLICY, overrides: {}, ownerBrief: { enabled: false, lines: 12, groups: [] } },
   // 按群头衔不回：勾选的群里，专属头衔正好是 title 的成员（一般是别的机器人）说话、戳她都不理。没勾群就不起作用
-  titleFilter: { enabled: true, groups: [], title: '大肥鱼' },
   voice: {
     enabled: true,
     // auto = 先 edge-tts，不行用 Windows 语音；edge / windows / cosyvoice / gptsovits / http = 指定引擎（失败都会退回 Windows 语音）
@@ -103,7 +102,6 @@ export const DEFAULTS = {
   },
   stickers: {
     enabled: true,
-    faces: false, // 回复里能夹 QQ 自带的小黄脸（<face:名字>）；Discord 上会变乱码，默认关
     autoChance: 0.35, // 文字回复自动配一张表情的概率
     collect: true, // 偷表情
     // 怎么偷：auto = 看到就收（默认，保持原行为）；ask = 她挑（先记着，喜欢才凭编号收）；owner = 只听主人的（只有主人语境下才提示/允许收）
@@ -381,7 +379,6 @@ export function normalize(raw) {
   c.voice.http.body = bodyText(c.voice.http.body)
   c.voice.http.sampleRate = num(c.voice.http.sampleRate, 24000, 8000, 48000)
   c.stickers.autoChance = num(c.stickers.autoChance, 0.35, 0, 1)
-  c.stickers.faces = c.stickers.faces !== false
   c.stickers.collectMode = ['ask', 'auto', 'owner'].includes(c.stickers.collectMode) ? c.stickers.collectMode : 'auto'
   c.stickers.maxPerHour = num(c.stickers.maxPerHour, 20, 0, BIG)
   c.stickers.maxLibrary = num(c.stickers.maxLibrary, 300, 1, BIG)
@@ -549,9 +546,6 @@ export function normalize(raw) {
   c.merge.maxSec = Math.max(c.merge.waitSec, num(c.merge.maxSec, 8, 0, BIG))
   c.merge.groupWaitSec = num(c.merge.groupWaitSec, 5, 0, BIG)
   c.merge.groupMaxSec = Math.max(c.merge.groupWaitSec, num(c.merge.groupMaxSec, 15, 0, BIG))
-  c.titleFilter.enabled = bool(c.titleFilter.enabled, true)
-  c.titleFilter.groups = qqList(c.titleFilter.groups) // 和群白名单同一套规则
-  c.titleFilter.title = String(c.titleFilter.title ?? '').replace(/[​-‍﻿]/g, '').trim().slice(0, 30) || '大肥鱼'
   g.burstMax = num(g.burstMax, 8, 1, BIG)
   g.engagedMax = num(g.engagedMax, 6, 0, BIG)
   g.burstWindowSec = num(g.burstWindowSec, 120, 1, BIG)

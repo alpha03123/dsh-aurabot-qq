@@ -281,20 +281,6 @@ test('群管：她在群里只是普通成员时，主人要求也做不了，�
   }
 })
 
-test('按头衔不理：勾选的群里头衔是「大肥鱼」的成员 @ 她、戳她都不交给模型；没头衔的照常回', async () => {
-  const at = (t) => [{ type: 'at', data: { qq: BOT } }, { type: 'text', data: { text: ' ' + t } }]
-  const titled = (uid, t) => ({ ...grp('556', uid, at(t), '另一只鱼'), sender: { user_id: Number(uid), nickname: '另一只鱼', card: '', role: 'member', title: '大肥鱼' } })
-  const turns = fake.turns.length
-  mock.push(titled('880', '你好呀'))
-  mock.push({ post_type: 'notice', notice_type: 'notify', sub_type: 'poke', group_id: 556, user_id: 880, target_id: Number(BOT), self_id: Number(BOT) })
-  await sleep(1500)
-  assert.equal(fake.turns.length, turns, '机器人的消息和戳一戳都没交给她')
-  mock.push(grp('556', '881', at('在吗'), '普通群友'))
-  await until(() => fake.turns.length > turns)
-  assert.match(fake.turns.at(-1).userText, /在吗/)
-  assert.doesNotMatch(fake.turns.at(-1).userText, /你好呀/, '被过滤的那条也没进群聊上下文')
-})
-
 test('QQ 命令：主人 /silent 后群里 @ 她也不回，/active 恢复；群友发命令不算', async () => {
   const at = (t) => [{ type: 'at', data: { qq: BOT } }, { type: 'text', data: { text: ' ' + t } }]
   let n = sentTo('group', '555').length
@@ -394,20 +380,6 @@ test('戳一戳：主人戳她，她会回话，还会戳回去；20 秒内重�
   mock.push({ ...poke, target_id: 12345 })
   await sleep(800)
   assert.equal(fake.turns.length, turns + 1)
-})
-
-test('合并转发：她能看到转发里的聊天记录', async () => {
-  mock.state.forwards = { fw1: [
-    { sender: { user_id: 801, nickname: '转发甲' }, message: [{ type: 'text', data: { text: '转发里的话甲' } }] },
-    { sender: { user_id: 802, nickname: '转发乙' }, message: [{ type: 'text', data: { text: '转发里的话乙' } }] },
-  ] }
-  const before = fake.turns.length
-  mock.push(grp('558', '805', [{ type: 'at', data: { qq: BOT } }, { type: 'text', data: { text: ' 你看看这个' } }, { type: 'forward', data: { id: 'fw1' } }], '寄件人'))
-  await until(() => fake.turns.length > before)
-  const t = fake.turns.at(-1).userText
-  assert.match(t, /合并转发的聊天记录（2 条）/)
-  assert.match(t, /转发甲：转发里的话甲/)
-  assert.match(t, /转发乙：转发里的话乙/)
 })
 
 test('群聊刹车：主动接话才歇着，群友 @ / 叫名字 / 追问都能叫动（#182）', async () => {

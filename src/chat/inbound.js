@@ -69,13 +69,9 @@ export function parseMessageEvent(event, selfId, { faceName } = {}) {
       case 'reply':
         replyId = String(idOf(d.id ?? d.message_id))
         break
-      case 'face': {
-        // QQ 系统表情按名字给她看（「[捂脸]」），认不出才写「[表情]」
-        const name = faceName?.(d.id)
-        const label = String(d.id) === '358' ? '骰子' : String(d.id) === '359' ? '猜拳' : name || String(d.raw?.faceText || '').replace(/^\[|\]$/g, '') || '表情'
-        texts.push(d.resultId !== undefined && d.resultId !== null && String(d.resultId) !== '' ? `[${label}：${String(d.resultId)}]` : name ? `[${name}]` : d.raw?.faceText || '[表情]')
+      case 'face':
+        texts.push('[表情]')
         break
-      }
       case 'image':
       case 'mface':
         if (isStickerSegment(seg)) {
@@ -110,10 +106,8 @@ export function parseMessageEvent(event, selfId, { faceName } = {}) {
         texts.push('[戳一戳]')
         break
       case 'forward': {
-        // 合并转发：先放个占位，收到后再去拉里面的聊天记录展开
-        const id = String(d.id ?? d.res_id ?? d.forward_id ?? '')
-        if (id) forwards.push(id)
-        texts.push('[合并转发]')
+        // QQ 合并转发（Discord 没有这种消息段，留个占位）
+        texts.push('[转发的消息]')
         break
       }
       default:

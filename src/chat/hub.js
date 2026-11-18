@@ -17,16 +17,14 @@ import { checkAllowed, levelFor, presetFor, isOwner } from './access.js'
 import { fetchImage, segmentBytes } from '../core/net.js'
 import { toMono16k } from '../voice/wav.js'
 import { mimeOf } from './inbound.js'
-import { forwardBody, readForward } from './forward.js'
 import { findFfmpeg, findSharp, shrinkImage, shrinkWithSharp } from '../core/img.js'
 import { redact } from '../core/redact.js'
 import { defaultModel, pickReasoningEffort, canSeeImages, modelVision } from '../core/llm.js'
 import { resolveChatModel } from './chat-model.js'
-import { createFaces, textToSegments, stripFaceTags, splitSpeakable } from './faces.js'
+import { stripFaceTags, splitSpeakable } from './speech.js'
 import { expandMentions, hasMention } from './mentions.js'
 import { cleanContent, cleanText } from '../core/text.js'
 import { createRecentMedia } from './recent-media.js'
-import { createTitleFilter } from './title-filter.js'
 import { isDefiniteFailure } from '../onebot/client.js'
 import { grantOwner } from '../core/workspace-move.js'
 import { withPromptCapture, currentPromptSources, memoryPromptRanges } from '../security/leak-guard.js'
@@ -168,8 +166,6 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   const slowTimers = new Map() // timer → sessionKey，轮次结束、替换挂载、卸载时一并撤销
   const pauses = new Set() // 拆条间隔：卸载时立即结束，后面的消息不再投递
   const replyWaits = new Set() // 正在等回复的后台轮次：卸载时立即拒绝，不用等模型或超时
-  const faces = createFaces({ onebot, log }) // QQ 系统表情：<face:名字> ↔ 编号
-  const titleFilter = createTitleFilter({ getConfig, onebot, log }) // 勾选的群里，头衔是某个词的成员（别的机器人）不理
   const groupMembers = new Map() // groupId → { at, list }  群成员（真 @ 时按名字找人，缓存 10 分钟）
   const noticesFor = new Map() // chatId → [一句话]  下次交给她时带上的群事件（撤回、禁言、进群……）
   const saidElsewhere = new Map() // chatId → [{ at, text }]  别处安排她在这里发的话，下次这个聊天交给她时补进去
@@ -668,8 +664,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     // 先清洗，避免调用参数或提示词里的 @ / 表情变成真正的消息段。
     text = cleanOutboundText(text, cleaningFor(chatId))
     if (!text.trim()) return null
-    // 文字里的 <face:名字> 换成 QQ 系统表情，和文字在同一条消息里；系统表情关着就去掉标签
-    let segs = getConfig().stickers.faces ? textToSegments(text, faces.idOf) : [{ type: 'text', data: { text: stripFaceTags(text) } }]
+    // 写出来的 <face:名字> 标签（QQ 小黄脸，Discord 没有）直接去掉
+    let segs = [{ type: 'text', data: { text: stripFaceTags(text) } }]
     // 群里的 @名字 / <at:QQ号> 换成真 @（对方会收到提醒）
     if (chatId.startsWith('group:') && hasMention(text)) segs = expandMentions(segs, await membersOf(chatId.slice(6)), missed)
     if (!segs.length || (segs.length === 1 && segs[0].type === 'text' && !segs[0].data.text.trim())) return null
@@ -1174,11 +1170,11 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       out.uid = String(sender.user_id ?? m?.user_id ?? '')
       out.who = String(sender.card || sender.nickname || out.uid || '某人')
       const kind = ctx?.groupId ? 'group' : 'private'
-      let parsed = parseMessageEvent({ message_type: kind, group_id: ctx?.groupId, user_id: out.uid, sender, message: m?.message ?? m?.raw_message ?? '' }, selfId, { faceName: faces.nameOf })
+      let parsed = parseMessageEvent({ message_type: kind, group_id: ctx?.groupId, user_id: out.uid, sender, message: m?.message ?? m?.raw_message ?? '' }, selfId)
       if (quoteNeedsHistory(parsed)) {
         const hit = await quoteFromHistory(id, ctx)
         if (hit) {
-          const again = parseMessageEvent({ message_type: kind, group_id: ctx?.groupId, user_id: out.uid, sender: hit.sender || sender, message: hit.message ?? '' }, selfId, { faceName: faces.nameOf })
+          const again = parseMessageEvent({ message_type: kind, group_id: ctx?.groupId, user_id: out.uid, sender: hit.sender || sender, message: hit.message ?? '' }, selfId)
           if (!quoteNeedsHistory(again)) parsed = again
           else { parsed.images = [...(parsed.images || []), ...(again.images || [])]; parsed.stickers = [...(parsed.stickers || []), ...(again.stickers || [])] }
         }
@@ -1345,10 +1341,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (disposed) return
     selfId = String(event.self_id || selfId || getConfig().botQQ)
     const cfg = getConfig()
-    const msg = parseMessageEvent(event, selfId, { faceName: faces.nameOf })
+    const msg = parseMessageEvent(event, selfId)
     if (msg.userId === selfId) return
-    // 按群头衔过滤：这条当没看见（不进群聊上下文、不触发回复，@ 她、主人命令也一样）
-    if (msg.kind === 'group' && await titleFilter.shouldIgnore(event)) return
     if (disposed) return
     bump('received')
     const now = Date.now()
@@ -1511,14 +1505,6 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
 
     // 拼文案
     let text = msg.text
-    if (msg.forwards?.length) {
-      text = await expandForwards(msg, text)
-      if (disposed) return
-      if (msg.kind === 'group') {
-        const last = (groupBuf.get(msg.groupId) || []).findLast?.((x) => x.uid === msg.userId)
-        if (last) last.text = text
-      }
-    }
     const voiceText = cfg.voice.asr && msg.records.length ? await transcribe(msg) : msg.records.length ? '[发来一条语音]' : ''
     if (disposed) return
     if (voiceText) text = (text ? text + ' ' : '') + voiceText
@@ -1575,18 +1561,6 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     enqueue({ chatId: msg.chatId, kind: msg.kind, userId: msg.userId, groupId: msg.groupId, nickname: msg.nickname }, content, msg.userId, wantsVoice(msg.text), mode, { stickerPick, holdMs })
   }
 
-  /** 把消息里的「[合并转发]」换成里面的聊天记录，里面的图片并进这条消息一起给她看。 */
-  async function expandForwards(msg, text) {
-    let out = text
-    for (const id of msg.forwards.slice(0, 5)) {
-      const r = await readForward(onebot, id, { selfId, faceName: faces.nameOf, log })
-      msg.images.push(...r.images)
-      msg.stickers.push(...r.stickers)
-      out = out.replace('[合并转发]', forwardBody(r))
-    }
-    return out
-  }
-
   // ---------- 戳一戳 ----------
   const lastPoker = new Map() // chatId → 最近戳她的人（她戳回去用）
   const lastSpeaker = new Map() // chatId → 群里最近一段最后说话的人
@@ -1618,7 +1592,6 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     const group = ev.group_id ? String(ev.group_id) : ''
     const poker = String(group ? ev.user_id : ev.sender_id ?? ev.user_id)
     if (!poker || poker === self) return
-    if (group && await titleFilter.shouldIgnore({ group_id: group, user_id: poker })) return
     if (disposed) return
     const chatId = group ? `group:${group}` : `private:${poker}`
     lastPoker.set(chatId, poker)
@@ -2448,7 +2421,6 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     checkSendableFile,
     sendSegments,
     pushToSession,
-    titleFilter,
     runSystemTurn,
     runSubagentTurn,
     subagentFor,
