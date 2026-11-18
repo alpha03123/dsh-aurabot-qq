@@ -136,7 +136,7 @@ export function apply(ctx) {
     if (cfg.gateway !== 'discord' || onebotState !== 'connected' || !loginOk) return
     const nick = personaName(cfg.persona?.current, '')
     if (!nick) return
-    onebot.call('set_self_nickname', { nickname: nick }, { retries: 0, timeoutMs: 10000 }).catch(() => {})
+    onebot.call('set_self_nickname', { nickname: nick }, { retries: 0, timeoutMs: 30000 }).catch(() => {})
   }
   async function checkLogin() {
     verifying = true

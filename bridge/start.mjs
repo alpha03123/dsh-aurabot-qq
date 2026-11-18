@@ -258,12 +258,18 @@ OneBotV12ActionService.prototype.execute = async function (action, params = {}) 
     const rest = adapter.requireBot(accountId).getREST();
     const nick = String(params.nickname || "").trim().slice(0, 32);
     if (!nick) return { ok: false };
-    const guilds = await rest.request("/users/@me/guilds");
+    // 走代理时偶尔 TLS 握手断掉（DISCORD_REST_NETWORK_ERROR）：每个请求最多试 3 次
+    const retry = async (fn) => {
+      for (let i = 0; ; i++) {
+        try { return await fn(); } catch (error) { if (i >= 2) throw error; await new Promise((r) => setTimeout(r, 2000)); }
+      }
+    };
+    const guilds = await retry(() => rest.request("/users/@me/guilds"));
     const list = Array.isArray(guilds) ? guilds : [];
     for (const g of list) {
       if (!g?.id) continue;
       try {
-        await rest.request(`/guilds/${g.id}/members/@me`, { method: "PATCH", body: { nick } });
+        await retry(() => rest.request(`/guilds/${g.id}/members/@me`, { method: "PATCH", body: { nick } }));
       } catch {}
     }
     return { ok: true, count: list.length };
