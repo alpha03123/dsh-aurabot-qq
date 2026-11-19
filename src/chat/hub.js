@@ -21,6 +21,7 @@ import { mimeOf } from './inbound.js'
 import { findFfmpeg, findSharp, shrinkImage, shrinkWithSharp } from '../core/img.js'
 import { redact } from '../core/redact.js'
 import { defaultModel, pickReasoningEffort, canSeeImages, modelVision } from '../core/llm.js'
+import { writeTrace, callerOf } from '../core/trace.js'
 import { resolveChatModel } from './chat-model.js'
 import { stripFaceTags, splitSpeakable } from './speech.js'
 import { expandMentions, hasMention } from './mentions.js'
@@ -90,6 +91,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
   const sessionToChat = new Map() // sessionKey → chatId
   const turnState = new Map() // sessionKey → { lastTurn, text, images, senders:Set, system?: {resolve, reject, timedOutAt} }
   const systemTurns = new Map() // chatId → 当前后台轮次，权限档位变化时也不能绕过它
+  const systemSessionOf = new Map() // 后台会话 chatId → DSH 会话 id（小脑留底里指向完整上下文）
   const systemStarting = new Set() // 建会话和恢复期间，同一个聊天只能有一个调用
   const systemFailures = new Map() // chatId → { count, until }
   const SYSTEM_STUCK_GRACE_MS = 5 * 60_000
@@ -2089,7 +2091,37 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
    *  key：同一个模块有**多种**后台用途时用来分会话（如桌宠的「碎碎念」和「行为大脑」）——
    *  不带 key 走 `<name>` 那条（向后兼容，老会话继续复用），带 key 走 `<name>:<key>`，
    *  于是工作区里各自一条会话、进度互不阻塞，也不会把两种提示词混进同一段上下文。 */
-  async function runSystemTurn(name, title, prompt, { timeoutMs = 180000, noTools = false, key: scope = '' } = {}) {
+  /** 后台会话跑一轮（B 站、模块 api.think、联动……）。外面包一层小脑留底：输入、输出、耗时、报错、DSH 会话 id。 */
+  async function runSystemTurn(name, title, prompt, opts = {}) {
+    const suffix = String((opts && opts.key) || '').trim().replace(/[^\w:-]/g, '').slice(0, 32)
+    const chatId = suffix ? `system:${name}:${suffix}` : `system:${name}`
+    const caller = callerOf()
+    const t0 = Date.now()
+    let output = ''
+    let failed = ''
+    try {
+      output = await runSystemTurnInner(name, title, prompt, opts)
+      return output
+    } catch (error) {
+      failed = String((error && error.message) || error)
+      throw error
+    } finally {
+      writeTrace({
+        kind: 'system-turn',
+        key: chatId,
+        caller,
+        title,
+        sessionId: systemSessionOf.get(chatId) || '',
+        noTools: !!(opts && opts.noTools),
+        input: cleanText(String(prompt)),
+        output: typeof output === 'string' ? output : JSON.stringify(output ?? ''),
+        ms: Date.now() - t0,
+        error: failed,
+      })
+    }
+  }
+
+  async function runSystemTurnInner(name, title, prompt, { timeoutMs = 180000, noTools = false, key: scope = '' } = {}) {
     const suffix = String(scope || '').trim().replace(/[^\w:-]/g, '').slice(0, 32)
     const chat = { chatId: suffix ? `system:${name}:${suffix}` : `system:${name}`, kind: 'system', title, noTools: !!noTools }
     assertActive()
@@ -2110,6 +2142,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       } else if (current) systemTurns.delete(chat.chatId)
       const { agent, sessionId } = await agentFor(chat)
       assertActive()
+      systemSessionOf.set(chat.chatId, sessionId)
       const key = sessionKey(sessionId)
       const st = turnState.get(key) || { lastTurn: -1, text: '', senders: new Set() }
       if (st.system) throw new Error('这个后台会话的上一轮还没结束')

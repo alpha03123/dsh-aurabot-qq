@@ -4676,20 +4676,24 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       )
     }
 
-    function Logs() {
+    function Logs({ draft, setDraft }) {
       const [items, setItems] = useState(null)
       const [level, setLevel] = useState('info')
       const [area, setArea] = useState('')
       const [auto, setAuto] = useState(true)
       const load = useCallback(() => get('/logs?limit=400&level=' + level + '&area=' + area).then((r) => setItems(r.entries || [])), [level, area])
       useEffect(() => { load(); if (!auto) return; const t = setInterval(load, 3000); return () => clearInterval(t) }, [load, auto])
-      return h(Card, { title: '日志', desc: '所有后台动作都在这里，令牌和密码已自动打码。完整日志文件在 %USERPROFILE%\\.dsh\\plugins-data\\aurabot\\logs\\。',
+      const f = draft && setDraft ? useField(draft, setDraft) : null
+      const traceCard = f ? h(Card, { title: '小脑留底', desc: '后台每一次模型调用（计划、醒来决定、上网、手机响了要不要看、提炼记忆、心情判断、刷 B 站……）都把完整的输入、模型原样的输出、思考、结束原因和用量记下来，排查「她当时看到了什么、为什么这么做」用。只存本机：%USERPROFILE%\\.dsh\\plugins-data\\aurabot\\traces\\日期.jsonl，接口 /aurabot/api/traces。', right: f.sw('debug.trace') },
+        h(Row, { label: '留几天', hint: '按天一个文件，过期的自动删' }, f.num('debug.traceDays', { min: 1, max: 60 }))) : null
+      const logsCard = h(Card, { title: '日志', desc: '所有后台动作都在这里，令牌和密码已自动打码。完整日志文件在 %USERPROFILE%\\.dsh\\plugins-data\\aurabot\\logs\\。',
         right: h('div', { className: 'ab-flex' },
           h(Select, { value: level, onChange: setLevel, width: 110, options: [['debug', '全部'], ['info', '一般'], ['warn', '警告'], ['error', '错误']].map(([value, label]) => ({ value, label })) }),
           h(Select, { value: area, onChange: setArea, width: 130, options: [['', '所有模块'], ['core', '核心'], ['chat', '聊天'], ['onebot', '网关'], ['discord', '协议桥'], ['sticker', '表情'], ['voice', '语音'], ['imagegen', '生图'], ['speakup', '搭话']].map(([value, label]) => ({ value, label })) }),
           h('span', { className: 'ab-switch-row' }, h(Switch, { on: auto, onChange: setAuto }), h('span', { className: 'ab-muted ab-small' }, '自动刷新'))) },
         items === null ? h(Empty, { icon: '⏳', text: '加载中…' }) : items.length === 0 ? h(Empty, { text: '没有符合条件的日志' }) :
           h('div', { className: 'ab-logs' }, items.slice().reverse().map((e, i) => h(LogLine, { key: i, e }))))
+      return traceCard ? h('div', { className: 'ab-grid' }, traceCard, logsCard) : logsCard
     }
 
     // ---------------- 首次使用向导 ----------------
@@ -4900,7 +4904,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         stickers: Stickers, imagegen: ImageGen, diary: Diary, speakup: SpeakUp, pet: PetPanel, mood: Mood, persona: PersonaMemory, song: Song, bili: Bili, douyin: Douyin, heybox: Heybox, local: LocalApi, security: Security, market: Market, modules: Modules, logs: Logs, about: About, backup: Backup,
       }[curTab.id] || Overview
       // 哪些标签有没保存的改动
-      const TAB_KEYS = { connect: ['gateway', 'discord', 'onebot', 'selfId', 'workspaceDir'], access: ['ownerId', 'ownerName', 'ownerLevel', 'approvalNotify', 'approvalViaChat', 'longTasks', 'profilePerms', 'allow'], group: ['group', 'merge', 'chat'], model: ['model', 'chatModels'], voice: ['voice'], stickers: ['stickers'], imagegen: ['imageGen'], diary: ['diary'], speakup: ['speakUp'], pet: [], mood: ['mood', 'memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], local: ['local'], security: ['security', 'update'] }
+      const TAB_KEYS = { connect: ['gateway', 'discord', 'onebot', 'selfId', 'workspaceDir'], access: ['ownerId', 'ownerName', 'ownerLevel', 'approvalNotify', 'approvalViaChat', 'longTasks', 'profilePerms', 'allow'], group: ['group', 'merge', 'chat'], model: ['model', 'chatModels'], voice: ['voice'], stickers: ['stickers'], imagegen: ['imageGen'], diary: ['diary'], speakup: ['speakUp'], pet: [], mood: ['mood', 'memory'], song: ['song'], bili: ['bili'], douyin: ['douyin'], heybox: ['heybox'], local: ['local'], security: ['security', 'update'], logs: ['debug'] }
       const tabDirty = (id) => {
         if (!dirty) return false
         if (id.startsWith('ext:')) { const k = id.slice(4); return JSON.stringify((draft.ext || {})[k]) !== JSON.stringify((cfg.ext || {})[k]) }

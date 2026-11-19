@@ -25,6 +25,7 @@ import { createGroupRoles } from './chat/group-roles.js'
 import { defaultModel, askModel, modelReasoning, modelVision, clearReasoningCache, clearVisionCache } from './core/llm.js'
 import { mimeOf } from './chat/inbound.js'
 import { dataDir, ensureDir } from './core/store.js'
+import { setTraceOptions, readTraces } from './core/trace.js'
 import { createUpdateChecker, changelogSection } from './core/update.js'
 import { parseCommand, runCommand, createMutes, commandList } from './chat/commands.js'
 import { listPersonas, readPersona, savePersona, deletePersona, currentPersonaText, rulesText, seedPersonas, personaName } from './persona/personas.js'
@@ -69,6 +70,7 @@ export function apply(ctx) {
   let mods = null
   let bridge = null
   const getConfig = () => cfg
+  setTraceOptions(() => cfg.debug)
   setSsrpMode(() => (getConfig().security && getConfig().security.ssrfMode === 'loose' ? 'loose' : 'strict'))
   const secrets = () => { for (const v of [cfg.discord.token, cfg.discord.accessToken, cfg.onebot.httpToken, cfg.onebot.wsToken]) registerSecret(v); registerSecret(cfg.imageGen.apiKey); registerSecret(cfg.bridge.token) }
   const setConfig = (next) => {
@@ -1160,6 +1162,8 @@ export function apply(ctx) {
     const q = query(req)
     return { ok: true, entries: logger.recent(Number(q.limit) || 300, { level: q.level || '', area: q.area || '' }) }
   })
+  // 小脑留底：?day=YYYY-MM-DD&key=用途或调用位置&q=全文&id=&limit=&full=1
+  route('/traces', async (req) => ({ ok: true, ...readTraces(query(req)) }))
 
   // 内嵌协议桥
   route('/discord/start', async () => { const r = await discord.start(); if (r.ok && cfg.enabled) onebot.restart(); return r })

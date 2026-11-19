@@ -2,6 +2,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { cleanText } from './text.js'
+import { writeTrace, callerOf } from './trace.js'
 
 export function defaultModel(dsh, cfg) {
   if (cfg?.model?.provider && cfg?.model?.model) return { provider: cfg.model.provider, model: cfg.model.model }
@@ -130,21 +131,31 @@ const isUnsupportedEffort = (error) => {
 let lastEmpty = ''
 export const lastEmptyInfo = () => lastEmpty
 
-async function runStream (llm, params) {
+async function runStream (llm, params, attempts) {
   let out = ''
+  let reasoning = ''
+  let usage = null
   const types = {}
   let finish = ''
-  for await (const chunk of llm.stream(params)) {
-    if (!chunk) continue
-    types[chunk.type] = (types[chunk.type] || 0) + 1
-    if (chunk.type === 'finish') finish = JSON.stringify(chunk.reason || {}).slice(0, 120)
-    if (chunk.type === 'text-delta') out += chunk.text
-    if (chunk.type === 'finish' && chunk.reason && chunk.reason.kind === 'error') {
-      const f = chunk.reason.failure || {}
-      const error = new Error('模型报错：' + (f.message || f.code || '未知'))
-      if (f.code) error.code = f.code
-      throw error
+  const t0 = Date.now()
+  try {
+    for await (const chunk of llm.stream(params)) {
+      if (!chunk) continue
+      types[chunk.type] = (types[chunk.type] || 0) + 1
+      if (chunk.type === 'finish') finish = JSON.stringify(chunk.reason || {}).slice(0, 120)
+      if (chunk.type === 'text-delta') out += chunk.text
+      if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') reasoning += chunk.text
+      if (chunk.type === 'usage') usage = chunk.usage || null
+      if (chunk.type === 'finish' && chunk.reason && chunk.reason.kind === 'error') {
+        const f = chunk.reason.failure || {}
+        const error = new Error('模型报错：' + (f.message || f.code || '未知'))
+        if (f.code) error.code = f.code
+        throw error
+      }
     }
+  } finally {
+    // 小脑留底：每次尝试都记（含失败、空返回、放宽预算后的重试）
+    if (attempts) attempts.push({ maxTokens: params.maxTokens, reasoningEffort: params.reasoningEffort || null, ms: Date.now() - t0, finish, usage, types, reasoning, output: out })
   }
   if (!out.trim()) lastEmpty = `结束原因 ${finish || '无'}，数据块 ${JSON.stringify(types)}`
   return out.trim()
@@ -152,7 +163,7 @@ async function runStream (llm, params) {
 
 /**
  * @param {object} dsh 宿主 ctx
- * @param {{system:string, text:string, images?:Array<{data:string, mediaType:string}>, maxTokens?:number, temperature?:number, reasoningEffort?:string, cfg?:object, model?:{provider:string, model:string}}} o
+ * @param {{system:string, text:string, images?:Array<{data:string, mediaType:string}>, maxTokens?:number, temperature?:number, reasoningEffort?:string, cfg?:object, model?:{provider:string, model:string}, key?:string}} o  key：用途，写进小脑留底（core/trace.js），不填就按调用位置认
  * @returns {Promise<string>}
  */
 export async function askModel (dsh, o) {
@@ -180,21 +191,50 @@ export async function askModel (dsh, o) {
   }
   let effort = await pickReasoningEffort(dsh, t.provider, t.model, o.reasoningEffort === undefined ? 'low' : o.reasoningEffort)
   let widened = false
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const out = await runStream(llm, effort ? { ...base, reasoningEffort: effort } : base)
-      // 推理模型可能把输出预算全花在思考上，一个字没写：放宽预算再试一次
-      if (out || widened) return out
-      widened = true
-      base.maxTokens = Math.max(base.maxTokens, Math.min(4000, base.maxTokens * 3))
-    } catch (error) {
-      // 能力探测没查到 / 模型临时不认：去掉思考强度再来一次
-      if (attempt === 0 && effort && isUnsupportedEffort(error)) {
-        cacheReasoning(t.provider, t.model, null)
-        effort = undefined
-        continue
+  const attempts = []
+  const t0 = Date.now()
+  let result = ''
+  let failed = ''
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const out = await runStream(llm, effort ? { ...base, reasoningEffort: effort } : base, attempts)
+        // 推理模型可能把输出预算全花在思考上，一个字没写：放宽预算再试一次
+        if (out || widened) { result = out; return out }
+        widened = true
+        base.maxTokens = Math.max(base.maxTokens, Math.min(4000, base.maxTokens * 3))
+      } catch (error) {
+        // 能力探测没查到 / 模型临时不认：去掉思考强度再来一次
+        if (attempt === 0 && effort && isUnsupportedEffort(error)) {
+          cacheReasoning(t.provider, t.model, null)
+          effort = undefined
+          continue
+        }
+        throw error
       }
-      throw error
     }
+  } catch (error) {
+    failed = String((error && error.message) || error)
+    throw error
+  } finally {
+    const last = attempts[attempts.length - 1] || {}
+    writeTrace({
+      kind: 'ask',
+      key: o.key || '',
+      caller: callerOf(),
+      provider: t.provider,
+      model: t.model,
+      temperature: base.temperature,
+      images: (o.images || []).length,
+      system: base.system,
+      input: cleanText(o.text),
+      output: result,
+      reasoning: last.reasoning || '',
+      finish: last.finish || '',
+      usage: last.usage || null,
+      ms: Date.now() - t0,
+      error: failed,
+      attempts: attempts.length > 1 ? attempts : attempts.map(({ reasoning, output, ...rest }) => rest),
+    })
   }
 }
