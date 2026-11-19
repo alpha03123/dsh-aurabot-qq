@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { normalize } from '../src/core/config.js'
-import { createMemoryStore, memoryLayer, isLocalVectorUrl } from '../src/features/memory.js'
+import { createMemoryStore, retention, isLocalVectorUrl } from '../src/features/memory.js'
 import { createHub } from '../src/chat/hub.js'
 import moodModule from '../src/modules/mood/index.js'
 
@@ -48,18 +48,18 @@ test('方案 A：mood 不再写入 api.context，改为挂在 prompt 钩子每�
   assert.equal(sysOut.length, 1, '系统会话不注入心情')
 })
 
-test('分层优先级记忆：随时间下沉、readMemories 主动点击浮回 L1 且减缓衰减、严格隔离隐私', (t) => {
+test('激活度：随时间变淡、readMemories 主动翻看让它回升且之后淡得更慢；常驻不含看过的视频；严格隔离隐私', (t) => {
   makeTemp(t)
   const cfg = normalize({ ownerId: OWNER, memory: { enabled: true, dailyConsolidate: false } })
   const hub = { chatLogDays: () => [], chatLogOf: () => [], speakersOf: () => [FRIEND] }
   const mem = createMemoryStore({ dsh: {}, getConfig: () => cfg, hub, log })
   const now = Date.now()
 
-  // 纯函数层级验证：无点击时下沉快，有点击时下沉慢
-  assert.equal(memoryLayer({ at: now, importance: 0.5, clicks: 0 }, now), 1)
-  const old10dNoClick = memoryLayer({ at: now - 10 * DAY, importance: 0.5, clicks: 0 }, now)
-  const old10dClicked = memoryLayer({ at: now - 10 * DAY, importance: 0.5, clicks: 4 }, now)
-  assert.ok(old10dNoClick > old10dClicked, `无点击层级 ${old10dNoClick} 应深于高频点击层级 ${old10dClicked}`)
+  // 纯函数验证：刚记下的最活跃；同样 10 天没用，被主动翻看过的淡得更慢
+  assert.equal(retention({ at: now, importance: 0.5, clicks: 0 }, now), 1)
+  const old10dNoClick = retention({ at: now - 10 * DAY, importance: 0.5, clicks: 0 }, now)
+  const old10dClicked = retention({ at: now - 10 * DAY, importance: 0.5, clicks: 4 }, now)
+  assert.ok(old10dNoClick < old10dClicked, `没翻看过的激活度 ${old10dNoClick} 应低于常翻看的 ${old10dClicked}`)
 
   // 写入主人私事 + 多个 seen 视频 + 群友自己的事
   const promise = mem.add({ text: '约好周末一起去欧文西点买奶油泡芙', about: OWNER, aboutName: '主人', importance: 0.8, source: 'tool', chatId: `private:${OWNER}` })
@@ -68,7 +68,7 @@ test('分层优先级记忆：随时间下沉、readMemories 主动点击浮回 
     mem.addEvent({ kind: 'seen', text: `欧文西点泡芙探店视频第${i}集`, meta: { title: `欧文西点泡芙探店${i}`, platform: 'bili' } })
   }
 
-  // seen 绝不进主人热记忆目录，也不进默认 memory_tree
+  // seen 绝不进主人私聊常驻，也不进默认 memory_tree
   const ownerChat = { kind: 'private', userId: OWNER, chatId: `private:${OWNER}` }
   const ownerCtx = mem.contextFor(ownerChat, 's-o')
   assert.match(ownerCtx, /欧文西点买奶油泡芙/)
@@ -98,7 +98,7 @@ test('分层优先级记忆：随时间下沉、readMemories 主动点击浮回 
   assert.match(friendRead.message, /阿花最近在学弹吉他/)
   const stored = mem.list('').find((x) => x.id === friendFact.id)
   assert.equal(stored.clicks, 1)
-  assert.equal(memoryLayer(stored, Date.now()), 1)
+  assert.ok(retention(stored, Date.now()) > 0.99, '刚翻看过的激活度回到最高')
 })
 
 test('方案 B：sessionRollover 生成中文情感交接并归档会话，新会话首轮自动衔接（重启不丢）', async (t) => {

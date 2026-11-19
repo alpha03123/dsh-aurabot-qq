@@ -276,7 +276,8 @@ test('过滤纯语气噪声，RRF 只在同一分段里按关键词和说话时�
   assert.deepEqual(hits.map((h) => h.it.id), ['new', 'old'])
   assert.deepEqual(search(idx, '哈哈呵呵', { now }), [])
   const legacy = search(idx, '乌龙茶', { now, minScore: 0.01, rrf: false })
-  assert.deepEqual(legacy.map((h) => h.it.id), ['old', 'new'])
+  // 激活度从「说出来的时间」算起：今天说的比昨天说的更活跃，关掉 RRF 也排在前面
+  assert.deepEqual(legacy.map((h) => h.it.id), ['new', 'old'])
 })
 
 test('空闲提炼只处理满足条件的聊天，重启后定时整理不重复，回顾每天一次', async (t) => {

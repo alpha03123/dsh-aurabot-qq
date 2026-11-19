@@ -236,8 +236,8 @@ export const DEFAULTS = {
     profileFieldChars: 40, profilePeople: 2, profileChars: 240, chatImpression: true, chatImpressionChars: 120, dislikeSilence: 0.85,
     shortTerm: true, shortTermHours: 2, shortTermIdleMinutes: 3, shortTermChars: 150,
     gistEnabled: true, gistDays: 180, impressionDays: 365, gistDailyBatches: 6, tierDays: { 1: 7, 2: 30, 3: 90 },
-    extractIdleMinutes: 30, extractMinLines: 20, extractDailyBatches: 24, capacity: { auto: 2000, event: 600, diary: 400 }, eventExpireDays: 90, vector: { enabled: false, baseUrl: '', model: '', apiKey: '' },
-  }, // extractIdleMinutes 为 0 时关闭空闲提炼；手动记忆不受容量限制
+    extractIdleMinutes: 30, extractMinLines: 20, ownerExtractIdleMinutes: 10, ownerExtractMinLines: 2, extractDailyBatches: 24, capacity: { auto: 2000, event: 600, diary: 400 }, eventExpireDays: 90, vector: { enabled: false, baseUrl: '', model: '', apiKey: '' },
+  }, // extractIdleMinutes 为 0 时关闭空闲提炼；主人私聊用 ownerExtract*（聊完安静 10 分钟就提炼）；手动记忆不受容量限制；tierDays 已不再使用（档位改为调激活度衰减快慢）
   song: {
     enabled: false,
     root: '', // 翻唱环境目录，留空 = 自动（老安装 C:\Aurabot\rvc，新安装在用户目录下）
@@ -567,6 +567,8 @@ export function normalize(raw) {
   c.memory.crossContext = bool(c.memory.crossContext, false)
   c.memory.extractIdleMinutes = num(c.memory.extractIdleMinutes, 30, 0, BIG)
   c.memory.extractMinLines = Math.round(num(c.memory.extractMinLines, 20, 1, BIG))
+  c.memory.ownerExtractIdleMinutes = num(c.memory.ownerExtractIdleMinutes, 10, 1, BIG)
+  c.memory.ownerExtractMinLines = Math.round(num(c.memory.ownerExtractMinLines, 2, 1, BIG))
   c.memory.extractDailyBatches = Math.round(num(c.memory.extractDailyBatches, 24, 0, BIG))
   if (!isObj(c.memory.capacity)) c.memory.capacity = {}
   for (const k of ['auto', 'event', 'diary']) c.memory.capacity[k] = Math.round(num(c.memory.capacity[k], DEFAULTS.memory.capacity[k], 0, BIG))

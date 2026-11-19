@@ -71,6 +71,7 @@ test('F4：群聊不把无主 diary/事件带进上下文和回忆', () => {
   const groupHint = store.recallHint({ kind: 'group', groupId: '7', chatId: 'group:7' }, '外卖 CANARY')
   assert.doesNotMatch(groupHint, /CANARY_H03/, '群聊回忆不能带无主日记')
 
-  const ownerCtx = store.contextFor({ kind: 'private', userId: owner, chatId: `private:${owner}` }, 's-o')
-  assert.match(ownerCtx, /CANARY_H03/, '主人私聊仍可见自己的日记')
+  // 主人私聊的常驻只放「关于他的要紧事」，日记不常驻；主人私聊里照样想得起来
+  const ownerHint = store.recallHint({ kind: 'private', userId: owner, chatId: `private:${owner}` }, '外卖 CANARY')
+  assert.match(ownerHint, /CANARY_H03/, '主人私聊仍可见自己的日记')
 })

@@ -70,17 +70,16 @@ export default {
         }),
         defineTool({
           name: 'memory_tree',
-          description: '浏览你的分层记忆目录树：按活跃层级（L1近期活跃 / L2-L3温记忆 / L4-L9深层 / L10+远古）只展示编号和短标题，默认不含刷过的视频记录。想先看全貌再挑具体记忆时用，看中编号后调 read_memory 展开全文。',
+          description: '浏览你的记忆目录：按种类分组（关于人的事 / 自己说过的 / 自己做过的 / 长期印象），组内常想起的在前，只展示编号和短标题，默认不含刷过的视频记录。想先看全貌再挑具体记忆时用，看中编号后调 read_memory 展开全文。',
           properties: {
             query: str('可选：按关键词或人名筛目录'),
-            layer: { type: 'number', description: '可选：只看某一层（如 1）' },
             includeSeen: { type: 'boolean', description: '可选：是否包含看过的视频/网页记录，默认 false' },
           },
-          execute: async ({ query, layer, includeSeen }) => memory.memoryTree(chat, { speakers: senders(), query, layer, includeSeen: Boolean(includeSeen) }),
+          execute: async ({ query, includeSeen }) => memory.memoryTree(chat, { speakers: senders(), query, includeSeen: Boolean(includeSeen) }),
         }),
         defineTool({
           name: 'read_memory',
-          description: '按记忆编号（从热记忆目录或 memory_tree 看到的 #id）展开一条或多条记忆的全文；展开后会自动强化这些记忆并浮回 L1 活跃层。',
+          description: '按记忆编号（从 memory_tree 看到的 #id）展开一条或多条记忆的全文；翻过的记忆以后更容易想起。',
           properties: {
             ids: str('记忆编号，多个用逗号分隔，最多 5 条（例如 a1b2c3d4,e5f6g7h8）'),
           },

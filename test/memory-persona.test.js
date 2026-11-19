@@ -296,24 +296,24 @@ test('压缩等待模型时收到忘记请求，不把旧内容重新写回', as
   assert.ok(rows[0].forgottenAt)
 })
 
-test('分档事实先压缩再删除，永久档和旧格式按原有规则处理', async (t) => {
-  const s = setup(t, ({ system }) => isGist(system) ? JSON.stringify({ text: '我记得朋友喜欢红茶' }) : reflect, { gistEnabled: false })
+test('档位只调激活度衰减快慢：琐碎的淡得快、重要的淡得慢，永久档不忘；不再按档位天数压成梗概', async (t) => {
+  const { retention } = await import('../src/features/memory.js')
+  const s = setup(t, ({ system }) => isGist(system) ? JSON.stringify({ text: '我记得朋友喜欢红茶' }) : reflect)
   const now = Date.now()
+  const base = { about: A, chatId: `private:${A}`, source: 'auto', importance: 0.5, at: now - 8 * DAY, saidAt: now - 8 * DAY }
+  assert.ok(retention({ ...base, tier: 1 }, now) < retention({ ...base, tier: 2 }, now))
+  assert.ok(retention({ ...base, tier: 2 }, now) < retention({ ...base, tier: 3 }, now))
   s.put({ items: [
-    { id: 'tier1', text: '朋友喜欢红茶', about: A, chatId: `private:${A}`, source: 'auto', tier: 1, at: now - 8 * DAY, saidAt: now - 8 * DAY },
+    { ...base, id: 'tier1', text: '朋友喜欢红茶', tier: 1 },
     { id: 'forever', text: '朋友很珍惜承诺', about: A, chatId: `private:${A}`, source: 'auto', tier: 0, at: now - 500 * DAY },
     { id: 'legacy', text: '很久以前的一条小事', about: A, source: 'auto', importance: 0.4, at: now - 500 * DAY },
   ] })
   const mem = s.make()
   await mem.consolidate()
-  assert.ok(s.state().items.some((m) => m.id === 'tier1'))
+  assert.ok(s.state().items.some((m) => m.id === 'tier1'), '8 天没用的琐碎事实淡了一些，但还没到忘掉的程度，也不会被单独压成梗概')
   assert.ok(s.state().items.some((m) => m.id === 'forever'))
   assert.ok(!s.state().items.some((m) => m.id === 'legacy'))
-  s.cfg.memory.gistEnabled = true
-  await mem.consolidate()
-  assert.ok(!s.state().items.some((m) => m.id === 'tier1'))
-  assert.ok(s.state().items.some((m) => m.id === 'forever'))
-  assert.equal(s.state().gists[0].level, 1)
+  assert.equal((s.state().gists || []).length, 0)
   assert.match(mem.recallHint(privateChat(A), '朋友喜欢红茶'), /朋友喜欢红茶/)
 })
 

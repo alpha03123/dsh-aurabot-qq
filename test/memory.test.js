@@ -108,13 +108,15 @@ test('检索：同时偏向好几个说话人（群里这一段谁在说）', as
   for (const q of ['养了一只猫', '在学吉他']) assert.ok(search(idx, q, { about })[0].score > search(idx, q)[0].score, q)
 })
 
-test('经历：动态最近经历随当轮消息走（不污染系统快照）；热记忆标题常驻主人私聊；群里优先想起正在说话的人', () => {
+test('经历：动态最近经历随当轮消息走（不污染系统快照）；关于主人的要紧事常驻主人私聊、她自己的经历不进常驻；群里优先想起正在说话的人', () => {
   mem.addEvent({ text: '给主人唱了《小幸运》', about: '10000001', tags: ['唱歌'] })
   assert.equal(mem.recentEvents()[0].text, '给主人唱了《小幸运》')
   const ownerChat = { kind: 'private', userId: '10000001', chatId: 'private:10000001' }
   const ctx = mem.contextFor(ownerChat, 's1')
   assert.doesNotMatch(ctx, /你最近做过的事：刚才/, '方案 A：相对时间最近经历不再放进系统快照')
-  assert.match(ctx, /最近常浮在脑海里的事.*给主人唱了《小幸运》/, '第 1 层热记忆短标题常驻')
+  assert.doesNotMatch(ctx, /小幸运/, '她自己的经历不进常驻')
+  mem.add({ text: '主人是学生，下午一般没课', about: '10000001', aboutName: '主人', importance: 0.8, source: 'tool', chatId: 'private:10000001' })
+  assert.match(mem.contextFor(ownerChat, 's1'), /关于他，你记得这几件要紧的事.*主人是学生/, '关于主人的要紧事常驻')
   const ownerHint = mem.recallHint(ownerChat, '刚才干嘛了', '', 's1')
   assert.match(ownerHint, /你最近做过的事：刚才给主人唱了《小幸运》/)
   mem.add({ text: '阿花最近在减肥', about: '30000003', aboutName: '阿花', importance: 0.6, source: 'tool', chatId: 'group:555' })

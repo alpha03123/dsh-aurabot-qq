@@ -59,7 +59,7 @@ export function memoryPromptRanges(text) {
     }
     ranges.push({ start: m.index, end })
   }
-  for (const m of text.matchAll(/【(?:系统|跨会话|当前背景|刚才背景|当前时间|在外面|出门|精力)[^】\n]*(?:】|$)[^\n|]*/g)) {
+  for (const m of text.matchAll(/【(?:系统|跨会话|当前背景|刚才背景|当前时间|在外面|出门|精力|今天做过的事)[^】\n]*(?:】|$)[^\n|]*/g)) {
     // 单行提醒到换行/气泡结束；不吞掉下一行正常回复。
     const bubble = m[0].indexOf('|||')
     ranges.push({ start: m.index, end: m.index + (bubble < 0 ? m[0].length : bubble) })

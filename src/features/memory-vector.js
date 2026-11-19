@@ -254,5 +254,17 @@ export function createVectorIndex({ getConfig, log, fetchImpl = globalThis.fetch
     try { await syncing } finally { syncing = null }
   }
 
-  return { embed, queryVector, search, sync, validIds, count }
+  /** 两条已同步记忆的余弦相似度（给召回去重用）；任一条没有向量就返回 null，由调用方退回文字相似度。 */
+  function pair(a, b) {
+    if (!prepare()) return null
+    const x = data.items[a]
+    const y = data.items[b]
+    if (!validVector(x, data.dims) || !validVector(y, data.dims)) return null
+    let dot = 0
+    for (let i = 0; i < x.length; i++) dot += x[i] * y[i]
+    const v = dot / (norm(x) * norm(y))
+    return Number.isFinite(v) ? v : null
+  }
+
+  return { embed, queryVector, search, sync, validIds, count, pair }
 }

@@ -409,6 +409,8 @@ for (const backend of ['json', 'sqlite']) {
     for (let group = 0; group < 3; group++) for (let i = 0; i < COMPRESS.maxItems + 3; i++) state.items.push({
       ...template, id: `cluster-${group}-${i}`, text: `小明和朋友一起练习手作，留下了作品${i}`,
       source: ['auto', 'event', 'diary'][i % 3], chatId: `group:${700 + group}`, at: Date.now() - (20 + i) * DAY,
+      // 激活度从「说出来的时间」算起，旧细节的 saidAt 也要是旧的
+      saidAt: Date.now() - (20 + i) * DAY, lastHit: 0, hitDays: 0, mentionedAt: 0,
     })
     for (const source of ['tool', 'panel', 'import']) state.items.push({ ...template, id: source, source, text: `手动保留的${source}原文`, chatId: 'group:700' })
     state.items.push({ ...template, id: 'core', source: 'auto', tier: 'core', text: '一直保留的重要印象', chatId: 'group:700' })

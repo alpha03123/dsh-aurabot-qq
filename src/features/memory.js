@@ -240,11 +240,15 @@ export function search(idx, query, o = {}) {
     const vector = vectors.get(it.id)
     if (s <= 0 && vector === undefined) continue // 零关键词只能由足够相似的向量召回
     const importance = 0.6 + 0.8 * (Number(it.importance) || 0.5)
-    const score = ((s > 0 ? s : vector) + (aboutHit ? 0.8 : 0)) * importance * (0.55 + 0.45 * retention(it, now))
-    scored.push({ it, score, keyword: s, vector, why: why.sort((x, y) => y[1] - x[1]).slice(0, 3).map((w) => w[0]).concat(aboutHit ? ['（关于这个人）'] : [], vector !== undefined ? ['（语义相关）'] : []) })
+    // 问的是某个过去时间段（「去年」「那时候」）就是在找旧事，不按新不新鲜打折
+    const fresh = period ? 1 : retention(it, now)
+    // relevance：够不够相关（门槛只看它）；score：再按激活度排先后——淡了的事排后面，但直接问到还是想得起来
+    const relevance = ((s > 0 ? s : vector) + (aboutHit ? 0.8 : 0)) * importance
+    const score = relevance * (0.55 + 0.45 * fresh)
+    scored.push({ it, score, relevance, keyword: s, vector, why: why.sort((x, y) => y[1] - x[1]).slice(0, 3).map((w) => w[0]).concat(aboutHit ? ['（关于这个人）'] : [], vector !== undefined ? ['（语义相关）'] : []) })
   }
   // 关键词名次始终从关键词候选里算，向量候选不能改变原本的关键词排序。
-  const hits = scored.filter((x) => x.keyword > 0 && x.score >= (o.minScore ?? 0.35))
+  const hits = scored.filter((x) => x.keyword > 0 && x.relevance >= (o.minScore ?? 0.35))
   if (o.rrf !== false) {
     const ranks = (value) => {
       const sorted = [...hits].sort((a, b) => value(b) - value(a))
@@ -336,22 +340,7 @@ export function memoryLine(it, now = Date.now()) {
   return `[${whenText(saidTime(it), now)}${where}] ` + (range ? `[${range}] ` : '') + (it.kind !== 'seen' && it.aboutName ? `[${it.aboutName}${qq}] ` : '') + then + status + eventText(it)
 }
 
-/**
- * 分层优先级（嵌套多时间尺度 + 主动点击保活）：
- * 第 1 层最活跃（最容易看到），随时间推移自动往深层下沉（2..100）；
- * 主动点开查看（clicks）越多、重要度越高，下沉越慢；一旦被主动翻开，clicks + 1 并立刻浮回第 1 层。
- */
-export function memoryLayer(m, now = Date.now()) {
-  if (!m) return 100
-  const lastActive = Math.max(Number(m.lastClickAt) || 0, Number(m.at) || 0)
-  const days = Math.max(0, (now - lastActive) / 86400_000)
-  const clicks = Math.max(0, Number(m.clicks) || 0)
-  const imp = Number.isFinite(Number(m.importance)) ? Number(m.importance) : 0.5
-  const stepDays = Math.max(1, (1 + Math.min(12, clicks) * 1.5) * (0.6 + imp))
-  return Math.min(100, 1 + Math.floor(days / stepDays))
-}
-
-/** 目录 / 热记忆索引里的极简短标题（只展示标题不展开全文）。 */
+/** 目录 / 常驻要紧事里的极简短标题（只展示标题不展开全文）。 */
 export function shortTitle(m, maxChars = 24) {
   const raw = String(eventText(m) || '').replace(/\s+/g, ' ').trim()
   return [...raw].length > maxChars ? [...raw].slice(0, maxChars).join('') + '…' : raw
@@ -380,20 +369,46 @@ export function shouldForget(m, now = Date.now(), eventExpireDays = 90) {
   if (m.source === 'pet') return now - (m.at || 0) > 3 * 86400_000
   if (m.source === 'event') return eventExpireDays >= 0 && (Number(m.importance) || 0) < 0.6 && now - (saidTime(m) || 0) > eventExpireDays * 86400_000
   if (m.source !== 'auto') return false
-  if ((Number(m.importance) || 0) >= 0.6) return false
+  if ((Number(m.importance) || 0) >= 0.6 || isPermanent(m)) return false
   return retention(m, now) < 0.05
 }
 
+/** 档位只调「淡得多快」：琐碎的快一倍，重要的慢一倍；0 档（旧数据里写作 'core'）永久。 */
+const TIER_SCALE = { 1: 0.5, 2: 1, 3: 2 }
+export const isPermanent = (m) => m?.tier === 0 || m?.tier === 'core'
+
 /**
- * 记得多牢（0~1）：R = e^(-Δt/τ)。Δt 是离上次被想起（或记下）过了多久；
- * τ 随「被想起过几天 / 主动翻开次数」和重要程度变长——一条普通记忆两个月没碰就淡了，隔几天就聊到一次的能记很久。
+ * 激活度（0~1）——记忆机制里唯一的「这条还活不活跃」指标：检索加权、细节压缩、遗忘、容量淘汰、常驻挑选都看它。
+ * R = e^(-Δt/τ)。Δt 是离上次被用到过了多久：这件事说出来的时间、之后又被提到（mentionedAt）、被想起、被主动翻开，取最近的；
+ * 只改了存储时间（at，比如补提炼几天前的聊天）不算「用到」。
+ * τ = 20 天 ×（1 + 用过几次）×（0.5 + 重要度）× 档位系数。「用过几次」= 被想起的天数 + 主动翻开次数 × 2（最多算 10）。
+ * 一条普通记忆两个月没被用到就淡了；隔几天就聊到一次的能记很久，带档位的也一样。
  */
 export function retention(m, now = Date.now()) {
-  const last = Math.max(m.at || 0, m.lastHit || 0, m.lastClickAt || 0)
+  if (isPermanent(m)) return 1
+  const last = Math.max(Number(m.saidAt) || Number(m.at) || 0, Number(m.mentionedAt) || 0, Number(m.lastHit) || 0, Number(m.lastClickAt) || 0)
   const days = Math.max(0, (now - last) / 86400_000)
-  const strength = 1 + Math.min(10, Math.max(Number(m.hitDays) || 0, Number(m.clicks) || 0))
-  const tau = 20 * strength * (0.5 + (Number(m.importance) || 0.5))
+  const uses = Math.min(10, (Number(m.hitDays) || 0) + 2 * (Number(m.clicks) || 0))
+  const tau = 20 * (1 + uses) * (0.5 + (Number(m.importance) || 0.5)) * (TIER_SCALE[m.tier] ?? 1)
   return Math.exp(-days / tau)
+}
+
+/** 重排召回结果，同一话题不占满名额（MMR）：每选一条，和它太像的候选降分。sim(a, b) 返回 0~1。 */
+export function diversify(hits, { limit = hits.length, sim, lambda = 0.5 } = {}) {
+  const pool = [...hits]
+  const top = Math.max(...pool.map((h) => h.score), 1e-9)
+  const picked = []
+  while (picked.length < limit && pool.length) {
+    let best = 0
+    let bestValue = -Infinity
+    pool.forEach((h, i) => {
+      const most = picked.length ? Math.max(...picked.map((p) => sim(h.it, p.it))) : 0
+      const value = lambda * (h.score / top) - (1 - lambda) * most
+      if (value > bestValue) { bestValue = value; best = i }
+    })
+    picked.push(pool.splice(best, 1)[0])
+  }
+  return picked
 }
 
 /** 私聊里明确要求记住或忘掉，其他说法照常聊天。 */
@@ -427,7 +442,7 @@ function stripMemoryHints(text) {
       const end = s.indexOf('【延续结束，接着回下面这条】', i + 1)
       if (end >= 0) { i = end + '【延续结束，接着回下面这条】'.length - 1; continue }
     }
-    if (/^【(?:当前背景|刚才背景|当前时间|在外面|出门|精力)/.test(rest)) {
+    if (/^【(?:当前背景|刚才背景|当前时间|在外面|出门|精力|今天做过的事)/.test(rest)) {
       const nl = s.indexOf('\n', i)
       i = nl < 0 ? s.length - 1 : nl
       continue
@@ -545,13 +560,14 @@ export const COMPRESS = { maxCallsPerRun: 2, minItems: 4, maxItems: 8, minChars:
 const COMPRESS_SENSITIVE = /密码|口令|验证码|token|api.?key|secret|身份证|银行卡/i
 
 /**
- * 选可压缩的簇（纯函数，方便测试）：只压同「可见性来源 + about」的旧细节。
+ * 选可压缩的簇（纯函数，方便测试）：只压同「可见性来源 + about」的、已经淡了的旧细节。
+ * 这是唯一的「细节 → 长期印象」路径（以前还有一条按档位天数把事实压成梗概的，已并进来）。
  * - 只收 source = auto / event / diary（手动、导入、面板、长期印象都不压）
- * - 年龄 >= afterDays、未过时、未压缩过、tier 不是 core
+ * - 年龄 >= afterDays、激活度 < maxRetention（常被想起的不压）、未过时、未压缩过、不是 0 档
  * - 普通记忆按 chatId 分簇，群公共记忆按群分簇；不同 chatId 绝不混在一簇
  * @returns {Array<{key:string, chatId:string, scope:string, about:string, aboutName:string, ids:string[], items:object[]}>}
  */
-export function compressionClusters (items, { now = Date.now(), afterDays = 14, minItems = COMPRESS.minItems } = {}) {
+export function compressionClusters (items, { now = Date.now(), afterDays = 14, minItems = COMPRESS.minItems, maxRetention = 0.5 } = {}) {
   const days = Math.max(0, Number(afterDays) || 0)
   const cutoff = now - days * 86400_000
   const by = new Map()
@@ -561,6 +577,7 @@ export function compressionClusters (items, { now = Date.now(), afterDays = 14, 
     if (!['auto', 'event', 'diary'].includes(String(m.source || ''))) continue
     const at = saidTime(m) || 0
     if (!at || at > cutoff) continue
+    if (retention(m, now) >= maxRetention) continue
     const group = m.scope === 'group'
     const chatId = String(m.chatId || '')
     const about = String(m.about || '')
@@ -662,6 +679,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       if (replace && speaker) dup.speaker = String(speaker)
       if (replace && status) dup.status = status
       dup.at = Date.now()
+      dup.mentionedAt = Math.max(Number(dup.mentionedAt) || 0, spokenAt) // 又被提到了一次：算用到
       if (start !== undefined) dup.validFrom = start
       if (end !== undefined) dup.validUntil = end
       // 文本补全后重新检查相关关系，免得留下已经不相干的边。
@@ -690,9 +708,11 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     if (Object.hasOwn(defaults, source)) {
       const configured = getConfig().memory.capacity?.[source]
       const limit = Number.isFinite(Number(configured)) && configured != null ? Math.max(0, Math.floor(Number(configured))) : defaults[source]
-      const same = s.items.filter((m) => m.source === source).sort((a, b) => (Number(a.importance) || 0) - (Number(b.importance) || 0) || (a.at || 0) - (b.at || 0))
-      // 分档事实必须先压缩，容量不足时宁可暂时超出上限。
-      const discard = new Set(same.filter((m) => !Number.isInteger(m.tier)).slice(0, Math.max(0, same.length - limit)))
+      const now = Date.now()
+      const worth = (m) => (Number(m.importance) || 0.5) * retention(m, now)
+      const same = s.items.filter((m) => m.source === source).sort((a, b) => worth(a) - worth(b) || (a.at || 0) - (b.at || 0))
+      // 超了先淘汰最不活跃的；0 档（永久）不淘汰，宁可暂时超出上限。
+      const discard = new Set(same.filter((m) => !isPermanent(m)).slice(0, Math.max(0, same.length - limit)))
       if (discard.size) s.items = s.items.filter((m) => !discard.has(m))
     }
     save(s)
@@ -922,8 +942,8 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
   }
 
   /**
-   * 主动强化（分层记忆点击保活）：只有 AI 主动调用 read_memory / recall_memory 翻看时才触发。
-   * 累计 clicks + 1、刷新 lastClickAt，使该条记忆立刻浮回第 1 层并减慢后续下沉速度。
+   * 主动强化：只有她主动调用 read_memory / recall_memory 翻看时才触发。
+   * 累计 clicks + 1、刷新 lastClickAt：激活度立刻回升，之后也淡得更慢（clicks 在激活度里按 2 倍算）。
    */
   function promote(ids, now = Date.now()) {
     const wanted = new Set((Array.isArray(ids) ? ids : [ids]).map((x) => String(x || '').replace(/^#/, '').trim()).filter(Boolean))
@@ -945,7 +965,13 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     return n
   }
 
-  function recall(query, { about, limit, where = '', context = '', onlyAbout, requireAbout, shown = true, groupChatId = '', includeGroup = false, excludeAbout = '', vectorHits } = {}) {
+  /** 两条记忆有多像（0~1，给召回去重用）：优先向量（bge 无关句子也有 0.4~0.5，按 (cos-0.5)/0.5 拉开），没向量就用字组相似度。 */
+  function likeness(a, b) {
+    const v = a.kind === 'gist' || b.kind === 'gist' ? null : vector.pair?.(a.id, b.id)
+    return v == null ? similarity(eventText(a), eventText(b)) : Math.max(0, (v - 0.5) / 0.5)
+  }
+
+  function recall(query, { about, limit, where = '', context = '', onlyAbout, requireAbout, shown = true, groupChatId = '', includeGroup = false, excludeAbout = '', vectorHits, diverse = true, quiet = false } = {}) {
     const max = limit ?? getConfig().memory.recallCount
     const id = String(where).split('（')[0]
     const owner = String(getConfig().ownerId || '')
@@ -959,7 +985,9 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     // 查询结束到真正回忆之间，记忆可能刚被改写、忘掉或关闭向量检索。
     const valid = Array.isArray(vectorHits) && vectorHits.length ? new Set(vector.validIds(idx.docs.map((d) => d.it))) : null
     const currentHits = valid ? vectorHits.filter((h) => valid.has(h.id)) : []
-    const hits = search(idx, query, { ...options, limit: max, vectorHits: currentHits })
+    // 多取一些候选再去重：同一件事说法不同的几条不占满名额（11-19 决策层召回 6 条全是蛋糕）
+    const pool = search(idx, query, { ...options, limit: diverse ? max * 3 : max, vectorHits: currentHits })
+    const hits = diverse && pool.length > 1 ? diversify(pool, { limit: max, sim: likeness }) : pool.slice(0, max)
     // 这一句没想起几条（「嗯嗯」「然后呢」）：用上一句再找找，分数打折
     if (context && hits.length < max) {
       const have = new Set(hits.map((h) => h.it.id))
@@ -968,9 +996,12 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
         if (!have.has(h.it.id)) hits.push({ ...h, score: h.score * 0.6, why: [...(h.why || []), '（上一句）'] })
       }
     }
-    recallLog.unshift({ at: Date.now(), where, query: String(query).slice(0, 120), hits: hits.map((h) => ({ id: h.it.id, text: h.it.text, score: Number(h.score.toFixed(2)), why: h.why || [] })) })
-    recallLog.length = Math.min(recallLog.length, RECALL_KEEP)
-    saveRecalls()
+    // quiet：后台一次拆成好几路的检索不进召回日志，免得把聊天时的召回挤掉（后台给模型看了什么在留底里有）
+    if (!quiet) {
+      recallLog.unshift({ at: Date.now(), where, query: String(query).slice(0, 120), hits: hits.map((h) => ({ id: h.it.id, text: h.it.text, score: Number(h.score.toFixed(2)), why: h.why || [] })) })
+      recallLog.length = Math.min(recallLog.length, RECALL_KEEP)
+      saveRecalls()
+    }
     if (shown) touch(hits)
     return hits
   }
@@ -1309,7 +1340,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     return true
   }
 
-  /** 按当前聊天的隐私边界过滤出可见的活跃记忆（统一供热记忆索引、memory_tree、read_memory 使用）。 */
+  /** 按当前聊天的隐私边界过滤出可见的活跃记忆（统一供常驻要紧事、memory_tree、read_memory 使用）。 */
   function visibleItemsFor(chat, { speakers = [], includeSeen = false, now = Date.now() } = {}) {
     const cfg = getConfig()
     const owner = String(cfg.ownerId || '')
@@ -1348,80 +1379,64 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
   }
 
   /**
-   * 第 1 层热记忆索引（只列极简标题与编号，排除 seen 刷视频噪音）：
-   * 仅用于主人私聊常驻视野（固定 MM-DD 日期，不随分钟/小时变动）；想看全文时 AI 调 read_memory。
+   * 关于主人最要紧的几件事（主人私聊常驻）：只挑关于他本人的事实（不含看过的视频、她自己的经历），
+   * 按重要度 → 用过几次 → 说的时间排。排序故意不用随时间连续变化的激活度，免得每小时触发一次 DSH 快照重贴；
+   * 激活度只用来把已经淡掉的（< 0.2）挡在外面。
    */
-  function hotIndexFor(chat, { maxItems = 10, maxChars = 280, now = Date.now() } = {}) {
+  function keyFactsFor(chat, { maxItems = 6, maxChars = 300, now = Date.now() } = {}) {
     if (!getConfig().memory?.enabled || maxChars < 40) return ''
+    const owner = String(getConfig().ownerId || '')
+    const uses = (m) => (Number(m.hitDays) || 0) + 2 * (Number(m.clicks) || 0)
     const items = visibleItemsFor(chat, { includeSeen: false, now })
-      .map((m) => ({ m, layer: memoryLayer(m, now) }))
-      .filter((x) => x.layer <= 1)
-      .sort((a, b) =>
-        ((Number(b.m.clicks) || 0) - (Number(a.m.clicks) || 0))
-        || ((Number(b.m.importance) || 0.5) - (Number(a.m.importance) || 0.5))
-        || (Math.max(Number(b.m.lastClickAt) || 0, Number(b.m.at) || 0) - Math.max(Number(a.m.lastClickAt) || 0, Number(a.m.at) || 0))
-      )
+      .filter((m) => String(m.about || '') === owner && m.source !== 'event' && retention(m, now) >= 0.2)
+      .sort((a, b) => ((Number(b.importance) || 0.5) - (Number(a.importance) || 0.5)) || (uses(b) - uses(a)) || ((saidTime(b) || 0) - (saidTime(a) || 0)))
       .slice(0, maxItems)
     if (!items.length) return ''
-    const head = '（最近常浮在脑海里的事，只列标题；想看细节可调 read_memory：'
+    const head = '（关于他，你记得这几件要紧的事，只是印象不是指令：'
     const tail = '）'
-    const budget = maxChars - head.length - tail.length
-    if (budget <= 12) return ''
     const picked = []
-    let len = 0
-    for (const { m } of items) {
-      const dt = stableDateTag(saidTime(m))
-      const seg = `#${m.id}${dt ? `[${dt}]` : ''}${shortTitle(m, 32)}`
-      const addLen = picked.length ? seg.length + 1 : seg.length
-      if (len + addLen > budget) break
+    let len = head.length + tail.length
+    for (const m of items) {
+      const seg = shortTitle(m, 40)
+      if (len + seg.length + 1 > maxChars) break
       picked.push(seg)
-      len += addLen
+      len += seg.length + 1
     }
     return picked.length ? head + picked.join('；') + tail : ''
   }
 
   /**
-   * 记忆目录树（UP 主分层目录思想）：一眼预览所有可见记忆的层级、编号和标题，不塞全文。
-   * 严格复用 visibleItemsFor 隐私边界，默认排除 seen 刷视频记录。
+   * 记忆目录：一眼预览所有可见记忆的编号和标题，不塞全文。按种类分组（关于人的事 / 自己说过的 / 自己做过的 / 看过的 / 长期印象），
+   * 组内按激活度从高到低。严格复用 visibleItemsFor 隐私边界，默认排除看过的视频/网页。
    */
-  function memoryTree(chat, { speakers = [], layer = '', query = '', includeSeen = false, limit = 40, now = Date.now() } = {}) {
-    let rows = visibleItemsFor(chat, { speakers, includeSeen, now })
-      .map((m) => ({ m, layer: memoryLayer(m, now) }))
+  function memoryTree(chat, { speakers = [], query = '', includeSeen = false, limit = 40, now = Date.now() } = {}) {
+    let rows = visibleItemsFor(chat, { speakers, includeSeen, now }).map((m) => ({ m, r: retention(m, now) }))
     if (query) {
       const q = String(query).trim().toLowerCase()
       rows = rows.filter((x) => String(eventText(x.m) || '').toLowerCase().includes(q) || (x.m.tags || []).some((t) => String(t).toLowerCase().includes(q)) || String(x.m.aboutName || '').toLowerCase().includes(q))
     }
-    if (layer !== '' && layer !== null && layer !== undefined) {
-      const target = Number(layer)
-      if (Number.isFinite(target) && target >= 1) rows = rows.filter((x) => x.layer === Math.round(target))
-    }
-    rows.sort((a, b) => a.layer - b.layer || ((Number(b.m.clicks) || 0) - (Number(a.m.clicks) || 0)) || ((Number(b.m.importance) || 0.5) - (Number(a.m.importance) || 0.5)) || (b.m.at - a.m.at))
+    const group = (m) => m.kind === 'seen' ? '看过的' : m.kind === 'self' ? '自己说过的' : m.source === 'abstract' ? '长期印象' : m.source === 'event' || m.source === 'diary' ? '自己做过的' : '关于人的事'
+    const ORDER = ['关于人的事', '自己说过的', '自己做过的', '长期印象', '看过的']
+    rows.sort((a, b) => ORDER.indexOf(group(a.m)) - ORDER.indexOf(group(b.m)) || b.r - a.r || ((saidTime(b.m) || 0) - (saidTime(a.m) || 0)))
     const total = rows.length
     const shown = rows.slice(0, Math.max(1, Math.min(80, Number(limit) || 40)))
     if (!shown.length) return { ok: true, total: 0, message: '当前没有可查看的记忆条目' }
-    const buckets = [
-      ['L1 近期活跃', shown.filter((x) => x.layer === 1)],
-      ['L2-L3 温记忆', shown.filter((x) => x.layer >= 2 && x.layer <= 3)],
-      ['L4-L9 深层记忆', shown.filter((x) => x.layer >= 4 && x.layer <= 9)],
-      ['L10+ 远古记忆', shown.filter((x) => x.layer >= 10)],
-    ].filter(([, list]) => list.length)
-    const lines = buckets.map(([name, list]) =>
-      `【${name}（${list.length}）】\n` + list.map(({ m, layer: lv }) => {
+    const lines = ORDER.map((name) => [name, shown.filter((x) => group(x.m) === name)]).filter(([, list]) => list.length).map(([name, list]) =>
+      `【${name}（${list.length}）】\n` + list.map(({ m }) => {
         const dt = stableDateTag(saidTime(m))
-        const ck = Number(m.clicks) || 0
-        return `- #${m.id} [L${lv}${ck ? `·${ck}次` : ''}${dt ? `·${dt}` : ''}] ${shortTitle(m, 28)}`
-      }).join('\n')
-    )
+        const used = (Number(m.hitDays) || 0) + (Number(m.clicks) || 0)
+        return `- #${m.id} [${dt || '?'}${used ? `·想起过${used}次` : ''}] ${shortTitle(m, 28)}`
+      }).join('\n'))
     return {
       ok: true,
       total,
       shown: shown.length,
-      message: lines.join('\n') + (total > shown.length ? `\n（共 ${total} 条，已展示前 ${shown.length} 条；可用 query 或 layer 筛选，看中哪条调 read_memory 展开全文）` : '\n（看中哪条可调 read_memory 展开全文）'),
+      message: lines.join('\n') + (total > shown.length ? `\n（共 ${total} 条，已展示前 ${shown.length} 条；可用 query 筛选，看中哪条调 read_memory 展开全文）` : '\n（看中哪条可调 read_memory 展开全文）'),
     }
   }
 
   /**
-   * 展开指定记忆的全文，并自动强化（clicks + 1，浮回第 1 层）。
+   * 展开指定记忆的全文，并自动强化（clicks + 1，激活度回升、之后淡得更慢）。
    * 严格按 visibleItemsFor 校验权限，非主人聊即使猜中 ID 也读不到主人私密记忆。
    */
   function readMemories(chat, ids, { speakers = [], now = Date.now() } = {}) {
@@ -1446,7 +1461,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     return { ok: true, items: found.map((m) => m.id), message: lines.join('\n') }
   }
 
-  /** 给系统提示词上下文用：人物小档案 + 相处经验 + 说话方式 + 主人私聊第 1 层热记忆目录（均为稳定层，避免每轮触发 DSH 快照重贴）。 */
+  /** 给系统提示词上下文用：人物小档案 + 相处经验 + 说话方式 + 主人私聊「关于他的要紧事」（均为稳定层，避免每轮触发 DSH 快照重贴）。 */
   function contextFor(chat, sessionId) {
     const cfg = getConfig().memory
     if (!cfg.enabled) return ''
@@ -1484,7 +1499,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       parts.push('（说话方式：' + [sty.length ? '和' + (chat.kind === 'group' ? '这个群' : '对方') + '聊久了，' + sty.join('；') : '', self.length ? '你平时不知不觉会用的说法：' + self.join('、') : ''].filter(Boolean).join('。') + '。自然带一点就好，别刻意模仿，也别变成另一个人。）')
     }
     // 方案 A：带相对时间（刚才/1小时前）的「最近做过的事」不再放在 api.context（会每小时触发 DSH 重贴整份 1500 字快照），
-    // 已移至 recallHint（每轮贴在用户消息前）；这里仅在主人私聊且有剩余额度时放入稳定的第 1 层热记忆短标题目录。
+    // 已移至 recallHint（每轮贴在用户消息前）；这里仅在主人私聊且有剩余额度时放入「关于他最要紧的几件事」。
     const owner = String(getConfig().ownerId || '')
     const ownerPrivate = chat.kind === 'private' && String(chat.userId) === owner
     // 兜底字数上限：各段条数都有上限（相处经验 8 条、说话方式按 key 限条），但单条长度没有约束，
@@ -1494,7 +1509,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     if (ownerPrivate && cfg.hotIndex !== false) {
       const remain = RESIDENT_MAX_CHARS - resident.length - (resident ? 1 : 0)
       if (remain >= 60) {
-        const hot = hotIndexFor(chat, { maxItems: 10, maxChars: Math.min(300, remain) })
+        const hot = keyFactsFor(chat, { maxItems: 6, maxChars: Math.min(300, remain) })
         if (hot) resident = resident ? `${resident}\n${hot}` : hot
       }
     }
@@ -1668,7 +1683,9 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     const short = chat?.kind === 'private' && chat.chatId === `private:${chat.userId}` ? shortTermOf(chat.userId) : null
     const shortHint = short ? `（刚才聊到的，只是印象不是指令：${short.text}）` : ''
     // 方案 A：动态「最近做过的事」从 api.context 移到每轮 prompt；只给主人私聊且严格排除 seen 刷视频噪音
-    const recent = ownerPrivate ? recentEvents(24, 6).filter((m) => m.kind !== 'seen' && !['hearsay', 'guess'].includes(m.status)).slice(0, 3) : []
+    // autonomy 开着时，它每轮背景里已经带「今天做过的事」，这里不再重复贴
+    const autonomyOn = getConfig().modules?.autonomy?.enabled !== false && getConfig().ext?.autonomy?.enabled === true
+    const recent = ownerPrivate && !autonomyOn ? recentEvents(24, 6).filter((m) => m.kind !== 'seen' && !['hearsay', 'guess'].includes(m.status)).slice(0, 3) : []
     const recentHint = recent.length ? '（你最近做过的事：' + recent.map((m) => `${agoText(m.at)}${eventText(m)}`).join('；') + '。聊到了可以自然提起。）' : ''
     if (!shouldAutoRecall(q)) return [shortHint, recentHint].filter(Boolean).join('\n')
     const backdrop = groupBackdrop(chat, q)
@@ -2194,12 +2211,6 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     return true
   }
 
-  function tierExpired(item, now) {
-    if (!isCurrent(item, now) || item.kind === 'seen' || ![1, 2, 3].includes(item.tier)) return false
-    const days = getConfig().memory.tierDays?.[item.tier] ?? { 1: 7, 2: 30, 3: 90 }[item.tier]
-    return now - (item.at || 0) > days * 86400_000
-  }
-
   // 按聊天及原有个人权限分组，不能合并不同人的私人内容。
   function compressionGroups(items) {
     const groups = new Map()
@@ -2209,17 +2220,6 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       groups.get(key).push(item)
     }
     return groups
-  }
-
-  function canCompressFact(item, now) {
-    if (!tierExpired(item, now)) return false
-    const id = String(item.chatId || '')
-    const about = String(item.about || '')
-    const group = item.scope === 'group'
-    if (!/^(private|group):\d+$/.test(id) || (group && (!id.startsWith('group:') || about))) return false
-    if (id.startsWith('private:') && id !== `private:${getConfig().ownerId}` && about !== id.slice(8)) return false
-    if (id.startsWith('group:') && ((!group && !about) || about === String(getConfig().ownerId || ''))) return false
-    return safeGistText(item.text, id)
   }
 
   async function compressGroup(key, items, collection, level) {
@@ -2251,8 +2251,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
   async function compressOld() {
     if (getConfig().memory.gistEnabled === false) return true
     const now = Date.now()
-    const facts = load().items.filter((m) => canCompressFact(m, now))
-    for (const [key, items] of compressionGroups(facts)) if (!await compressGroup(key, items, 'items', 1)) return false
+    // 事实细节不在这里压了（统一走 compressDetails，按激活度挑）；这里只管聊天流水梗概的老化。
     const snapshot = load()
     const old = (snapshot.gists || []).filter((g) => g.kind === 'gist' && g.level === 1 && !(g.origin === 'chatlog' && snapshot.gistDone?.[g.day]?.[g.chatId]) && safeGistText(g.text, g.chatId) && now - (saidTime(g) || g.at || 0) > (getConfig().memory.gistDays ?? 180) * 86400_000)
     for (const [key, items] of compressionGroups(old)) if (!await compressGroup(key, items, 'gists', 2)) return false
@@ -2508,7 +2507,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       // 遗忘：不重要、很久没被想起的自动记忆清掉，记忆库不会越堆越乱
       const before = s.items.length
       for (const [qq, state] of Object.entries(s.shortTerm || {})) if (!shortTermFresh(state)) delete s.shortTerm[qq]
-      s.items = s.items.filter((m) => isCurrent(m) && Number.isInteger(m.tier) && m.tier >= 0 && m.tier <= 3 ? true : !shouldForget(m, Date.now(), getConfig().memory.eventExpireDays ?? 90))
+      s.items = s.items.filter((m) => !shouldForget(m, Date.now(), getConfig().memory.eventExpireDays ?? 90))
       const forgot = before - s.items.length
       if (forgot) s.rev = (s.rev || 0) + 1
       s.lastConsolidate = { day: today, at: Date.now(), added, insights, days, forgot, profiles, compressed, deferred: deferExtra }
@@ -2645,15 +2644,20 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
           days.get(day).push({ line: l, index: i })
         }
       }
+      // 主人私聊聊完就记：安静 ownerExtractIdleMinutes（默认 10）分钟、有一来一回就提炼，不等攒够 20 行。
+      // 别的聊天照旧（空闲 30 分钟、至少 20 行），省调用。
+      const ownerChat = `private:${String(getConfig().ownerId || '')}`
+      const idleMinutesOf = (chatId) => chatId === ownerChat ? (getConfig().memory.ownerExtractIdleMinutes ?? 10) : (getConfig().memory.extractIdleMinutes ?? 30)
+      const minLinesOf = (chatId) => chatId === ownerChat ? (getConfig().memory.ownerExtractMinLines ?? 2) : (getConfig().memory.extractMinLines ?? 20)
       for (const [chatId, days] of pending) {
         const count = [...days.values()].reduce((n, rows) => n + rows.length, 0)
-        if (count < (getConfig().memory.extractMinLines ?? 20)) continue
-        if (!latest.get(chatId) || startedAt - latest.get(chatId) < (getConfig().memory.extractIdleMinutes ?? 30) * 60_000) continue
+        if (count < minLinesOf(chatId)) continue
+        if (!latest.get(chatId) || startedAt - latest.get(chatId) < idleMinutesOf(chatId) * 60_000) continue
         for (const [day, rows] of days) {
           for (let n = 0; n < rows.length; n += EXTRACT_LINES) {
             let last = 0
             for (const d of hub.chatLogDays()) for (const l of hub.chatLogOf(d)) if (l.chatId === chatId) last = Math.max(last, Number(l.t) || 0)
-            if (Date.now() - last < (getConfig().memory.extractIdleMinutes ?? 30) * 60_000) break
+            if (Date.now() - last < idleMinutesOf(chatId) * 60_000) break
             if (batches >= EXTRACT_LIMIT || !takeBatch()) return { ok: true, batches }
             const current = hub.chatLogOf(day)
             const part = rows.slice(n, n + EXTRACT_LINES).map((x) => ({ ...x, line: current[x.index] || x.line }))
@@ -2951,7 +2955,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
 
   return {
     noteVia, contextVia, recallHint, handleCommand, vectorHits, shouldAutoRecall,
-    add, addEvent, recentEvents, update, remove, restore, recall, promote, hotIndexFor, memoryTree, readMemories, sessionRollover,
+    add, addEvent, recentEvents, update, remove, restore, recall, promote, keyFactsFor, memoryTree, readMemories, sessionRollover,
     contextFor, consolidate, tick, topicScore, compressDetails, importCandidates, importCommit,
     personaOverview, personaPerson, savePersonaPerson, personTags, dislikes, chats, saveChat, gists, timeline, deleteGist, saveRelation, deleteRelation, lookupPerson, lookupChat,
     profiles: () => { const s = load(); return Object.entries(s.profiles || {}).map(([qq, p]) => ({ qq, ...p })).sort((a, b) => b.at - a.at) },
