@@ -69,8 +69,27 @@ export default {
           },
         }),
         defineTool({
+          name: 'memory_tree',
+          description: '浏览你的分层记忆目录树：按活跃层级（L1近期活跃 / L2-L3温记忆 / L4-L9深层 / L10+远古）只展示编号和短标题，默认不含刷过的视频记录。想先看全貌再挑具体记忆时用，看中编号后调 read_memory 展开全文。',
+          properties: {
+            query: str('可选：按关键词或人名筛目录'),
+            layer: { type: 'number', description: '可选：只看某一层（如 1）' },
+            includeSeen: { type: 'boolean', description: '可选：是否包含看过的视频/网页记录，默认 false' },
+          },
+          execute: async ({ query, layer, includeSeen }) => memory.memoryTree(chat, { speakers: senders(), query, layer, includeSeen: Boolean(includeSeen) }),
+        }),
+        defineTool({
+          name: 'read_memory',
+          description: '按记忆编号（从热记忆目录或 memory_tree 看到的 #id）展开一条或多条记忆的全文；展开后会自动强化这些记忆并浮回 L1 活跃层。',
+          properties: {
+            ids: str('记忆编号，多个用逗号分隔，最多 5 条（例如 a1b2c3d4,e5f6g7h8）'),
+          },
+          required: ['ids'],
+          execute: async ({ ids }) => memory.readMemories(chat, ids, { speakers: senders() }),
+        }),
+        defineTool({
           name: 'recall_memory',
-          description: '翻一翻记忆库：想不起对方以前说过什么、喜欢什么、约过什么时用。query 写关键词或一句话。',
+          description: '按语义和关键词深挖记忆库：想不起对方以前说过什么、喜欢什么、约过什么时用。query 写关键词或一句话。',
           properties: { query: str('想找什么') },
           required: ['query'],
           execute: async ({ query }) => {
@@ -88,7 +107,8 @@ export default {
             const about = owner ? chat.userId : (chat.kind === 'group' ? speakers : chat.userId)
             const vectorHits = await memory.vectorHits(query)
             const hits = memory.recall(String(query || ''), { about, onlyAbout, requireAbout: !owner, excludeAbout: owner ? '' : api.config().ownerId, includeGroup: owner, groupChatId: chat.kind === 'group' ? current : '', limit: 8, where: current + '（翻记忆）', vectorHits })
-            return hits.length ? { ok: true, message: hits.map((h) => memoryLine(h.it)).join('；') } : { ok: true, message: '没想起相关的事' }
+            if (hits.length) memory.promote(hits.slice(0, 3).map((h) => h.it.id))
+            return hits.length ? { ok: true, message: hits.map((h) => `#${h.it.id} ${memoryLine(h.it)}`).join('；') } : { ok: true, message: '没想起相关的事' }
           },
         }),
       ]
@@ -170,6 +190,17 @@ export default {
       const b = await http.body(req)
       // 立即整理一次：连今天的也提炼（今天的聊天流水不删，写日记还要用）
       return memory.consolidate({ includeToday: b.includeToday !== false })
+    })
+    api.route('/memory/tree', async (req) => {
+      const q = http.query(req)
+      const ownerId = String(api.config().ownerId || '')
+      return memory.memoryTree({ kind: 'private', userId: ownerId, chatId: `private:${ownerId}` }, { query: q.q || '', layer: q.layer || '', includeSeen: q.includeSeen === '1' })
+    })
+    api.route('/memory/rollover', async (req) => {
+      const b = await http.body(req)
+      const ownerId = String(api.config().ownerId || '')
+      const chatId = String(b.chatId || (ownerId ? `private:${ownerId}` : '')).trim()
+      return memory.sessionRollover(chatId, { merge: b.merge !== false, lastLines: Number(b.lastLines) || 8 })
     })
 
     return memory

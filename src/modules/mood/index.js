@@ -12,7 +12,14 @@ export default {
   files: ['features/companion.js'],
   setup(api) {
     const mood = createMood({ getConfig: api.config, dsh: api.dsh, log: api.log })
-    api.context(({ chat }) => (chat.kind === 'system' ? '' : mood.contextLine()))
+    // 方案 A：动态心情不再放进 api.context（会触发 DSH 每轮重贴 1500 字背景快照），改为贴在当轮消息前
+    api.on('prompt', (content, info) => {
+      try {
+        if (!info || !info.chat || info.chat.kind === 'system' || !Array.isArray(content)) return content
+        const line = mood.contextLine()
+        return line ? [{ type: 'text', text: line }, ...content] : content
+      } catch (error) { return content }
+    })
     api.on('activity', (a) => {
       const cfg = api.config()
       if (a.kind === 'in' && a.text) mood.observe(a.text, a.nickname, { direct: a.direct, owner: a.owner })

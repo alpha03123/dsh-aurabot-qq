@@ -1910,12 +1910,56 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     return out
   }
 
-  /** 只在这个会话第一次说话时，把最近的历史补给她的上下文。 */
+  // 方案 B：睡前/开机整理归档旧会话后，把中文情感交接存盘，新会话第一轮无缝衔接（重启不丢）
+  const handoffFile = () => dataDir('session-handoffs.json')
+  function readHandoffs() {
+    const raw = readJson(handoffFile(), () => ({}))
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  }
+  function setSessionHandoff(chatId, text, meta = {}) {
+    const id = String(chatId || '').trim()
+    const body = String(text || '').trim()
+    if (!id) return false
+    const all = readHandoffs()
+    if (!body) delete all[id]
+    else all[id] = { text: body, at: Date.now(), ...meta }
+    writeJson(handoffFile(), all)
+    return true
+  }
+  function peekSessionHandoff(chatId) {
+    const id = String(chatId || '').trim()
+    if (!id) return null
+    const entry = readHandoffs()[id]
+    if (!entry || !entry.text) return null
+    if (entry.at && Date.now() - Number(entry.at) > 7 * 86400_000) return null
+    return entry
+  }
+  function takeSessionHandoff(chatId) {
+    const id = String(chatId || '').trim()
+    if (!id) return null
+    const all = readHandoffs()
+    const entry = all[id]
+    if (!entry) return null
+    delete all[id]
+    writeJson(handoffFile(), all)
+    if (!entry.text || (entry.at && Date.now() - Number(entry.at) > 7 * 86400_000)) return null
+    return entry
+  }
+
+  /** 只在这个会话第一次说话时，把交接摘要或最近的历史补给她的上下文。 */
   async function seedHistoryOnce(sessionId, chat, content) {
     const key = sessionKey(sessionId)
     if (historySeeded.has(key)) return content
     historySeeded.add(key)
     try {
+      if (chat?.kind !== 'system') {
+        const handoff = takeSessionHandoff(chat?.chatId)
+        if (handoff?.text) {
+          log.info(`${chat.chatId}：新会话，注入上次聊天的中文交接（${handoff.text.length} 字）`)
+          const block = `【上次聊天的延续，只是你自己的记忆背景，不必刻意复述或提起“总结”】\n${handoff.text}\n【延续结束，接着回下面这条】`
+          return [{ type: 'text', text: block }, ...content]
+        }
+      }
       const cfg = getConfig()
       if (!cfg.enabled || cfg.dryRun) return content
       if (!cfg.chat?.seedHistory) return content
@@ -2514,6 +2558,9 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     turnHasOwner,
     turnSenders,
     resetChat,
+    setSessionHandoff,
+    peekSessionHandoff,
+    takeSessionHandoff,
     joinTopic: (gid) => groupEngaged.set(String(gid), Date.now() + ENGAGE_MS),
     leaveTopic: (gid) => groupEngaged.delete(String(gid)),
     chatOfSession,
