@@ -43,7 +43,7 @@ function prune (dir, day) {
 
 export const newTraceId = () => randomUUID().replace(/-/g, '').slice(0, 10)
 
-const SKIP_FN = new Set(['writeTrace', 'callerOf', 'askModel', 'runStream', 'ask', 'runSystemTurn', 'Object.think', 'think'])
+const SKIP_FN = new Set(['writeTrace', 'callerOf', 'askModel', 'runStream', 'ask', 'runSystemTurn', 'runSystemTurnInner', 'Object.think', 'think', 'value'])
 
 /**
  * 从调用栈认出是谁发起的这次调用（不用每个调用点都传 key）：返回「函数名 @ 文件:行」，
@@ -58,9 +58,12 @@ export function callerOf (extraSkip = []) {
     const fn = (m[1] || '').replace(/^async\s+/, '')
     const file = m[2]
     if (/node:|internal\//.test(file) || /[\\/]trace\.js$/.test(file)) continue
-    const short = fn.split('.').pop()
-    if (skip.has(fn) || skip.has(short)) continue
-    return `${fn || '(匿名)'} @ ${basename(file.replace(/^file:\/+/, ''))}:${m[3]}`
+    // 「Object.value [as runSystemTurn]」这类转发层：按 as 后面的名字认，一样跳过
+    const alias = (fn.match(/\[as ([^\]]+)\]/) || [])[1] || ''
+    const base = fn.replace(/\s*\[as [^\]]+\]/, '')
+    const short = base.split('.').pop()
+    if (skip.has(fn) || skip.has(base) || skip.has(short) || (alias && skip.has(alias))) continue
+    return `${base || '(匿名)'} @ ${basename(file.replace(/^file:\/+/, ''))}:${m[3]}`
   }
   return ''
 }
