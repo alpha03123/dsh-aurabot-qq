@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 排查用的时间线：把一段时间里她「收到什么、想了什么、说了什么、小脑决定了什么、做了什么、想起了什么、哪里报错」
+// 排查用的时间线：把一段时间里她「收到什么、想了什么、说了什么、决策层决定了什么、做了什么、想起了什么、哪里报错」
 // 按时间排成一条。只读，不改任何数据。在 DSH 所在的那台机器上跑（要读 DSH 数据目录）。
 //
 //   node tools/timeline.mjs                         最近 3 小时
@@ -8,8 +8,8 @@
 //   node tools/timeline.mjs --from 13:00 --to 15:00 --q 蛋糕      只看含「蛋糕」的行
 //   node tools/timeline.mjs --src chat,brain,cere           只要某几类（chat brain cere act recall log）
 //   node tools/timeline.mjs --full                          不截断
-//   node tools/timeline.mjs --show t:3f9a2c1d0e             展开一条小脑留底（行尾 ‹t:…›）
-//   node tools/timeline.mjs --show b:2fe0a013#16            展开一条大脑会话记录（行尾 ‹b:…›）
+//   node tools/timeline.mjs --show t:3f9a2c1d0e             展开一条决策层留底（行尾 ‹t:…›）
+//   node tools/timeline.mjs --show b:2fe0a013#16            展开一条语言层会话记录（行尾 ‹b:…›）
 //   node tools/timeline.mjs --home C:\Users\22161\.dsh-bot2  看汐（另一个 DSH）
 //   node tools/timeline.mjs --out E:\...\timeline.txt       同时写进文件
 //   --logs all   日志里 info 也要（默认只要 warn / error）
@@ -104,7 +104,7 @@ if (SRC.has('chat')) {
   }
 }
 
-// 大脑：DSH 会话（收到的完整消息、想法、说的话、工具调用）
+// 语言层（以前叫大脑）：DSH 会话（收到的完整消息、想法、说的话、工具调用）
 const sessionFiles = () => {
   const root = join(HOME, 'sessions')
   if (!existsSync(root)) return []
@@ -160,7 +160,7 @@ if (SRC.has('brain') || String(opt.show || '').startsWith('b:')) {
     sessions.set(short, recs)
     if (!SRC.has('brain')) continue
     const title = (recs.find((r) => r.type === 'session/title') || {}).data?.title || ''
-    const tag = (k) => `大脑·${k}${title ? `·${title}` : ''}`
+    const tag = (k) => `语言层·${k}${title ? `·${title}` : ''}`
     // 插进收件箱的消息之后会原样变成 user/message，同一个 id 只留后者
     const userIds = new Set(recs.filter((r) => r.type === 'user/message' && r.data && r.data.id).map((r) => r.data.id))
     for (const r of recs) {
@@ -187,7 +187,7 @@ if (SRC.has('brain') || String(opt.show || '').startsWith('b:')) {
   }
 }
 
-// 小脑：后台模型调用留底
+// 决策层（以前叫小脑）：后台模型调用留底
 const traces = new Map()
 if (SRC.has('cere') || String(opt.show || '').startsWith('t:')) {
   for (const day of days) {
@@ -197,7 +197,7 @@ if (SRC.has('cere') || String(opt.show || '').startsWith('t:')) {
       const key = r.key || one(r.caller).split(' ')[0] || r.kind || '?'
       const out = r.output ?? (Array.isArray(r.attempts) && r.attempts.length ? r.attempts[r.attempts.length - 1].output : '')
       const extra = [r.ms != null ? `${r.ms}ms` : '', r.error ? `❌${r.error}` : ''].filter(Boolean).join(' ')
-      push({ t: r.at, tag: `小脑·${key}`, text: `${extra ? `[${extra}] ` : ''}→ ${out || '（无输出）'}`, ref: `t:${r.id}` })
+      push({ t: r.at, tag: `决策层·${key}`, text: `${extra ? `[${extra}] ` : ''}→ ${out || '（无输出）'}`, ref: `t:${r.id}` })
     }
   }
 }
@@ -247,7 +247,7 @@ if (opt.show) {
     if (!r) say(`没找到留底 ${ref}（看看日期范围是否覆盖它：--from / --to）`)
     else {
       const { system, input, output, reasoning, attempts, ...meta } = r
-      say(`== 小脑留底 ${ref}  ${stamp(r.at)}`)
+      say(`== 决策层留底 ${ref}  ${stamp(r.at)}`)
       say(JSON.stringify(meta, null, 1))
       if (system) say(`\n--- system ---\n${system}`)
       if (input) say(`\n--- input ---\n${input}`)
@@ -261,7 +261,7 @@ if (opt.show) {
     const r = recs && recs.find((x) => String(x.seq) === seq)
     if (!r) say(`没找到会话记录 ${ref}（会话文件要在 --from 之后改过才会被读到）`)
     else {
-      say(`== 大脑会话 ${ref}  ${stamp(r.time)}  ${r.type}`)
+      say(`== 语言层会话 ${ref}  ${stamp(r.time)}  ${r.type}`)
       const content = r.data?.message?.content || r.data?.content || r.data?.inserted?.flatMap((m) => m.content) || null
       if (Array.isArray(content)) for (const c of content) say(`\n--- ${c.type} ---\n${c.text ?? JSON.stringify(c, null, 1)}`)
       else say(JSON.stringify(r.data, null, 1))
