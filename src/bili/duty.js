@@ -66,6 +66,15 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   let login = { at: 0, key: '', value: { isLogin: false, uname: '' } }
 
   const owner = () => getConfig().ownerName || '主人'
+  /** 最近一天和主人的私聊（最多 8 行）：判断「这个视频跟最近聊的有没有关系」用 */
+  const ownerChat = () => {
+    const id = getConfig().ownerId
+    if (!id || typeof hub.chatLogOf !== 'function') return []
+    const since = Date.now() - 24 * 3600_000
+    const days = [dayKey(new Date(since)), dayKey()]
+    const rows = [...new Set(days)].flatMap((d) => hub.chatLogOf(d) || []).filter((r) => r && r.chatId === `private:${id}` && Number(r.t) >= since && r.text)
+    return rows.slice(-8).map((r) => `${r.who === 'bot' ? '你' : owner()}：${String(r.text).slice(0, 60)}`)
+  }
   // 能不能发评论 / 回复：Cookie 里要有 bili_jct，今天也没因为风控之类暂停
   const canPost = (s) => Boolean(parseCookie(cfg().cookie).bili_jct) && s.pauseDay !== dayKey()
   const pauseIf = (s, error) => {
@@ -263,6 +272,69 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     return name ? String(text).replace(/[@＠]主人\s*/g, `@${name} `) : String(text)
   }
 
+  /**
+   * 把想分享的视频交给主人私聊会话：系统提示里给视频事实、她的感受和想分享的理由、链接（他问起再给），
+   * 由聊天那边用平常的口气说（或者沉默）。shot：先发一张截图（她选的，开了「允许配截图」才发）。
+   * 返回 { delivered, shot, silent }。
+   */
+  async function deliverShare({ x, why, feeling, shot }) {
+    const g = getConfig()
+    const chatId = `private:${g.ownerId}`
+    if (g.dryRun || !g.enabled) {
+      log.info(`试运行 / 总开关关：本来要把《${x.info.title}》分享给主人：${why}`)
+      return { delivered: false, shot: false, silent: false }
+    }
+    if (typeof hub.pushToSession !== 'function') return { delivered: false, shot: false, silent: false }
+    let shotSent = false
+    if (shot && Number(g.bili.shotChance) > 0 && x.shotIds && x.shotIds.length) {
+      try {
+        const file = x.shotIds[Math.floor((x.shotIds.length - 1) / 2)]
+        const r = await hub.sendImage(chatId, shotPath({ file }))
+        shotSent = r?.message_id !== undefined && !String(r.message_id).startsWith('sim-')
+      } catch (error) {
+        log.debug('分享时发截图失败：', error.message)
+      }
+    }
+    const v = x.info
+    const prompt = [
+      `【系统提醒，不是${owner()}说的话】你刚在 B 站看了个视频，想拿给${owner()}看：《${v.title}》（UP主 ${v.author || '?'}）。`,
+      feeling ? `你看完的感受：${feeling}` : '',
+      `想给他看是因为：${why}`,
+      shotSent ? '你已经先把视频里的一张截图发给他了。' : '',
+      '像朋友之间随手分享刚刷到的视频那样，用你平常跟他说话的口气说一两句——比如说说哪儿好笑、哪儿戳到你、为什么想到他（只是例子）。别念完整标题、别写成推荐语或内容简介、别发链接。',
+      `视频链接：${link(v.bvid)}（他问起要链接、或者说想看的时候再给他）`,
+      '这会儿觉得不合适、不想说了，就只回 [沉默]。',
+    ].filter(Boolean).join('\n')
+    const before = Number(hub.lastBotToOwner?.at) || 0
+    try {
+      await hub.pushToSession({ chatId, kind: 'private', userId: String(g.ownerId), nickname: owner() }, [{ type: 'text', text: prompt }], '')
+    } catch (error) {
+      log.warn(`想分享《${v.title}》给主人，但没递进聊天：${error.message}`)
+      return { delivered: false, shot: shotSent, silent: false }
+    }
+    // pushToSession 只是排进队列：等这一轮说完再看她开没开口
+    const waited = typeof hub.waitDelivery === 'function' ? await hub.waitDelivery(chatId).catch(() => 'timeout') : 'timeout'
+    const spoke = (Number(hub.lastBotToOwner?.at) || 0) > before
+    const delivered = spoke || waited === 'timeout'
+    log.info(delivered ? `把《${v.title}》分享给了主人${shotSent ? '（配了截图）' : ''}` : `想分享《${v.title}》，到聊天里又没开口`)
+    return { delivered, shot: shotSent, silent: !delivered }
+  }
+
+  /** 最近看过 / 分享过的视频（带链接）：主人问「那个视频链接呢」时她查这个 */
+  function recent(query = '', limit = 8) {
+    const q = String(query || '').trim()
+    const out = []
+    const seenIds = new Set()
+    for (const h of load().history || []) {
+      if (!h.bvid || !['share', 'watch', 'shot', 'comment'].includes(h.kind) || seenIds.has(h.bvid)) continue
+      if (q && !String(h.title || '').includes(q)) continue
+      seenIds.add(h.bvid)
+      out.push({ title: h.title, link: link(h.bvid), shared: (load().history || []).some((y) => y.bvid === h.bvid && y.kind === 'share'), at: new Date(h.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }), note: String(h.text || '').slice(0, 60) })
+      if (out.length >= limit) break
+    }
+    return out.length ? { ok: true, list: out } : { ok: false, list: [], message: q ? `最近没看过标题里有「${q}」的视频` : '最近没看过 B 站视频' }
+  }
+
   /** 刷一轮。force = 面板里手动点的（不占每天的次数）。 */
   // allowShare=false：只看不分享（autonomy 按「主动找主人」额度决定这一轮能不能分享）
   // query：她这次专门想找的东西（autonomy 的决策层给的搜索词）；有就只搜它，不挑兴趣关键词、不拿热门凑数
@@ -299,16 +371,19 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       s.seen = [...seen].slice(-500)
       if (!looked.length) return { ok: false, message: '视频都打不开' }
       const commentLeft = c.comment && canPost(s) ? Math.max(0, c.maxCommentsPerDay - s.comments) : 0
+      const canShare = allowShare && c.shareToOwner && getConfig().ownerId
+      const chatLines = canShare ? ownerChat() : []
       const out = await think(`${q ? `你这次是专门上 B 站搜「${q}」的，` : ''}你在 B 站${q ? '搜' : '刷'}到了这几个视频：\n\n${looked.map((x, i) => `【${i + 1}】${x.digest}`).join('\n\n')}\n\n` +
-        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受",${q ? ` "found":true 或 false（这个视频里有没有你要找的东西）, "answer":"found 为 true 时写要点（具体数字、步骤），只按上面字幕 / 转写 / 画面 / 评论里真看到的写，别凭印象补；false 就空字符串",` : ''} "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）", "share":"想私聊分享给${owner()}的话（系统会自动把视频链接附在后面，直接按顺手分享的口吻聊就行，别问「要不要发你」；真的觉得${owner()}会喜欢、或和最近聊过的有关才写，不然空字符串）", "remember":"值得记住的一件事（没有就空字符串）"}。` +
+        (chatLines.length ? `最近和${owner()}的私聊：\n${chatLines.join('\n')}\n\n` : '') +
+        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受",${q ? ` "found":true 或 false（这个视频里有没有你要找的东西）, "answer":"found 为 true 时写要点（具体数字、步骤），只按上面字幕 / 转写 / 画面 / 评论里真看到的写，别凭印象补；false 就空字符串",` : ''} "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）",${canShare ? ` "share":"想不想拿给${owner()}看：真觉得他会喜欢、或者跟最近聊的有关，就写一句为什么想给他看（哪里好笑、哪里戳到你、为什么想到他）；不想就空字符串。这一轮最多挑一个最想分享的，其余都空着。写了也只是想法，待会儿要不要开口、怎么说，你在跟他的聊天里再定", "shot":true 或 false（分享时想不想先发一张这个视频的截图，没截图就 false）,` : ''} "remember":"值得记住的一件事（没有就空字符串）"}。` +
         `这次最多评论 ${commentLeft} 个。只输出 JSON 数组。`)
       const decisions = pickJson(out, [])
       let commented = 0
       let shared = 0
       const answers = [] // 找东西时：哪些视频里有要找的（标题 + 要点）
-      // 本地改（2026-11-17）：一轮最多分享一个（想分享的里面随机挑一个）；主人 15 分钟内刚聊过就先不发
-      const wantShare = (Array.isArray(decisions) ? decisions : []).filter((d) => d && String(d.share || '').trim() && !isSilence(String(d.share)))
-      const shareOne = wantShare.length ? wantShare[Math.floor(Math.random() * wantShare.length)] : null
+      // 一轮最多分享一个：她写了 share 的里面取第一个（她自己排的，不随机）；主人 15 分钟内刚聊过就先不发
+      const shareOne = (Array.isArray(decisions) ? decisions : []).find((d) => d && String(d.share || '').trim() && !isSilence(String(d.share))) || null
+      let shareJob = null
       const justTalked = Date.now() - Math.max(hub.lastOwnerChatAt || 0, hub.lastBotToOwner?.at || 0) < 15 * 60_000
       const felt = new Map() // bvid → 她自己的一句感受，发截图时配着用
       for (const d of Array.isArray(decisions) ? decisions : []) {
@@ -340,39 +415,23 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         }
         if (c.like && !getConfig().dryRun) api.likeVideo(v.aid).catch(() => {})
         const share = cleanOutboundText(d.share, { warn: (message) => log.warn(`B 站分享：${message}`) }).trim()
-        if (allowShare && share && !isSilence(share) && c.shareToOwner && getConfig().ownerId && d === shareOne && !justTalked) {
-          // 真发出去才算分享（Discord 断线时 sendText 返回 null），不然她会以为主人收到了
-          const sent = await hub.sendText(`private:${getConfig().ownerId}`, `${share}\n${link(v.bvid)}`)
-          if (sent) {
-            shared++
-            record(s, { kind: 'share', title: v.title, bvid: v.bvid, text: share })
-          } else {
-            log.warn(`想分享《${v.title}》给主人，但没发出去`)
-            record(s, { kind: 'error', title: v.title, bvid: v.bvid, text: '分享没发出去' })
-          }
+        if (canShare && share && !isSilence(share) && d === shareOne && !justTalked) {
+          shareJob = { x, why: share, feeling, shot: d.shot === true || String(d.shot).trim().toLowerCase() === 'true' }
         }
         record(s, { kind: 'watch', title: v.title, bvid: v.bvid, text: feeling })
       }
-      // 刷完按概率顺手甩一张截图给主人：默认概率和发一张表情包一样，0 = 从不
+      // 分享：交给和主人聊天的那个会话去说（带着聊天上下文和人格），她在那儿再决定开不开口、怎么说
       let shotSent = 0
-      const shotTo = getConfig().ownerId ? `private:${getConfig().ownerId}` : ''
-      if (allowShare && shotTo && c.enabled && getConfig().enabled && !getConfig().dryRun && Number(c.shotChance) > 0) {
-        const pool = looked.filter((x) => x.shotIds && x.shotIds.length)
-        if (pool.length && Math.random() < Number(c.shotChance)) {
-          const x = pool[Math.floor(Math.random() * pool.length)]
-          const file = x.shotIds[Math.floor(Math.random() * x.shotIds.length)]
-          try {
-            const line = felt.get(x.info.bvid) || ''
-            const r = await hub.sendImage(shotTo, shotPath({ file }))
-            if (r?.message_id !== undefined && !String(r.message_id).startsWith('sim-')) {
-              shotSent = 1
-              record(s, { kind: 'shot', title: x.info.title, bvid: x.info.bvid, text: line })
-              log.info(`刷完顺手发了张截图《${x.info.title}》`)
-              if (line) await hub.sendText(shotTo, line)
-            }
-          } catch (error) {
-            log.warn('顺手发截图失败：', error.message)
-          }
+      if (shareJob) {
+        const r = await deliverShare(shareJob)
+        if (r.delivered) {
+          shared++
+          shotSent = r.shot ? 1 : 0
+          record(s, { kind: 'share', title: shareJob.x.info.title, bvid: shareJob.x.info.bvid, text: shareJob.why })
+          if (r.shot) record(s, { kind: 'shot', title: shareJob.x.info.title, bvid: shareJob.x.info.bvid, text: shareJob.feeling || '' })
+          memory?.addEvent?.({ kind: 'seen', meta: { title: shareJob.x.info.title, author: shareJob.x.info.author, url: link(shareJob.x.info.bvid), platform: 'bili', id: shareJob.x.info.bvid }, text: `把这个视频分享给了${owner()}：${shareJob.why.slice(0, 80)}`, tags: ['B站'], importance: 0.45 })
+        } else {
+          record(s, { kind: 'error', title: shareJob.x.info.title, bvid: shareJob.x.info.bvid, text: r.silent ? '想分享，到聊天里又没开口' : '分享没发出去' })
         }
       }
       if (!force) s.runs++
@@ -507,7 +566,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   }
 
   return {
-    run, checkReplies, watch, comment, setSign, setAvatar, tick, account, sendShot, listShots,
+    run, checkReplies, watch, comment, setSign, setAvatar, tick, account, sendShot, listShots, recent,
     libraryShots, shotFileOf, deleteShot,
     dispose() { stopped = true },
     state: () => {

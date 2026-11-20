@@ -75,6 +75,7 @@ test('过滤：播放量、发布时间、看过的', () => {
 function fakes({ decisions, replyText = '是呀 我也觉得', cfgOver = {}, postError = null } = {}) {
   const posted = []
   const sent = []
+  const pushed = []
   const events = []
   const eventRecords = []
   const facts = []
@@ -99,6 +100,10 @@ function fakes({ decisions, replyText = '是呀 我也觉得', cfgOver = {}, pos
       return ''
     },
     sendText: async (chatId, text) => sent.push({ chatId, text }),
+    // 分享走主人私聊会话：她在聊天那边开口后 lastBotToOwner 会更新
+    lastBotToOwner: { at: 0, text: '' },
+    pushToSession: async (chat, parts) => { pushed.push({ chatId: chat.chatId, text: parts[0].text }); hub.lastBotToOwner = { at: Date.now(), text: '（她说了一句）' } },
+    waitDelivery: async () => 'done',
     logChat: () => {},
   }
   const memory = {
@@ -109,11 +114,11 @@ function fakes({ decisions, replyText = '是呀 我也觉得', cfgOver = {}, pos
   }
   const cfg = normalize({ enabled: true, dryRun: false, ownerId: '10000001', bili: { enabled: true, cookie: 'SESSDATA=x; bili_jct=y', perRun: 2, maxCommentsPerDay: 1, ...cfgOver } })
   const b = duty.createBili({ getConfig: () => cfg, hub, memory, log: { info() {}, warn() {}, debug() {} }, api: fakeApi })
-  return { b, posted, sent, events, eventRecords, facts }
+  return { b, posted, sent, pushed, events, eventRecords, facts }
 }
 
 test('刷一轮：看视频、按每天上限评论、分享给主人、记成她的经历', async () => {
-  const { b, posted, sent, events, eventRecords, facts } = fakes({ decisions: [
+  const { b, posted, pushed, events, eventRecords, facts } = fakes({ decisions: [
     { i: 1, feeling: '米饭好香', comment: '看饿了', share: '', remember: '有个米饭大赛很好玩' },
     { i: 2, feeling: '猫好可爱', comment: '猫猫好会', share: '主人你看这只猫会做饭！', remember: '' },
   ] })
@@ -122,10 +127,14 @@ test('刷一轮：看视频、按每天上限评论、分享给主人、记成�
   assert.equal(r.watched, 2)
   assert.equal(posted.length, 1, '每天最多 1 条，只发了第一条')
   assert.equal(posted[0].message, '看饿了')
-  assert.equal(sent.length, 1)
-  assert.equal(sent[0].chatId, 'private:10000001')
-  assert.match(sent[0].text, /会做饭！\nhttps:\/\/www\.bilibili\.com\/video\/BV1/)
-  const seen = eventRecords.filter((e) => e.kind === 'seen')
+  assert.equal(r.shared, 1)
+  assert.equal(pushed.length, 1, '分享递进主人私聊会话，由聊天那边开口')
+  assert.equal(pushed[0].chatId, 'private:10000001')
+  assert.match(pushed[0].text, /《猫猫做饭》/)
+  assert.match(pushed[0].text, /会做饭！/, '带上她想分享的理由')
+  assert.match(pushed[0].text, /视频链接：https:\/\/www\.bilibili\.com\/video\/BV1/, '链接给她留着，问起再给')
+  assert.match(pushed[0].text, /别发链接/)
+  const seen = eventRecords.filter((e) => e.kind === 'seen' && !/分享给了/.test(e.text))
   assert.equal(seen.length, 2)
   assert.equal(seen[0].meta.title, '米饭大赛')
   assert.equal(seen[0].meta.platform, 'bili')

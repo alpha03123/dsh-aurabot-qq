@@ -41,6 +41,13 @@ export default {
           execute: async ({ link }) => bili.watch(String(link || '')),
         }),
         defineTool({
+          name: 'bili_recent',
+          description: '查你最近在 B 站看过、分享给主人的视频（标题 + 链接）。主人问「刚才那个视频链接发我」「你分享的是哪个视频」时用；query 填标题里的词，不填就是最近几个。',
+          properties: { query: str('可选：标题里的词') },
+          required: [],
+          execute: async ({ query }) => bili.recent(String(query || '')),
+        }),
+        defineTool({
           name: 'bili_comment',
           description: '在一个 B 站视频下发评论（只有主人让你发的时候才用）。link 填链接或 BV 号，text 是评论内容。要 @ 人就写 @完整昵称 并在后面空一格，@主人 会换成主人的 B 站号。',
           properties: { link: str('B 站链接或 BV 号'), text: str('评论内容') },
