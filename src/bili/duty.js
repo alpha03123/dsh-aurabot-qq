@@ -300,7 +300,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       if (!looked.length) return { ok: false, message: '视频都打不开' }
       const commentLeft = c.comment && canPost(s) ? Math.max(0, c.maxCommentsPerDay - s.comments) : 0
       const out = await think(`${q ? `你这次是专门上 B 站搜「${q}」的，` : ''}你在 B 站${q ? '搜' : '刷'}到了这几个视频：\n\n${looked.map((x, i) => `【${i + 1}】${x.digest}`).join('\n\n')}\n\n` +
-        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受",${q ? ` "answer":"视频里有没有你要找的东西：只按上面字幕 / 转写 / 画面 / 评论里真看到的写要点（具体数字、步骤），没看到就空字符串，别凭印象补",` : ''} "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）", "share":"想私聊分享给${owner()}的话（系统会自动把视频链接附在后面，直接按顺手分享的口吻聊就行，别问「要不要发你」；真的觉得${owner()}会喜欢、或和最近聊过的有关才写，不然空字符串）", "remember":"值得记住的一件事（没有就空字符串）"}。` +
+        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受",${q ? ` "found":true 或 false（这个视频里有没有你要找的东西）, "answer":"found 为 true 时写要点（具体数字、步骤），只按上面字幕 / 转写 / 画面 / 评论里真看到的写，别凭印象补；false 就空字符串",` : ''} "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）", "share":"想私聊分享给${owner()}的话（系统会自动把视频链接附在后面，直接按顺手分享的口吻聊就行，别问「要不要发你」；真的觉得${owner()}会喜欢、或和最近聊过的有关才写，不然空字符串）", "remember":"值得记住的一件事（没有就空字符串）"}。` +
         `这次最多评论 ${commentLeft} 个。只输出 JSON 数组。`)
       const decisions = pickJson(out, [])
       let commented = 0
@@ -318,9 +318,11 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         const feeling = cleanOutboundText(d.feeling, { warn: (message) => log.warn(`B 站感受：${message}`) }).trim()
         const remember = cleanOutboundText(d.remember, { warn: (message) => log.warn(`B 站见闻：${message}`) }).trim()
         const answer = q ? cleanOutboundText(d.answer, { warn: (message) => log.warn(`B 站找到的：${message}`) }).trim() : ''
-        if (answer && !isSilence(answer)) answers.push({ title: v.title, bvid: v.bvid, text: answer.slice(0, 300) })
+        // 只认 found 这个是 / 否：模型有时在 answer 里写「没找到……」，不能当成找到了
+        const hit = d.found === true || String(d.found).trim().toLowerCase() === 'true'
+        if (hit && answer && !isSilence(answer)) answers.push({ title: v.title, bvid: v.bvid, text: answer.slice(0, 300) })
         if (feeling) felt.set(v.bvid, feeling)
-        memory?.addEvent?.({ kind: 'seen', meta: { title: v.title, author: v.author, url: link(v.bvid), platform: 'bili', id: v.bvid }, text: [feeling, !isSilence(remember) ? remember : '', answer && !isSilence(answer) ? `（找「${q}」）${answer.slice(0, 200)}` : ''].filter(Boolean).join('；') || v.title, tags: ['B站'], importance: answer && !isSilence(answer) ? 0.5 : 0.4 })
+        memory?.addEvent?.({ kind: 'seen', meta: { title: v.title, author: v.author, url: link(v.bvid), platform: 'bili', id: v.bvid }, text: [feeling, !isSilence(remember) ? remember : '', answers.some((a) => a.bvid === v.bvid) ? `（找「${q}」）${answer.slice(0, 200)}` : ''].filter(Boolean).join('；') || v.title, tags: ['B站'], importance: answers.some((a) => a.bvid === v.bvid) ? 0.5 : 0.4 })
         const comment = cleanOutboundText(atOwner(d.comment || ''), { warn: (message) => log.warn(`B 站评论：${message}`) }).trim().slice(0, 200)
         if (comment && !isSilence(comment) && commented < commentLeft && canPost(s)) {
           try {
@@ -339,9 +341,15 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         if (c.like && !getConfig().dryRun) api.likeVideo(v.aid).catch(() => {})
         const share = cleanOutboundText(d.share, { warn: (message) => log.warn(`B 站分享：${message}`) }).trim()
         if (allowShare && share && !isSilence(share) && c.shareToOwner && getConfig().ownerId && d === shareOne && !justTalked) {
-          await hub.sendText(`private:${getConfig().ownerId}`, `${share}\n${link(v.bvid)}`)
-          shared++
-          record(s, { kind: 'share', title: v.title, bvid: v.bvid, text: share })
+          // 真发出去才算分享（Discord 断线时 sendText 返回 null），不然她会以为主人收到了
+          const sent = await hub.sendText(`private:${getConfig().ownerId}`, `${share}\n${link(v.bvid)}`)
+          if (sent) {
+            shared++
+            record(s, { kind: 'share', title: v.title, bvid: v.bvid, text: share })
+          } else {
+            log.warn(`想分享《${v.title}》给主人，但没发出去`)
+            record(s, { kind: 'error', title: v.title, bvid: v.bvid, text: '分享没发出去' })
+          }
         }
         record(s, { kind: 'watch', title: v.title, bvid: v.bvid, text: feeling })
       }
