@@ -7,7 +7,7 @@ import { loginSessionKey, recoverLoginPause } from './login-pause.js'
 import { lookWithVision, visionState } from './vision.js'
 import { createShotStore, shotPath, clockOf } from './shots.js'
 import { createParaformer } from './asr.js'
-import { danmakuInsight, parseDanmakuXml, transcriptExcerpt, subtitleFits, visualLine, clock } from './insight.js'
+import { danmakuInsight, parseDanmakuXml, transcriptExcerpt, subtitleFits, visualLine, clock, commentLines } from './insight.js'
 import { findFfmpeg } from '../core/img.js'
 import { assertPublicUrl } from '../core/net.js'
 
@@ -49,7 +49,7 @@ export function digestOf(v, { subtitle = '', source = 'subtitle', comments = [],
     vision ? `画面（抽帧）：${vision.slice(0, 900)}` : '',
     dm ? `弹幕：共 ${dm.total} 条` + (dm.top.length ? `；刷得最多的：${dm.top.slice(0, 5).map((x) => `「${x.text.slice(0, 20)}」×${x.n}`).join(' ')}` : '') : '',
     dm && dm.peaks.length ? '弹幕最热闹的时刻：' + dm.peaks.map((p) => `${clock(p.at)}（${p.texts.map((t) => '「' + t.slice(0, 16) + '」').join('')}）`).join('；') : '',
-    comments.length ? '热评：\n' + comments.slice(0, 8).map((c) => `  ${c.name}：${c.text}`).join('\n') : '',
+    comments.length ? '评论区：\n' + commentLines(comments, 8).join('\n') : '',
   ].filter(Boolean).join('\n')
 }
 

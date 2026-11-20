@@ -213,3 +213,32 @@ export function subtitleFits(segments, duration) {
   const last = segs[segs.length - 1].end || segs[segs.length - 1].start
   return last <= d + 20
 }
+
+/**
+ * 评论区挑给她看的几条：置顶的放最前；其余按点赞取前几条，再给「点赞不低的长评论」（常是课代表总结、补充说明）留两个位置，
+ * 别让一排「哈哈哈」占满。最多 n 条。
+ */
+export function pickComments(list, n = 8) {
+  const all = (Array.isArray(list) ? list : []).filter((c) => c && c.text)
+  const pinned = all.filter((c) => c.top).slice(0, 1)
+  const rest = all.filter((c) => !c.top)
+  const byLike = rest.slice().sort((a, b) => (b.like || 0) - (a.like || 0))
+  const room = n - pinned.length
+  const long = byLike.filter((c) => c.text.length >= 50 && (c.like || 0) >= 20).slice(0, 2)
+  const picked = [...long]
+  for (const c of byLike) { if (picked.length >= room) break; if (!picked.includes(c)) picked.push(c) }
+  return [...pinned, ...picked.sort((a, b) => (b.like || 0) - (a.like || 0))]
+}
+
+/** 评论区的几行：置顶标出来，点赞高的带上赞数，最热的两条带一两句楼中楼。 */
+export function commentLines(list, n = 8) {
+  const picked = pickComments(list, n)
+  const hottest = picked.filter((c) => !c.top && (c.subs || []).length).slice(0, 2)
+  const out = []
+  for (const c of picked) {
+    const likes = c.like >= 100 ? `（赞 ${c.like}）` : ''
+    out.push(`  ${c.top ? '[置顶] ' : ''}${c.name}${likes}：${String(c.text).slice(0, c.top ? 400 : 160)}`)
+    if (hottest.includes(c)) for (const sub of c.subs.slice(0, 2)) out.push(`    ↳ ${sub.name}：${String(sub.text).slice(0, 80)}`)
+  }
+  return out
+}

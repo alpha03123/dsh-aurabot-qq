@@ -209,7 +209,14 @@ export function createBiliApi({ getCookie, log, fetchImpl = fetch }) {
   /** 热门评论：[{rpid, name, mid, text, like, replies}] */
   async function comments(aid, { limit = 12 } = {}) {
     const d = await req(await signed('https://api.bilibili.com/x/v2/reply/wbi/main', { type: 1, oid: aid, mode: 3, plat: 1, web_location: 1315875 }))
-    return (d.replies || []).slice(0, limit).map((r) => ({ rpid: r.rpid, name: r.member?.uname, mid: r.mid, text: String(r.content?.message || '').slice(0, 200), like: r.like, replies: r.rcount || 0 }))
+    // 置顶评论（UP 主常把配方、链接、勘误放这里）在 top_replies；每条热评自带前两条楼中楼
+    const one = (r, top = false) => ({
+      rpid: r.rpid, name: r.member?.uname, mid: r.mid, text: String(r.content?.message || '').slice(0, top ? 500 : 300), like: r.like || 0, replies: r.rcount || 0, top,
+      subs: (r.replies || []).slice(0, 2).map((x) => ({ name: x.member?.uname, text: String(x.content?.message || '').slice(0, 120), like: x.like || 0 })),
+    })
+    const pinned = (d.top_replies || []).slice(0, 1).map((r) => one(r, true))
+    const hot = (d.replies || []).filter((r) => !pinned.some((p) => p.rpid === r.rpid)).slice(0, Math.max(limit, 20)).map((r) => one(r))
+    return [...pinned, ...hot]
   }
 
   /** 按昵称精确找用户，找不到返回 0。 */
