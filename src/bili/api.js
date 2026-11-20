@@ -118,7 +118,17 @@ export function createBiliApi({ getCookie, log, fetchImpl = fetch }) {
   /** 搜视频：[{bvid, aid, title, author, play, pubdate, duration, desc}] */
   async function search(keyword, { page = 1 } = {}) {
     await ensureBuvid()
-    const d = await req(await signed('https://api.bilibili.com/x/web-interface/wbi/search/type', { search_type: 'video', keyword, page }))
+    // 没登录时 B 站搜索偶尔整页返回空或 412，隔一会儿再试一次通常就有了
+    let d
+    for (let attempt = 0; ; attempt++) {
+      try {
+        d = await req(await signed('https://api.bilibili.com/x/web-interface/wbi/search/type', { search_type: 'video', keyword, page }))
+        if ((d.result || []).length || attempt >= 1) break
+      } catch (error) {
+        if (attempt >= 1) throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+    }
     return (d.result || []).map((v) => ({
       bvid: v.bvid, aid: v.aid, title: stripHtml(v.title), author: v.author, play: Number(v.play) || 0, pubdate: (v.pubdate || 0) * 1000, duration: v.duration, desc: stripHtml(v.description).slice(0, 200),
     }))
@@ -161,21 +171,39 @@ export function createBiliApi({ getCookie, log, fetchImpl = fetch }) {
     }
   }
 
-  /** 字幕全文（优先中文；AI 字幕要登录才有）。拿不到返回 ''。 */
-  async function subtitle({ bvid, aid, cid }) {
+  /**
+   * 字幕轨（优先人工字幕，其次中文 AI 字幕；AI 字幕要登录才有）。
+   * 返回 { segments:[{start,end,text}], lang, ai, needLogin }；没有字幕轨时 segments 为空。
+   */
+  async function subtitleTrack({ bvid, aid, cid }) {
+    const d = await req(await signed('https://api.bilibili.com/x/player/wbi/v2', { ...(bvid ? { bvid } : { aid }), cid }))
+    const list = (d.subtitle?.subtitles || []).filter((s) => s.subtitle_url)
+    const zh = (s) => /zh|中文/.test(String(s.lan) + String(s.lan_doc))
+    const ai = (s) => /^ai-/.test(String(s.lan)) || Number(s.ai_type) > 0
+    const pick = list.find((s) => zh(s) && !ai(s)) || list.find(zh) || list[0]
+    if (!pick) return { segments: [], lang: '', ai: false, needLogin: Boolean(d.need_login_subtitle) }
+    const url = pick.subtitle_url.startsWith('//') ? 'https:' + pick.subtitle_url : pick.subtitle_url
+    const r = await fetchImpl(url, { headers: { 'user-agent': UA, referer: 'https://www.bilibili.com/' }, signal: AbortSignal.timeout(15000) })
+    const j = await r.json()
+    const segments = (j.body || []).map((x) => ({ start: Number(x.from) || 0, end: Number(x.to) || 0, text: String(x.content || '').trim() })).filter((x) => x.text)
+    return { segments, lang: pick.lan_doc || pick.lan || '', ai: ai(pick), needLogin: false }
+  }
+
+  /** 字幕全文（老接口，给只要文字的地方用）。拿不到返回 ''。 */
+  async function subtitle(v) {
     try {
-      const d = await req(await signed('https://api.bilibili.com/x/player/wbi/v2', { ...(bvid ? { bvid } : { aid }), cid }))
-      const list = d.subtitle?.subtitles || []
-      const pick = list.find((s) => /zh|中文/.test(s.lan + s.lan_doc)) || list[0]
-      if (!pick?.subtitle_url) return ''
-      const url = pick.subtitle_url.startsWith('//') ? 'https:' + pick.subtitle_url : pick.subtitle_url
-      const r = await fetchImpl(url, { headers: { 'user-agent': UA, referer: 'https://www.bilibili.com/' }, signal: AbortSignal.timeout(15000) })
-      const j = await r.json()
-      return (j.body || []).map((x) => x.content).join(' ')
+      return (await subtitleTrack(v)).segments.map((x) => x.text).join(' ')
     } catch (error) {
       log?.debug('拿字幕失败：', error.message)
       return ''
     }
+  }
+
+  /** 弹幕 XML 原文（匿名可取；按 cid）。 */
+  async function danmakuXml(cid) {
+    const r = await fetchImpl(`https://comment.bilibili.com/${cid}.xml`, { headers: { 'user-agent': UA, referer: 'https://www.bilibili.com/' }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) throw new Error('弹幕 HTTP ' + r.status)
+    return r.text()
   }
 
   /** 热门评论：[{rpid, name, mid, text, like, replies}] */
@@ -304,7 +332,7 @@ export function createBiliApi({ getCookie, log, fetchImpl = fetch }) {
     return { ...response.data, platformResponse: response }
   }
 
-  return { nav, search, popular, view, playurl, subtitle, comments, postComment, likeVideo, setSign, setFace, replyFeed, resolveShort, danmakuInfo, postDanmaku }
+  return { nav, search, popular, view, playurl, subtitle, subtitleTrack, danmakuXml, comments, postComment, likeVideo, setSign, setFace, replyFeed, resolveShort, danmakuInfo, postDanmaku }
 }
 
 /** 固定本次登录凭证；实际提交前由调用者核验它是否仍是当前凭证。 */

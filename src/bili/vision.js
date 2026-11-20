@@ -5,10 +5,16 @@
 // 不影响原来「标题 + 简介 + 字幕 + 热评」的文本流程。
 
 import { spawn } from 'node:child_process'
+import { createWriteStream, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline as streamPipeline } from 'node:stream/promises'
 import { UA } from './api.js'
 import { askModel, canSeeImages } from '../core/llm.js'
 import { findFfmpeg } from '../core/img.js'
 import { assertPublicUrl } from '../core/net.js'
+import { parseFrameMetrics, visualInsight, pickFrameTimes, lineAt, clock } from './insight.js'
 
 // ffmpeg 的查找已经抽到 core/img.js（生图那边也要用），这里保留导出，老的引用不受影响
 export { findFfmpeg }
@@ -79,18 +85,90 @@ export function grabFrame(ffmpeg, url, at, { width = 512, timeoutMs = 15000, max
 
 const SYSTEM = '你在看一个视频的若干张截图。只写画面上确实能看到的东西：场景、人物、物体、动作、画面里的文字 / 字幕条 / 贴纸。不要猜剧情，不要编造没出现的内容，不要发表感想。用 3~6 句中文写。'
 
-/** 把几帧交给视觉模型，换一段画面描述。 */
-export async function describeFrames(dsh, { info, frames, cfg }) {
+/** 把几帧交给视觉模型，换一段画面描述。times / lines 可选：每张的时间点、那时在说的话。 */
+export async function describeFrames(dsh, { info, frames, cfg, times = [], lines = [] }) {
   const images = frames.map((f) => ({ data: f.toString('base64'), mediaType: 'image/jpeg' }))
+  const notes = times.length
+    ? '\n每张截图的时间' + (lines.some(Boolean) ? '和那时在说的话' : '') + '：\n' + times.map((t, i) => `第 ${i + 1} 张 ${clock(t)}${lines[i] ? '：「' + String(lines[i]).slice(0, 60) + '」' : ''}`).join('\n')
+    : '\n大致分布在全片 5%~95% 的位置。'
   const text = await askModel(dsh, {
     cfg,
     system: SYSTEM,
-    text: `这些截图来自视频《${info.title}》（UP主 ${info.author || '?'}，时长 ${Math.round(Number(info.duration) || 0)} 秒），按时间先后排列，大致分布在全片 5%~95% 的位置。\n把它们当成「我看到了什么」如实记下来。`,
+    text: `这些截图来自视频《${info.title}》（UP主 ${info.author || '?'}，时长 ${Math.round(Number(info.duration) || 0)} 秒），按时间先后排列。${notes}\n把它们当成「我看到了什么」如实记下来；提到某张时可以带上时间。`,
     images,
     maxTokens: 1000,
     temperature: 0.3,
   })
   return String(text || '').trim()
+}
+
+// 本地分析：20 分钟以内、流不超过 80MB 的视频整段下到临时目录，一遍算出每 0.5 秒的场景变化 / 清晰度 / 亮度差，
+// 再按画面变化和弹幕高峰挑时间点、从本地文件抽帧。更长的视频退回远程按时间均匀抽。
+export const LOCAL_MAX_SEC = 20 * 60
+const LOCAL_MAX_BYTES = 80 * 1024 * 1024
+
+async function download(url, file, { maxBytes = LOCAL_MAX_BYTES, timeoutMs = 90000 } = {}) {
+  const r = await fetch(url, { headers: { referer: 'https://www.bilibili.com/', 'user-agent': UA }, signal: AbortSignal.timeout(timeoutMs) })
+  if (!r.ok || !r.body) throw new Error('下载视频流 HTTP ' + r.status)
+  if (Number(r.headers.get('content-length')) > maxBytes) throw new Error('视频流太大')
+  let bytes = 0
+  const src = Readable.fromWeb(r.body)
+  src.on('data', (d) => { bytes += d.length; if (bytes > maxBytes) src.destroy(new Error('视频流太大')) })
+  await streamPipeline(src, createWriteStream(file))
+  return bytes
+}
+
+function runFfmpeg(ffmpeg, args, { timeoutMs = 120000, stdout = false } = {}) {
+  return new Promise((resolve) => {
+    let p
+    try { p = spawn(ffmpeg, args, { windowsHide: true }) } catch { return resolve(null) }
+    const out = []
+    let err = ''
+    const timer = setTimeout(() => { try { p.kill() } catch {} resolve(null) }, timeoutMs)
+    p.stdout.on('data', (d) => { if (stdout) out.push(d) })
+    p.stderr.on('data', (d) => { if (!stdout && err.length < 32 * 1024 * 1024) err += d })
+    p.on('error', () => { clearTimeout(timer); resolve(null) })
+    p.on('close', (code) => { clearTimeout(timer); resolve(code === 0 ? (stdout ? Buffer.concat(out) : err) : null) })
+  })
+}
+
+/** 一遍分析：每 0.5 秒一帧、缩到 320 宽，打印场景分 / 模糊度 / 和上一帧的亮度差。 */
+export async function frameMetrics(ffmpeg, file) {
+  const log = await runFfmpeg(ffmpeg, ['-hide_banner', '-nostdin', '-i', file, '-an', '-sn',
+    '-vf', "fps=2,scale=320:-2,select='gte(scene\\,0)',blurdetect,signalstats,metadata=print", '-f', 'null', '-'], { timeoutMs: 120000 })
+  return log ? parseFrameMetrics(log) : []
+}
+
+async function grabLocal(ffmpeg, file, at, width = 512) {
+  const buf = await runFfmpeg(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-ss', String(at), '-i', file,
+    '-frames:v', '1', '-an', '-vf', `scale=${width}:-2`, '-q:v', '3', '-f', 'image2', '-c:v', 'mjpeg', 'pipe:1'], { timeoutMs: 20000, stdout: true })
+  return buf && buf.length > 500 && buf[0] === 0xff && buf[1] === 0xd8 ? buf : null
+}
+
+/**
+ * 下载 → 分析 → 挑点 → 抽帧。返回 { frames:[{sec,buf}], visual }；失败抛错（调用方退回远程抽帧）。
+ * peaks：弹幕高峰（优先截那几个时刻）。
+ */
+export async function analyzeLocal({ ffmpeg, url, duration, n = 6, peaks = [], log }) {
+  const dir = mkdtempSync(join(tmpdir(), 'aurabot-bili-'))
+  try {
+    const file = join(dir, 'v.m4s')
+    const t0 = Date.now()
+    const bytes = await download(url, file)
+    const t1 = Date.now()
+    const metrics = await frameMetrics(ffmpeg, file)
+    const visual = visualInsight(metrics, duration)
+    const times = metrics.length ? pickFrameTimes({ metrics, duration, n, peaks }) : frameTimes(duration, n)
+    const frames = []
+    for (const t of times) {
+      const buf = await grabLocal(ffmpeg, file, t)
+      if (buf) frames.push({ sec: t, buf })
+    }
+    log?.debug?.(`本地看画面：${(bytes / 1e6).toFixed(1)}MB 下载 ${t1 - t0}ms，分析 ${metrics.length} 帧 + 抽 ${frames.length} 张 ${Date.now() - t1}ms${visual ? `；镜头 ${visual.shots}，动感 ${visual.motion.toFixed(2)}，静止 ${Math.round(visual.still * 100)}%` : ''}`)
+    return { frames, visual }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 /** 面板用：开关 + ffmpeg 找到了没。 */
@@ -128,7 +206,7 @@ export function windowAt(windows, sec) {
  * 返回 { text, frames }：text 是画面描述（不可用时为空串），frames 是 [{sec, buf}] 抽到的帧
  * （调用方可以存下来当截图用；关掉看画面时两个都为空）。
  */
-export async function lookWithVision({ dsh, api, info, getConfig, log, deps = {} }) {
+export async function lookWithVision({ dsh, api, info, getConfig, log, deps = {}, peaks = [], segments = [] }) {
   const empty = { text: '', frames: [] }
   const full = getConfig()
   const c = (full && full.bili) || {}
@@ -156,6 +234,27 @@ export async function lookWithVision({ dsh, api, info, getConfig, log, deps = {}
       log?.debug('看画面跳过：拿不到可抽帧的流地址')
       return empty
     }
+    // 能整段下载的就本地分析（测试注入了 grabFrame 时走远程抽帧那条路）
+    const local = deps.analyzeLocal || (deps.grabFrame ? null : analyzeLocal)
+    const dur = Number(info.duration) || 0
+    if (local && stream && dur > 0 && dur <= LOCAL_MAX_SEC) {
+      try {
+        const r = await local({ ffmpeg, url: stream.baseUrl, duration: dur, n: c.visionFrames, peaks, log })
+        if (r.frames.length) {
+          const times = r.frames.map((f) => f.sec)
+          let text = ''
+          try {
+            const segs = await segments // 可能是还在转写的 Promise
+            text = await (deps.describeFrames || describeFrames)(dsh, { info, frames: r.frames.map((f) => f.buf), cfg: full, times, lines: times.map((t) => lineAt(segs, t)) })
+          } catch (error) {
+            log?.debug('视觉描述失败，保留截图：', error.message)
+          }
+          return { text: String(text || '').trim(), frames: r.frames, visual: r.visual }
+        }
+      } catch (error) {
+        log?.debug('本地看画面失败，改成远程抽帧：', error.message)
+      }
+    }
     // durl 有时只覆盖前面一段（常见：一段 MP4 十几分钟），在这一段里均匀抽，别把时间点丢到没覆盖的地方。
     const covered = windows.length ? windows[windows.length - 1].endMs : Infinity
     const span = Number.isFinite(covered) ? Math.min(Number(info.duration) || 0, covered / 1000) : Number(info.duration)
@@ -180,7 +279,9 @@ export async function lookWithVision({ dsh, api, info, getConfig, log, deps = {}
       log?.debug('看画面跳过：一帧都没抽出来')
       return empty
     }
-    const text = await (deps.describeFrames || describeFrames)(dsh, { info, frames: frames.map((f) => f.buf), cfg: full })
+    const segs = await segments
+    const times = frames.map((f) => f.sec)
+    const text = await (deps.describeFrames || describeFrames)(dsh, { info, frames: frames.map((f) => f.buf), cfg: full, times, lines: times.map((t) => lineAt(segs, t)) })
     return { text: String(text || '').trim(), frames }
   } catch (error) {
     log?.debug('看画面失败，退回文字：', error.message)

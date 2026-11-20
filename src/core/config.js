@@ -155,8 +155,14 @@ export const DEFAULTS = {
     maxDanmakuPerDay: 3, // 手动和自动共用提交上限（失败也计数）
     shareToOwner: true, // 看到好玩的私聊分享给主人
     like: false, // 顺手点赞
-    vision: false, // 可选：ffmpeg 抽帧交给视觉模型
+    vision: false, // 可选：ffmpeg 抽帧交给视觉模型（20 分钟内的视频整段下载，按画面变化 / 弹幕高峰挑帧，另算剪辑节奏和动感）
     visionFrames: 6,
+    readDanmaku: true, // 读弹幕：刷得最多的几句 + 最热闹的时刻
+    asr: true, // 没字幕时用阿里云百炼 Paraformer 转写（要 API Key；没填就跳过）
+    asrKey: '', // 百炼 API Key；留空就用 DSH 凭据 / 环境变量 DASHSCOPE_API_KEY
+    asrModel: 'paraformer-v2',
+    asrBaseUrl: 'https://dashscope.aliyuncs.com',
+    asrMaxMinutes: 30, // 一个视频最多转前多少分钟
     ffmpegPath: '', // 留空从 PATH 查找
     shotChance: 0.35, // 刷完发截图给主人；0 = 不自动发
     shotLibrary: 300,
@@ -462,7 +468,11 @@ export function normalize(raw) {
   c.local.videoTimeoutMin = num(c.local.videoTimeoutMin, 20, 1, BIG)
   const b = c.bili
   Object.assign(b, splitBiliCookie(b))
-  for (const k of ['enabled', 'autoBrowse', 'comment', 'reply', 'shareToOwner', 'like', 'vision', 'danmakuEnabled', 'autoDanmaku']) b[k] = bool(b[k], DEFAULTS.bili[k])
+  for (const k of ['enabled', 'autoBrowse', 'comment', 'reply', 'shareToOwner', 'like', 'vision', 'danmakuEnabled', 'autoDanmaku', 'readDanmaku', 'asr']) b[k] = bool(b[k], DEFAULTS.bili[k])
+  b.asrKey = String(b.asrKey || '').trim()
+  b.asrModel = String(b.asrModel || '').trim() || 'paraformer-v2'
+  b.asrBaseUrl = String(b.asrBaseUrl || '').trim() || 'https://dashscope.aliyuncs.com'
+  b.asrMaxMinutes = num(b.asrMaxMinutes, 30, 1, 240)
   b.visionFrames = Math.round(num(b.visionFrames, 6, 1, 100))
   b.ffmpegPath = String(b.ffmpegPath || '').trim()
   b.shotChance = num(b.shotChance, 0.35, 0, 1)
@@ -660,7 +670,7 @@ export function normalize(raw) {
 }
 
 // 面板里不回传原文的字段：路径（几层都行）
-const SECRETS = [['discord', 'token'], ['discord', 'accessToken'], ['onebot', 'httpToken'], ['onebot', 'wsToken'], ['imageGen', 'apiKey'], ['memory', 'vector', 'apiKey'], ['song', 'neteaseCookie'], ['bili', 'cookie'], ['bili', 'sessdata'], ['bili', 'biliJct'], ['heybox', 'cookie'], ['bridge', 'token']]
+const SECRETS = [['discord', 'token'], ['discord', 'accessToken'], ['onebot', 'httpToken'], ['onebot', 'wsToken'], ['imageGen', 'apiKey'], ['memory', 'vector', 'apiKey'], ['song', 'neteaseCookie'], ['bili', 'cookie'], ['bili', 'sessdata'], ['bili', 'biliJct'], ['bili', 'asrKey'], ['heybox', 'cookie'], ['bridge', 'token']]
 // 扩展模块设置里的密码类字段（模块加载时登记）：['ext', 模块id, 字段]
 const extraSecrets = new Map()
 export function registerSecretField(path) { extraSecrets.set(path.join('\u0000'), path) }

@@ -6,6 +6,10 @@ import { createBiliApi, findVideoId, parseCookie } from './api.js'
 import { loginSessionKey, recoverLoginPause } from './login-pause.js'
 import { lookWithVision, visionState } from './vision.js'
 import { createShotStore, shotPath, clockOf } from './shots.js'
+import { createParaformer } from './asr.js'
+import { danmakuInsight, parseDanmakuXml, transcriptExcerpt, subtitleFits, visualLine, clock } from './insight.js'
+import { findFfmpeg } from '../core/img.js'
+import { assertPublicUrl } from '../core/net.js'
 
 // 这些错误说明今天别再发了：没登录 / Cookie 过期、csrf 不对、风控、要验证码、太频繁
 const PAUSE_CODES = { '-101': 'B 站没登录或 Cookie 过期了', '-111': 'Cookie 里的 bili_jct 不对', '-352': '被 B 站风控了', '-509': '发得太频繁', '12015': 'B 站要求验证码' }
@@ -27,15 +31,24 @@ export function filterVideos(list, { minViews = 0, maxAgeDays = 0, seen = new Se
   return (list || []).filter((v) => v.bvid && !seen.has(v.bvid) && (v.play || 0) >= minViews && (!maxAgeDays || !v.pubdate || now - v.pubdate <= maxAgeDays * 86400_000))
 }
 
-/** 一个视频交给她看的样子（标题、UP 主、简介、字幕节选、画面描述、热评）。 */
-export function digestOf(v, { subtitle = '', comments = [], vision = '' } = {}) {
+const SOURCE_LABEL = { subtitle: '字幕', ai: '字幕（B 站 AI 字幕）', asr: '语音转写（机器识别，可能有错字）' }
+
+/**
+ * 一个视频交给她看的样子：标题、UP 主、简介、字幕 / 语音转写、画面（节奏 + 抽帧描述）、弹幕、热评。
+ * subtitle 是已经截好的文字；source 说明它从哪来（subtitle / ai / asr）。
+ */
+export function digestOf(v, { subtitle = '', source = 'subtitle', comments = [], vision = '', visual = null, danmaku = null } = {}) {
+  const dm = danmaku && danmaku.total ? danmaku : null
   return [
-    `《${v.title}》 UP主：${v.author || '?'}  播放 ${v.play || 0}${v.tname ? '  分区：' + v.tname : ''}  ${v.bvid}`,
+    `《${v.title}》 UP主：${v.author || '?'}  播放 ${v.play || 0}${v.tname ? '  分区：' + v.tname : ''}${v.duration ? '  时长 ' + clock(v.duration) : ''}  ${v.bvid}`,
     v.desc ? `简介：${v.desc.slice(0, 300)}` : '',
     subtitle
-      ? `字幕（节选）：${subtitle.slice(0, 2500)}`
+      ? `${SOURCE_LABEL[source] || '字幕'}（节选）：${subtitle.slice(0, 2600)}`
       : `（没有字幕${vision ? '，只看了画面' : '，只能看标题、简介和评论'}）`,
+    visual ? `画面节奏：${visualLine(visual)}` : '',
     vision ? `画面（抽帧）：${vision.slice(0, 900)}` : '',
+    dm ? `弹幕：共 ${dm.total} 条` + (dm.top.length ? `；刷得最多的：${dm.top.slice(0, 5).map((x) => `「${x.text.slice(0, 20)}」×${x.n}`).join(' ')}` : '') : '',
+    dm && dm.peaks.length ? '弹幕最热闹的时刻：' + dm.peaks.map((p) => `${clock(p.at)}（${p.texts.map((t) => '「' + t.slice(0, 16) + '」').join('')}）`).join('；') : '',
     comments.length ? '热评：\n' + comments.slice(0, 8).map((c) => `  ${c.name}：${c.text}`).join('\n') : '',
   ].filter(Boolean).join('\n')
 }
@@ -104,6 +117,38 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     return interests.sort(() => Math.random() - 0.5).slice(0, 3)
   }
 
+  // 没字幕时用阿里云百炼 Paraformer 转写：key 优先面板里填的，其次 DSH 凭据 / 环境变量 DASHSCOPE_API_KEY
+  async function asrKey() {
+    const own = String(cfg().asrKey || '').trim()
+    if (own) return own
+    try {
+      const cred = dsh && typeof dsh.get === 'function' ? dsh.get('credentials') : null
+      if (cred && typeof cred.resolve === 'function') {
+        const r = await cred.resolve('DASHSCOPE_API_KEY')
+        if (r && r.value) return String(r.value)
+      }
+    } catch (error) {}
+    return String(process.env.DASHSCOPE_API_KEY || '')
+  }
+  const asr = createParaformer({ getKey: asrKey, getBase: () => cfg().asrBaseUrl, getModel: () => cfg().asrModel || 'paraformer-v2', log })
+
+  /** 转写一个视频的声音（最低码率那路音频，最多转前 asrMaxMinutes 分钟）。失败返回 []。 */
+  async function transcribe(info, ffmpeg) {
+    try {
+      const pu = await api.playurl({ bvid: info.bvid, aid: info.aid, cid: info.cid, qn: 32 })
+      const audio = (pu.audio || []).slice().sort((a, b) => (a.bandwidth || 0) - (b.bandwidth || 0))[0]
+      const url = audio?.baseUrl || pu.durl?.[0]?.url
+      if (!url) return []
+      await assertPublicUrl(url)
+      const segs = await asr.transcribeStream({ ffmpeg, audioUrl: url, maxSec: Math.round((cfg().asrMaxMinutes || 30) * 60) })
+      log.debug(`《${info.title}》转写出 ${segs.length} 句`)
+      return segs
+    } catch (error) {
+      log.warn(`《${info.title}》语音转写失败：${error.message}`)
+      return []
+    }
+  }
+
   async function lookAt(v) {
     const rawInfo = await api.view({ bvid: v.bvid })
     const info = {
@@ -111,15 +156,37 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       title: cleanOutboundText(rawInfo.title, { warn: (message) => log.warn(`B 站标题：${message}`) }).trim(),
       author: cleanOutboundText(rawInfo.author, { warn: (message) => log.warn(`B 站作者：${message}`) }).trim(),
     }
-    const [subtitle, comments] = await Promise.all([api.subtitle(info).catch(() => ''), api.comments(info.aid).catch(() => [])])
-    // 开着「看画面」才抽帧：失败一律只记 debug，退回纯文本，不影响这一轮
-    let vision = ''
-    let shotIds = []
     const c = cfg()
+    // 字幕（带时间）、热评、弹幕一起取；老的 api 只有 subtitle() 返回纯文字
+    const [track, comments, dmXml] = await Promise.all([
+      api.subtitleTrack
+        ? api.subtitleTrack(info).catch((error) => { log.debug('拿字幕失败：', error.message); return null })
+        : api.subtitle(info).then((text) => (text ? { plain: String(text) } : null)).catch(() => null),
+      api.comments(info.aid).catch(() => []),
+      c.readDanmaku !== false && api.danmakuXml && info.cid ? api.danmakuXml(info.cid).catch(() => '') : '',
+    ])
+    let segments = track?.segments || []
+    if (segments.length && !subtitleFits(segments, info.duration)) {
+      log.debug(`《${info.title}》的字幕和视频时长对不上，当作没有字幕`)
+      segments = []
+    }
+    let source = segments.length ? (track.ai ? 'ai' : 'subtitle') : ''
+    const danmaku = danmakuInsight(parseDanmakuXml(dmXml), info.duration)
+
+    // 没字幕就转写；和看画面同时进行（截图配的那句话等转写完再填）
+    const ffmpeg = findFfmpeg(c.ffmpegPath)
+    const needAsr = !segments.length && !track?.plain && c.asr && ffmpeg && Number(info.duration) > 0
+    const asrDone = needAsr && (await asrKey()) ? transcribe(info, ffmpeg) : Promise.resolve([])
+    const lines = asrDone.then((a) => (segments.length ? segments : a))
+
+    let vision = ''
+    let visual = null
+    let shotIds = []
     if (c.vision) {
       try {
-        const r = await see({ dsh, api, info, getConfig, log })
+        const r = await see({ dsh, api, info, getConfig, log, peaks: danmaku.peaks, segments: lines })
         vision = r.text || ''
+        visual = r.visual || null
         if (vision) log.debug(`看了《${info.title}》的画面：${vision.slice(0, 40)}…`)
         // 抽到的帧顺手存进截图库：之后她自己发、或主人让她挑一张发
         for (const f of r.frames || []) {
@@ -130,7 +197,10 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         log.debug(`看画面失败（${info.bvid}）：`, error.message)
       }
     }
-    return { info, subtitle, comments, vision, shotIds, digest: digestOf(info, { subtitle, comments, vision }) }
+    const heard = await asrDone
+    if (!segments.length && heard.length) { segments = heard; source = 'asr' }
+    const subtitle = track?.plain ? track.plain.slice(0, 2500) : transcriptExcerpt(segments, 2500)
+    return { info, subtitle, source, segments, comments, vision, visual, danmaku, shotIds, digest: digestOf(info, { subtitle, source, comments, vision, visual, danmaku }) }
   }
 
   /** 挑一张存下来的截图发到指定会话（主人让她发 / 她刷完顺手发）。 */
@@ -195,7 +265,8 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
 
   /** 刷一轮。force = 面板里手动点的（不占每天的次数）。 */
   // allowShare=false：只看不分享（autonomy 按「主动找主人」额度决定这一轮能不能分享）
-  async function run({ force = false, allowShare = true } = {}) {
+  // query：她这次专门想找的东西（autonomy 的决策层给的搜索词）；有就只搜它，不挑兴趣关键词、不拿热门凑数
+  async function run({ force = false, allowShare = true, query = '' } = {}) {
     const c = cfg()
     if (busy) return { ok: false, message: '正在刷' }
     if (!c.enabled && !force) return { ok: false, message: 'B 站没打开' }
@@ -203,12 +274,15 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     const s = today(load())
     try {
       const seen = new Set(s.seen)
-      const kws = await chooseKeywords()
+      const q = String(query || '').trim().slice(0, 40)
+      const kws = q ? [q] : await chooseKeywords()
       let pool = []
+      // 找东西时不限发布时间、播放量门槛放低（教程多半是老视频）
+      const gate = q ? { minViews: Math.min(c.minViews, 1000), maxAgeDays: 0, seen } : { minViews: c.minViews, maxAgeDays: c.maxAgeDays, seen }
       for (const kw of kws) {
-        try { pool.push(...filterVideos(await api.search(kw), { minViews: c.minViews, maxAgeDays: c.maxAgeDays, seen }).slice(0, 4).map((v) => ({ ...v, kw }))) } catch (error) { log.debug(`搜「${kw}」失败：`, error.message) }
+        try { pool.push(...filterVideos(await api.search(kw), gate).slice(0, q ? c.perRun : 4).map((v) => ({ ...v, kw }))) } catch (error) { log.warn(`B 站搜「${kw}」失败：${error.message}`) }
       }
-      if (pool.length < c.perRun) {
+      if (!q && pool.length < c.perRun) {
         try { pool.push(...filterVideos(await api.popular({ ps: 20 }), { seen }).slice(0, c.perRun).map((v) => ({ ...v, kw: '热门' }))) } catch (error) {}
       }
       // 每个关键词轮着取，避免一轮全是同一类
@@ -216,7 +290,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       const byKw = new Map()
       for (const v of pool) { if (!byKw.has(v.kw)) byKw.set(v.kw, []); byKw.get(v.kw).push(v) }
       while (picked.length < c.perRun && [...byKw.values()].some((l) => l.length)) for (const l of byKw.values()) if (l.length && picked.length < c.perRun) { const v = l.shift(); if (!picked.some((p) => p.bvid === v.bvid)) picked.push(v) }
-      if (!picked.length) return { ok: false, message: '这次没搜到合适的视频' }
+      if (!picked.length) return { ok: false, query: q, found: 0, message: q ? `B 站上搜「${q}」没找到合适的视频` : '这次没搜到合适的视频' }
       const looked = []
       for (const v of picked) {
         try { looked.push(await lookAt(v)) } catch (error) { log.debug(`看 ${v.bvid} 失败：`, error.message) }
@@ -225,12 +299,13 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       s.seen = [...seen].slice(-500)
       if (!looked.length) return { ok: false, message: '视频都打不开' }
       const commentLeft = c.comment && canPost(s) ? Math.max(0, c.maxCommentsPerDay - s.comments) : 0
-      const out = await think(`你在 B 站刷到了这几个视频：\n\n${looked.map((x, i) => `【${i + 1}】${x.digest}`).join('\n\n')}\n\n` +
-        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受", "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）", "share":"想私聊分享给${owner()}的话（系统会自动把视频链接附在后面，直接按顺手分享的口吻聊就行，别问「要不要发你」；真的觉得${owner()}会喜欢、或和最近聊过的有关才写，不然空字符串）", "remember":"值得记住的一件事（没有就空字符串）"}。` +
+      const out = await think(`${q ? `你这次是专门上 B 站搜「${q}」的，` : ''}你在 B 站${q ? '搜' : '刷'}到了这几个视频：\n\n${looked.map((x, i) => `【${i + 1}】${x.digest}`).join('\n\n')}\n\n` +
+        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受",${q ? ` "answer":"视频里有没有你要找的东西：只按上面字幕 / 转写 / 画面 / 评论里真看到的写要点（具体数字、步骤），没看到就空字符串，别凭印象补",` : ''} "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）", "share":"想私聊分享给${owner()}的话（系统会自动把视频链接附在后面，直接按顺手分享的口吻聊就行，别问「要不要发你」；真的觉得${owner()}会喜欢、或和最近聊过的有关才写，不然空字符串）", "remember":"值得记住的一件事（没有就空字符串）"}。` +
         `这次最多评论 ${commentLeft} 个。只输出 JSON 数组。`)
       const decisions = pickJson(out, [])
       let commented = 0
       let shared = 0
+      const answers = [] // 找东西时：哪些视频里有要找的（标题 + 要点）
       // 本地改（2026-11-17）：一轮最多分享一个（想分享的里面随机挑一个）；主人 15 分钟内刚聊过就先不发
       const wantShare = (Array.isArray(decisions) ? decisions : []).filter((d) => d && String(d.share || '').trim() && !isSilence(String(d.share)))
       const shareOne = wantShare.length ? wantShare[Math.floor(Math.random() * wantShare.length)] : null
@@ -242,8 +317,10 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         const v = x.info
         const feeling = cleanOutboundText(d.feeling, { warn: (message) => log.warn(`B 站感受：${message}`) }).trim()
         const remember = cleanOutboundText(d.remember, { warn: (message) => log.warn(`B 站见闻：${message}`) }).trim()
+        const answer = q ? cleanOutboundText(d.answer, { warn: (message) => log.warn(`B 站找到的：${message}`) }).trim() : ''
+        if (answer && !isSilence(answer)) answers.push({ title: v.title, bvid: v.bvid, text: answer.slice(0, 300) })
         if (feeling) felt.set(v.bvid, feeling)
-        memory?.addEvent?.({ kind: 'seen', meta: { title: v.title, author: v.author, url: link(v.bvid), platform: 'bili', id: v.bvid }, text: [feeling, !isSilence(remember) ? remember : ''].filter(Boolean).join('；') || v.title, tags: ['B站'], importance: 0.4 })
+        memory?.addEvent?.({ kind: 'seen', meta: { title: v.title, author: v.author, url: link(v.bvid), platform: 'bili', id: v.bvid }, text: [feeling, !isSilence(remember) ? remember : '', answer && !isSilence(answer) ? `（找「${q}」）${answer.slice(0, 200)}` : ''].filter(Boolean).join('；') || v.title, tags: ['B站'], importance: answer && !isSilence(answer) ? 0.5 : 0.4 })
         const comment = cleanOutboundText(atOwner(d.comment || ''), { warn: (message) => log.warn(`B 站评论：${message}`) }).trim().slice(0, 200)
         if (comment && !isSilence(comment) && commented < commentLeft && canPost(s)) {
           try {
@@ -296,8 +373,13 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         try { await afterBrowse(looked.map(({ info }) => ({ bvid: info.bvid, title: info.title, text: felt.get(info.bvid) || '' }))) }
         catch (error) { log.debug('本轮弹幕未完成：', error.message) }
       }
-      log.info(`刷了一轮 B 站：看了 ${looked.length} 个，评论 ${commented} 条，分享 ${shared} 个，截图 ${shotSent} 张`)
-      return { ok: true, message: `看了 ${looked.length} 个视频，评论 ${commented} 条，分享给你 ${shared} 个${shotSent ? '，还发了张截图' : ''}`, watched: looked.length, commented, shared, shots: shotSent }
+      const heard = looked.filter((x) => x.subtitle).length
+      log.info(`${q ? `B 站搜「${q}」` : '刷了一轮 B 站'}：看了 ${looked.length} 个（${heard} 个有字幕或转写${looked.some((x) => x.vision) ? '，看了画面' : ''}），${q ? `找到答案 ${answers.length} 个，` : ''}评论 ${commented} 条，分享 ${shared} 个，截图 ${shotSent} 张`)
+      return {
+        ok: true,
+        message: `${q ? `搜「${q}」，` : ''}看了 ${looked.length} 个视频${q ? (answers.length ? `，${answers.length} 个里有要找的` : '，都没讲到要找的') : ''}，评论 ${commented} 条，分享给你 ${shared} 个${shotSent ? '，还发了张截图' : ''}`,
+        watched: looked.length, commented, shared, shots: shotSent, query: q, found: answers.length, answers,
+      }
     } catch (error) {
       log.warn('刷 B 站出错：', error.message)
       return { ok: false, message: error.message }
