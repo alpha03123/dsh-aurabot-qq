@@ -273,7 +273,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   }
 
   /**
-   * 把想分享的视频交给主人私聊会话：系统提示里给视频事实、她的感受和想分享的理由、链接（他问起再给），
+   * 把想分享的视频交给主人私聊会话：系统提示里给视频事实、链接、她的感受和想分享的理由，
    * 由聊天那边用平常的口气说（或者沉默）。shot：先发一张截图（她选的，开了「允许配截图」才发）。
    * 返回 { delivered, shot, silent }。
    */
@@ -297,13 +297,13 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     }
     const v = x.info
     const prompt = [
-      `【系统提醒，不是${owner()}说的话】你刚在 B 站看了个视频，想拿给${owner()}看：《${v.title}》（UP主 ${v.author || '?'}）。`,
+      `【系统提醒，不是${owner()}说的话】你刚在 B 站看了个视频，想拿给${owner()}看。`,
+      `视频：《${v.title}》（UP主 ${v.author || '?'}）`,
+      `链接：${link(v.bvid)}`,
       feeling ? `你看完的感受：${feeling}` : '',
       `想给他看是因为：${why}`,
       shotSent ? '你已经先把视频里的一张截图发给他了。' : '',
-      '像朋友之间随手分享刚刷到的视频那样，用你平常跟他说话的口气说一两句——比如说说哪儿好笑、哪儿戳到你、为什么想到他（只是例子）。别念完整标题、别写成推荐语或内容简介、别发链接。',
-      `视频链接：${link(v.bvid)}（他问起要链接、或者说想看的时候再给他）`,
-      '这会儿觉得不合适、不想说了，就只回 [沉默]。',
+      '现在就跟他说吧，像平时刷到好东西顺手甩给朋友那样，用你自己的话，别写成推荐语或者内容简介。这会儿觉得不合适，就只回 [沉默]。',
     ].filter(Boolean).join('\n')
     const before = Number(hub.lastBotToOwner?.at) || 0
     try {
