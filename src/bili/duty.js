@@ -7,6 +7,7 @@ import { loginSessionKey, recoverLoginPause } from './login-pause.js'
 import { lookWithVision, visionState } from './vision.js'
 import { createShotStore, shotPath, clockOf } from './shots.js'
 import { createParaformer } from './asr.js'
+import { saveVideo, findVideo, videoText } from './videos.js'
 import { danmakuInsight, parseDanmakuXml, transcriptExcerpt, subtitleFits, visualLine, clock, commentLines } from './insight.js'
 import { findFfmpeg } from '../core/img.js'
 import { assertPublicUrl } from '../core/net.js'
@@ -209,6 +210,15 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     const heard = await asrDone
     if (!segments.length && heard.length) { segments = heard; source = 'asr' }
     const subtitle = track?.plain ? track.plain.slice(0, 2500) : transcriptExcerpt(segments, 2500)
+    // 完整内容存一份，聊天里聊到细节时用 bili_video 翻（不整段塞进聊天会话）
+    try {
+      saveVideo({
+        bvid: info.bvid, title: info.title, author: info.author, url: link(info.bvid), duration: info.duration, play: info.play, tname: info.tname, desc: info.desc,
+        source, segments, plain: track?.plain || '', vision, visual, danmaku, comments: (comments || []).slice(0, 20), watchedAt: Date.now(),
+      })
+    } catch (error) {
+      log.debug('存视频内容失败：', error.message)
+    }
     return { info, subtitle, source, segments, comments, vision, visual, danmaku, shotIds, digest: digestOf(info, { subtitle, source, comments, vision, visual, danmaku }) }
   }
 
@@ -296,12 +306,23 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       }
     }
     const v = x.info
+    // 内容要点：几百字，够自然地聊、接住一般的追问；细节用工具翻
+    const brief = [
+      v.desc ? `简介：${String(v.desc).slice(0, 120)}` : '',
+      x.subtitle ? `${x.source === 'asr' ? '语音转写' : '字幕'}节选：${x.segments?.length ? transcriptExcerpt(x.segments, 450, { pieces: 3 }) : String(x.subtitle).slice(0, 450)}` : '',
+      x.visual ? `画面：${visualLine(x.visual)}` : '',
+      x.vision ? `截图里：${String(x.vision).slice(0, 150)}` : '',
+      x.danmaku?.peaks?.length ? `弹幕最热闹：${x.danmaku.peaks.slice(0, 1).map((p) => `${clock(p.at)}（${p.texts.slice(0, 2).map((t) => '「' + t.slice(0, 16) + '」').join('')}）`).join('')}` : '',
+      x.comments?.length ? '评论区：\n' + commentLines(x.comments, 3).map((l) => l.replace(/^ {2}/, '  ').slice(0, 110)).join('\n') : '',
+    ].filter(Boolean).join('\n')
     const prompt = [
       `【系统提醒，不是${owner()}说的话】你刚在 B 站看了个视频，想拿给${owner()}看。`,
       `视频：《${v.title}》（UP主 ${v.author || '?'}）`,
       `链接：${link(v.bvid)}`,
       feeling ? `你看完的感受：${feeling}` : '',
       `想给他看是因为：${why}`,
+      brief ? `视频里的内容（要点）：\n${brief}` : '',
+      '完整的字幕、画面、评论存着，聊到具体哪段时用 bili_video 翻。',
       shotSent ? '你已经先把视频里的一张截图发给他了。' : '',
       '现在就跟他说吧，像平时刷到好东西顺手甩给朋友那样，用你自己的话，别写成推荐语或者内容简介。这会儿觉得不合适，就只回 [沉默]。',
     ].filter(Boolean).join('\n')
@@ -329,10 +350,17 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       if (!h.bvid || !['share', 'watch', 'shot', 'comment'].includes(h.kind) || seenIds.has(h.bvid)) continue
       if (q && !String(h.title || '').includes(q)) continue
       seenIds.add(h.bvid)
-      out.push({ title: h.title, link: link(h.bvid), shared: (load().history || []).some((y) => y.bvid === h.bvid && y.kind === 'share'), at: new Date(h.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }), note: String(h.text || '').slice(0, 60) })
+      out.push({ bvid: h.bvid, title: h.title, link: link(h.bvid), shared: (load().history || []).some((y) => y.bvid === h.bvid && y.kind === 'share'), at: new Date(h.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }), note: String(h.text || '').slice(0, 60) })
       if (out.length >= limit) break
     }
     return out.length ? { ok: true, list: out } : { ok: false, list: [], message: q ? `最近没看过标题里有「${q}」的视频` : '最近没看过 B 站视频' }
+  }
+
+  /** 读一个看过的视频的完整内容（按 BV 号或标题词）；字幕分页。 */
+  function video(query = '', page = 1) {
+    const rec = findVideo(query)
+    if (!rec) return { ok: false, message: query ? `没找到存着的「${query}」（只存最近两周看过的；没看过的可以用 bili_watch 现看）` : '最近没有存着的视频' }
+    return { ok: true, bvid: rec.bvid, message: videoText(rec, page) }
   }
 
   /** 刷一轮。force = 面板里手动点的（不占每天的次数）。 */
@@ -396,7 +424,10 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         // 只认 found 这个是 / 否：模型有时在 answer 里写「没找到……」，不能当成找到了
         const hit = d.found === true || String(d.found).trim().toLowerCase() === 'true'
         if (hit && answer && !isSilence(answer)) answers.push({ title: v.title, bvid: v.bvid, text: answer.slice(0, 300) })
-        if (feeling) felt.set(v.bvid, feeling)
+        if (feeling) {
+          felt.set(v.bvid, feeling)
+          try { saveVideo({ bvid: v.bvid, feeling }) } catch (error) {}
+        }
         memory?.addEvent?.({ kind: 'seen', meta: { title: v.title, author: v.author, url: link(v.bvid), platform: 'bili', id: v.bvid }, text: [feeling, !isSilence(remember) ? remember : '', answers.some((a) => a.bvid === v.bvid) ? `（找「${q}」）${answer.slice(0, 200)}` : ''].filter(Boolean).join('；') || v.title, tags: ['B站'], importance: answers.some((a) => a.bvid === v.bvid) ? 0.5 : 0.4 })
         const comment = cleanOutboundText(atOwner(d.comment || ''), { warn: (message) => log.warn(`B 站评论：${message}`) }).trim().slice(0, 200)
         if (comment && !isSilence(comment) && commented < commentLeft && canPost(s)) {
@@ -566,7 +597,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   }
 
   return {
-    run, checkReplies, watch, comment, setSign, setAvatar, tick, account, sendShot, listShots, recent,
+    run, checkReplies, watch, comment, setSign, setAvatar, tick, account, sendShot, listShots, recent, video,
     libraryShots, shotFileOf, deleteShot,
     dispose() { stopped = true },
     state: () => {

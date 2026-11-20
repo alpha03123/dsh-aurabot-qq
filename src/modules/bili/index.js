@@ -48,6 +48,13 @@ export default {
           execute: async ({ query }) => bili.recent(String(query || '')),
         }),
         defineTool({
+          name: 'bili_video',
+          description: '翻一个你看过的 B 站视频的完整内容：字幕 / 语音转写全文（带时间）、画面、弹幕、评论区、链接。聊到某个视频的细节（讲了啥、哪段、评论怎么说）时用。query 填 BV 号或标题里的词；字幕长会分页，page 填第几页。',
+          properties: { query: str('BV 号或标题里的词'), page: str('可选：字幕第几页，默认 1') },
+          required: ['query'],
+          execute: async ({ query, page }) => bili.video(String(query || ''), Number(page) || 1),
+        }),
+        defineTool({
           name: 'bili_comment',
           description: '在一个 B 站视频下发评论（只有主人让你发的时候才用）。link 填链接或 BV 号，text 是评论内容。要 @ 人就写 @完整昵称 并在后面空一格，@主人 会换成主人的 B 站号。',
           properties: { link: str('B 站链接或 BV 号'), text: str('评论内容') },
