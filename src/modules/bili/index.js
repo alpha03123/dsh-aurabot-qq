@@ -28,6 +28,16 @@ export default {
       afterBrowse: danmaku.afterBrowse,
     })
     api.every(60_000, () => bili.tick(), '刷B站')
+    // 主人来私聊时（他发的消息，不是模块推进来的系统提醒）：把攒着想跟他说的视频作为背景给她，提不提她自己定
+    api.on('prompt', (content, info) => {
+      try {
+        const cfg = api.config()
+        if (!info || !info.chat || !Array.isArray(content) || !cfg.ownerId) return content
+        if (info.chat.chatId !== `private:${cfg.ownerId}` || String(info.senderId || '') !== String(cfg.ownerId)) return content
+        const text = bili.savedForChat()
+        return text ? [{ type: 'text', text }, ...content] : content
+      } catch (error) { return content }
+    })
 
     // 看视频谁发的链接都能看，评论要主人开口
     api.tool(({ chat, sessionId }) => {

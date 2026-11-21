@@ -120,7 +120,7 @@ function fakes({ decisions, replyText = '是呀 我也觉得', cfgOver = {}, pos
 test('刷一轮：看视频、按每天上限评论、分享给主人、记成她的经历', async () => {
   const { b, posted, pushed, events, eventRecords, facts } = fakes({ decisions: [
     { i: 1, feeling: '米饭好香', comment: '看饿了', share: '', remember: '有个米饭大赛很好玩' },
-    { i: 2, feeling: '猫好可爱', comment: '猫猫好会', share: '主人你看这只猫会做饭！', remember: '' },
+    { i: 2, feeling: '猫好可爱', comment: '猫猫好会', share: '主人你看这只猫会做饭！', when: 'now', remember: '' },
   ] })
   const r = await b.run({ force: true })
   assert.equal(r.ok, true, r.message)

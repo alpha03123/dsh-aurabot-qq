@@ -226,7 +226,7 @@ function browsing({ dryRun = false, sendResult = { message_id: 1 }, failVision =
     api: { view: async () => info, subtitle: async () => '文本字幕', comments: async () => [], search: async () => [{ ...info, play: 100000 }], popular: async () => [] },
     vision: async () => { if (failVision) throw new Error('坏流'); return { text: '猫在吃饭', frames: [{ sec: 10, buf: Buffer.from('frame') }] } },
     hub: {
-      runSystemTurn: async (_id, _name, prompt) => prompt.includes('挑 3 个') ? '["猫"]' : '[{"i":1,"feeling":"好可爱","share":"太可爱了想给你看","shot":true}]',
+      runSystemTurn: async (_id, _name, prompt) => prompt.includes('挑 3 个') ? '["猫"]' : '[{"i":1,"feeling":"好可爱","share":"太可爱了想给你看","when":"now","shot":true}]',
       sendImage: async (chatId, path) => { sent.push({ chatId, path }); return sendResult },
       sendText: async () => ({}),
       // 分享走主人私聊会话

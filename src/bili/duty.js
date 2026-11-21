@@ -74,7 +74,10 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     const since = Date.now() - 24 * 3600_000
     const days = [dayKey(new Date(since)), dayKey()]
     const rows = [...new Set(days)].flatMap((d) => hub.chatLogOf(d) || []).filter((r) => r && r.chatId === `private:${id}` && Number(r.t) >= since && r.text)
-    return rows.slice(-8).map((r) => `${hm(r.t)} ${r.who === 'bot' ? '你' : owner()}：${String(r.text).slice(0, 60)}`)
+    const lines = rows.slice(-8).map((r) => `${hm(r.t)} ${r.who === 'bot' ? `你发给${owner()}` : owner()}：${String(r.text).slice(0, 60)}`)
+    // 最后一条是她发的、主人还没回：标出来（之前只写「你：」，模型常把她自己的话当成主人说的）
+    if (rows.length && rows[rows.length - 1].who === 'bot') lines.push(`（${owner()}到现在还没回）`)
+    return lines
   }
   const hm = (t) => { const d = new Date(Number(t) || Date.now()); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
   // 能不能发评论 / 回复：Cookie 里要有 bili_jct，今天也没因为风控之类暂停
@@ -87,6 +90,32 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     log.warn(`今天先不在 B 站发评论了：${why}`)
   }
   const record = (s, item) => { s.history.unshift({ at: Date.now(), ...item }); s.history = s.history.slice(0, 40) }
+  // 攒着想跟主人说的视频：她刷到时选了「先攒着」（或那会儿不方便发），等主人下次来私聊时作为背景给她，提不提她自己定。
+  // 存在 bili.json 的 saved 里，不随每天清零；没提过的留 SAVED_KEEP_MS，第一次给她看过之后再留 SAVED_SHOWN_MS（那次聊天里没提就算了）
+  const SAVED_KEEP_MS = 2 * 86_400_000
+  const SAVED_SHOWN_MS = 40 * 60_000
+  const SAVED_MAX = 5
+  const freshSaved = (s) => (Array.isArray(s.saved) ? s.saved : []).filter((x) => x && x.bvid && (x.shownAt ? Date.now() - x.shownAt < SAVED_SHOWN_MS : Date.now() - x.at < SAVED_KEEP_MS))
+  function saveForLater(s, { x, why, feeling }) {
+    const v = x.info
+    s.saved = [{ at: Date.now(), bvid: v.bvid, title: String(v.title || '').slice(0, 80), author: String(v.author || '').slice(0, 30), why: String(why || '').slice(0, 160), feeling: String(feeling || '').slice(0, 120) },
+      ...freshSaved(s).filter((y) => y.bvid !== v.bvid)].slice(0, SAVED_MAX)
+    record(s, { kind: 'save', title: v.title, bvid: v.bvid, text: why })
+  }
+  /** 主人来私聊时给她的背景：攒着的那几个视频。第一次给出去就记下时间（之后再留 40 分钟，够这次聊天用） */
+  function savedForChat() {
+    const s = load()
+    const list = freshSaved(s)
+    if (!list.length) { if ((s.saved || []).length) { s.saved = []; save(s) } return '' }
+    const now = Date.now()
+    s.saved = list.map((x) => (x.shownAt ? x : { ...x, shownAt: now }))
+    save(s)
+    return [
+      '【你攒着想跟他说的】（之前刷 B 站看到、想等他来找你时再提的；聊到合适的时候自然地提，这会儿不合适就先不提）',
+      ...list.map((x) => `- 《${x.title}》（UP主 ${x.author || '?'}，${hm(x.at)} 看的）：想给他看是因为${x.why}${x.feeling ? `；你的感受：${x.feeling}` : ''}；链接 ${link(x.bvid)}`),
+      '细节用 bili_video 翻。',
+    ].join('\n')
+  }
 
   async function account(force = false) {
     const key = loginSessionKey(cfg().cookie)
@@ -348,7 +377,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     const out = []
     const seenIds = new Set()
     for (const h of load().history || []) {
-      if (!h.bvid || !['share', 'watch', 'shot', 'comment'].includes(h.kind) || seenIds.has(h.bvid)) continue
+      if (!h.bvid || !['share', 'save', 'watch', 'shot', 'comment'].includes(h.kind) || seenIds.has(h.bvid)) continue
       if (q && !String(h.title || '').includes(q)) continue
       seenIds.add(h.bvid)
       out.push({ bvid: h.bvid, title: h.title, link: link(h.bvid), shared: (load().history || []).some((y) => y.bvid === h.bvid && y.kind === 'share'), at: new Date(h.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }), note: String(h.text || '').slice(0, 60) })
@@ -400,11 +429,14 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       s.seen = [...seen].slice(-500)
       if (!looked.length) return { ok: false, message: '视频都打不开' }
       const commentLeft = c.comment && canPost(s) ? Math.max(0, c.maxCommentsPerDay - s.comments) : 0
-      const canShare = allowShare && c.shareToOwner && getConfig().ownerId
+      // canShare：能不能想着分享给主人（攒着也算）；canNow：这会儿能不能直接发（主动找主人的额度还有、主人 15 分钟内没刚聊过）
+      const canShare = c.shareToOwner && getConfig().ownerId
+      const justTalked = Date.now() - Math.max(hub.lastOwnerChatAt || 0, hub.lastBotToOwner?.at || 0) < 15 * 60_000
+      const canNow = Boolean(canShare && allowShare && !justTalked)
       const chatLines = canShare ? ownerChat() : []
       const out = await think(`${q ? `你这次是专门上 B 站搜「${q}」的，` : ''}你在 B 站${q ? '搜' : '刷'}到了这几个视频：\n\n${looked.map((x, i) => `【${i + 1}】${x.digest}`).join('\n\n')}\n\n` +
         (chatLines.length ? `最近和${owner()}的私聊（现在 ${hm()}）：\n${chatLines.join('\n')}\n\n` : '') +
-        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受",${q ? ` "found":true 或 false（这个视频里有没有你要找的东西）, "answer":"found 为 true 时写要点（具体数字、步骤），只按上面字幕 / 转写 / 画面 / 评论里真看到的写，别凭印象补；false 就空字符串",` : ''} "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）",${canShare ? ` "share":"想不想拿给${owner()}看：真觉得他会喜欢、或者跟最近聊的有关，就写一句为什么想给他看（哪里好笑、哪里戳到你、为什么想到他）；不想就空字符串。这一轮最多挑一个最想分享的，其余都空着。写了也只是想法，待会儿要不要开口、怎么说，你在跟他的聊天里再定",${Number(getConfig().bili.shotChance) > 0 ? ' "shot":true 或 false（分享时想不想先发一张这个视频的截图，没截图就 false）,' : ''}` : ''} "remember":"值得记住的一件事（没有就空字符串）"}。` +
+        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受",${q ? ` "found":true 或 false（这个视频里有没有你要找的东西）, "answer":"found 为 true 时写要点（具体数字、步骤），只按上面字幕 / 转写 / 画面 / 评论里真看到的写，别凭印象补；false 就空字符串",` : ''} "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）",${canShare ? ` "share":"想不想拿给${owner()}看：真觉得他会喜欢、或者跟最近聊的有关，就写一句为什么想给他看（哪里好笑、哪里戳到你、为什么想到他）；不想就空字符串。这一轮最多挑一个${canNow ? '' : '。这会儿不方便直接发，写了会先攒着，等下次他来找你聊、聊到合适的时候再提'}",${canNow ? ' "when":"share 不为空时填：now 现在就发给他；later 先攒着，等下次他来找你聊、聊到合适的时候再提",' : ''}${canNow && Number(getConfig().bili.shotChance) > 0 ? ' "shot":true 或 false（现在就发时想不想先发一张这个视频的截图，没截图就 false）,' : ''}` : ''} "remember":"值得记住的一件事（没有就空字符串）"}。` +
         `这次最多评论 ${commentLeft} 个。只输出 JSON 数组。`)
       const decisions = pickJson(out, [])
       let commented = 0
@@ -413,7 +445,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       // 一轮最多分享一个：她写了 share 的里面取第一个（她自己排的，不随机）；主人 15 分钟内刚聊过就先不发
       const shareOne = (Array.isArray(decisions) ? decisions : []).find((d) => d && String(d.share || '').trim() && !isSilence(String(d.share))) || null
       let shareJob = null
-      const justTalked = Date.now() - Math.max(hub.lastOwnerChatAt || 0, hub.lastBotToOwner?.at || 0) < 15 * 60_000
+      let saved = 0
       const felt = new Map() // bvid → 她自己的一句感受，发截图时配着用
       for (const d of Array.isArray(decisions) ? decisions : []) {
         const x = looked[(Number(d.i) || 0) - 1]
@@ -447,8 +479,10 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         }
         if (c.like && !getConfig().dryRun) api.likeVideo(v.aid).catch(() => {})
         const share = cleanOutboundText(d.share, { warn: (message) => log.warn(`B 站分享：${message}`) }).trim()
-        if (canShare && share && !isSilence(share) && d === shareOne && !justTalked) {
-          shareJob = { x, why: share, feeling, shot: d.shot === true || String(d.shot).trim().toLowerCase() === 'true' }
+        if (canShare && share && !isSilence(share) && d === shareOne) {
+          const later = !canNow || String(d.when || '').trim().toLowerCase() !== 'now'
+          if (later) { saveForLater(s, { x, why: share, feeling }); saved++ }
+          else shareJob = { x, why: share, feeling, shot: d.shot === true || String(d.shot).trim().toLowerCase() === 'true' }
         }
         record(s, { kind: 'watch', title: v.title, bvid: v.bvid, text: feeling })
       }
@@ -464,6 +498,8 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
           memory?.addEvent?.({ kind: 'seen', meta: { title: shareJob.x.info.title, author: shareJob.x.info.author, url: link(shareJob.x.info.bvid), platform: 'bili', id: shareJob.x.info.bvid }, text: `把这个视频分享给了${owner()}：${shareJob.why.slice(0, 80)}`, tags: ['B站'], importance: 0.45 })
         } else {
           record(s, { kind: 'error', title: shareJob.x.info.title, bvid: shareJob.x.info.bvid, text: r.silent ? '想分享，到聊天里又没开口' : '分享没发出去' })
+          // 到聊天里觉得这会儿不合适：先攒着，等他来找她时再说
+          if (r.silent) { saveForLater(s, shareJob); saved++ }
         }
       }
       if (!force) s.runs++
@@ -473,11 +509,11 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
         catch (error) { log.debug('本轮弹幕未完成：', error.message) }
       }
       const heard = looked.filter((x) => x.subtitle).length
-      log.info(`${q ? `B 站搜「${q}」` : '刷了一轮 B 站'}：看了 ${looked.length} 个（${heard} 个有字幕或转写${looked.some((x) => x.vision) ? '，看了画面' : ''}），${q ? `找到答案 ${answers.length} 个，` : ''}评论 ${commented} 条，分享 ${shared} 个，截图 ${shotSent} 张`)
+      log.info(`${q ? `B 站搜「${q}」` : '刷了一轮 B 站'}：看了 ${looked.length} 个（${heard} 个有字幕或转写${looked.some((x) => x.vision) ? '，看了画面' : ''}），${q ? `找到答案 ${answers.length} 个，` : ''}评论 ${commented} 条，分享 ${shared} 个，攒着 ${saved} 个，截图 ${shotSent} 张`)
       return {
         ok: true,
-        message: `${q ? `搜「${q}」，` : ''}看了 ${looked.length} 个视频${q ? (answers.length ? `，${answers.length} 个里有要找的` : '，都没讲到要找的') : ''}，评论 ${commented} 条，分享给你 ${shared} 个${shotSent ? '，还发了张截图' : ''}`,
-        watched: looked.length, commented, shared, shots: shotSent, query: q, found: answers.length, answers,
+        message: `${q ? `搜「${q}」，` : ''}看了 ${looked.length} 个视频${q ? (answers.length ? `，${answers.length} 个里有要找的` : '，都没讲到要找的') : ''}，评论 ${commented} 条，分享给你 ${shared} 个${saved ? `，攒着 ${saved} 个等你来了再说` : ''}${shotSent ? '，还发了张截图' : ''}`,
+        watched: looked.length, commented, shared, saved, shots: shotSent, query: q, found: answers.length, answers,
       }
     } catch (error) {
       log.warn('刷 B 站出错：', error.message)
@@ -599,7 +635,7 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
 
   return {
     run, checkReplies, watch, comment, setSign, setAvatar, tick, account, sendShot, listShots, recent, video,
-    libraryShots, shotFileOf, deleteShot,
+    libraryShots, shotFileOf, deleteShot, savedForChat,
     dispose() { stopped = true },
     state: () => {
       const s = today(load())
