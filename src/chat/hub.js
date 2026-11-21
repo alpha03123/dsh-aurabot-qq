@@ -1038,7 +1038,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     lastChatAt = Date.now()
     if (chatId.startsWith('private:')) lastPrivateAt.set(chatId.slice(8), Date.now())
     if (chatId === `private:${cfg.ownerId}`) lastBotToOwner = { at: Date.now(), text: items.filter((i) => i.kind === 'text' || i.kind === 'voice').map((i) => i.value).join('\n') }
-    onActivity?.({ kind: 'out', chatId, reply: text, userText: opts.userText || '' })
+    onActivity?.({ kind: 'out', chatId, reply: text, userText: opts.userText || '', self: opts.selfInitiated === true })
     return { missedAt, failed: failures.length, errors: failures }
   }
 
@@ -1106,7 +1106,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       if (chatId.startsWith('system:')) return // 已超时的后台轮次不能误发到 QQ
       if (!text) return release(chatId)
       // 发完再放开：发送期间来的消息也攒到下一段
-      const p = deliver(chatId, text, { wantVoice, autoReply, userText: st.lastText || '', own: true })
+      const p = deliver(chatId, text, { wantVoice, autoReply, userText: st.lastText || '', own: true, selfInitiated: st.lastSelf === true })
         .catch((error) => log.warn('发送出错：', error.message))
         .finally(() => {
           if (deliveries.get(chatId) === p) deliveries.delete(chatId)
@@ -2058,6 +2058,8 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     // 上一句也留着：这一句太短（「嗯嗯」「然后呢」）时一起拿去想起相关的事
     if (st.lastText) st.prevText = st.lastText
     st.lastText = String(opts.queryText ?? content.filter((c) => c.type === 'text').map((c) => c.text).join('\n')).slice(-600)
+    // 没有发送人 = 模块推进来的系统提醒（她自己主动开口），不是有人在跟她说话
+    st.lastSelf = !senderId
     st.speakers = opts.speakers || (senderId ? [String(senderId), ...(opts.extraSenders || []).map(String)] : [])
     if (opts.wantVoice) st.wantVoice = true
     if (!opts.steer) st.autoReply = opts.autoReply || null

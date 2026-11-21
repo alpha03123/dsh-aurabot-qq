@@ -24,8 +24,9 @@ export default {
       const cfg = api.config()
       if (a.kind === 'in' && a.text) mood.observe(a.text, a.nickname, { direct: a.direct, owner: a.owner })
       if (a.kind === 'silent' && a.text && cfg.mood.judge) mood.observe(a.text, a.nickname, { silent: true })
-      // 模型判心情（开了才判）：系统提醒开头的是她自己主动找人
-      if (a.kind === 'out' && a.reply && !String(a.chatId).startsWith('system:')) {
+      // 模型判心情（开了才判）：系统提醒开头的是她自己主动找人。
+      // 模块推进来、没人回她的那一轮（分享视频、主动搭话）不判：没人跟她互动，判出来的只会是把系统提醒当成对方说的话
+      if (a.kind === 'out' && a.reply && !a.self && !String(a.chatId).startsWith('system:')) {
         const speakUp = String(a.userText).startsWith('【系统提醒')
         mood.judge({ userText: a.userText, reply: a.reply, who: String(a.chatId).startsWith('group:') ? '群里的人' : String(a.chatId) === `private:${cfg.ownerId}` ? cfg.ownerName || '主人' : '对方', origin: speakUp ? 'speak-up' : 'user' }).catch(() => {})
       }

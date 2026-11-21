@@ -74,8 +74,9 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     const since = Date.now() - 24 * 3600_000
     const days = [dayKey(new Date(since)), dayKey()]
     const rows = [...new Set(days)].flatMap((d) => hub.chatLogOf(d) || []).filter((r) => r && r.chatId === `private:${id}` && Number(r.t) >= since && r.text)
-    return rows.slice(-8).map((r) => `${r.who === 'bot' ? '你' : owner()}：${String(r.text).slice(0, 60)}`)
+    return rows.slice(-8).map((r) => `${hm(r.t)} ${r.who === 'bot' ? '你' : owner()}：${String(r.text).slice(0, 60)}`)
   }
+  const hm = (t) => { const d = new Date(Number(t) || Date.now()); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
   // 能不能发评论 / 回复：Cookie 里要有 bili_jct，今天也没因为风控之类暂停
   const canPost = (s) => Boolean(parseCookie(cfg().cookie).bili_jct) && s.pauseDay !== dayKey()
   const pauseIf = (s, error) => {
@@ -402,8 +403,8 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       const canShare = allowShare && c.shareToOwner && getConfig().ownerId
       const chatLines = canShare ? ownerChat() : []
       const out = await think(`${q ? `你这次是专门上 B 站搜「${q}」的，` : ''}你在 B 站${q ? '搜' : '刷'}到了这几个视频：\n\n${looked.map((x, i) => `【${i + 1}】${x.digest}`).join('\n\n')}\n\n` +
-        (chatLines.length ? `最近和${owner()}的私聊：\n${chatLines.join('\n')}\n\n` : '') +
-        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受",${q ? ` "found":true 或 false（这个视频里有没有你要找的东西）, "answer":"found 为 true 时写要点（具体数字、步骤），只按上面字幕 / 转写 / 画面 / 评论里真看到的写，别凭印象补；false 就空字符串",` : ''} "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）",${canShare ? ` "share":"想不想拿给${owner()}看：真觉得他会喜欢、或者跟最近聊的有关，就写一句为什么想给他看（哪里好笑、哪里戳到你、为什么想到他）；不想就空字符串。这一轮最多挑一个最想分享的，其余都空着。写了也只是想法，待会儿要不要开口、怎么说，你在跟他的聊天里再定", "shot":true 或 false（分享时想不想先发一张这个视频的截图，没截图就 false）,` : ''} "remember":"值得记住的一件事（没有就空字符串）"}。` +
+        (chatLines.length ? `最近和${owner()}的私聊（现在 ${hm()}）：\n${chatLines.join('\n')}\n\n` : '') +
+        `看完说说你的想法。对每个视频给一个对象：{"i":序号, "feeling":"一句你的真实感受",${q ? ` "found":true 或 false（这个视频里有没有你要找的东西）, "answer":"found 为 true 时写要点（具体数字、步骤），只按上面字幕 / 转写 / 画面 / 评论里真看到的写，别凭印象补；false 就空字符串",` : ''} "comment":"想在视频下发的评论（像普通观众，一两句、别打广告，不想评就空字符串）",${canShare ? ` "share":"想不想拿给${owner()}看：真觉得他会喜欢、或者跟最近聊的有关，就写一句为什么想给他看（哪里好笑、哪里戳到你、为什么想到他）；不想就空字符串。这一轮最多挑一个最想分享的，其余都空着。写了也只是想法，待会儿要不要开口、怎么说，你在跟他的聊天里再定",${Number(getConfig().bili.shotChance) > 0 ? ' "shot":true 或 false（分享时想不想先发一张这个视频的截图，没截图就 false）,' : ''}` : ''} "remember":"值得记住的一件事（没有就空字符串）"}。` +
         `这次最多评论 ${commentLeft} 个。只输出 JSON 数组。`)
       const decisions = pickJson(out, [])
       let commented = 0
