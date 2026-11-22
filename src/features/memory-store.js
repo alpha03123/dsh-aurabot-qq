@@ -223,7 +223,14 @@ export function createMemoryStorage({ directory = () => dataDir(), log = console
     // 磁盘完全不可写时不能假报保存成功。
     if (existsSync(path('memory.sqlite'))) {
       writeJson(path('memories.json'), lastState || jsonState())
-      writeJson(path('memory-json-fallback.json'), { reason: fallbackReason, at: Date.now() })
+      // 第一次失败的原因留着：之后每次启动的原因都是「上次 SQLite 写入失败」，不留就再也查不到当初为什么坏
+      const prev = existsSync(path('memory-json-fallback.json')) ? readJson(path('memory-json-fallback.json'), null) : null
+      writeJson(path('memory-json-fallback.json'), {
+        reason: fallbackReason,
+        at: Date.now(),
+        firstReason: prev?.firstReason || prev?.reason || fallbackReason,
+        firstAt: prev?.firstAt || prev?.at || Date.now(),
+      })
     }
     writeJson(path('memories.json'), state)
     lastState = structuredClone(state)

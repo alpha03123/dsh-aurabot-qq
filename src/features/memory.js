@@ -2528,11 +2528,18 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
    * 只并 importance 低的；约定/边界这类（>= 0.85）只加不并。默认关（memory.mergeGroups）；睡前整理可传 force:true。
    */
   const MERGE_BATCH = 12
+  // 增量合并：只看上次合并之后新加的，加上和它们同一时段（前后几天）的旧条目做对照；
+  // 更早、已经淡了的交给压缩（compressDetails）和遗忘（shouldForget），这里不再一遍遍重看
+  const MERGE_NEIGHBOR_DAYS = 3
   async function mergeGroups({ force = false } = {}) {
     const version = forgetVersion
     const cfg = getConfig()
     if (!force && !cfg.memory?.mergeGroups) return { groups: 0, calls: 0, merged: 0 }
-    const list = load().items.filter((m) => isCurrent(m) && m.kind !== 'seen' && m.source !== 'abstract')
+    const startedAt = Date.now()
+    const snap = load()
+    const since = Number(snap.mergeRun?.at) || 0 // 从没合并过就整体过一遍（清掉积压），之后只看新的
+    const timeOf = (m) => Number(m.saidAt || m.at) || 0
+    const list = snap.items.filter((m) => isCurrent(m) && m.kind !== 'seen' && m.source !== 'abstract')
     const by = new Map()
     for (const m of list) {
       // F5：按「可见性来源」分组再交给模型合并。普通记忆带上 chatId（没有来源的旧数据单独一组），
@@ -2545,8 +2552,13 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     }
     let groups = 0, calls = 0, merged = 0
     for (const [who, items] of by) {
-      const softAll = items.filter((m) => !Number.isInteger(m.tier) && (Number(m.importance) || 0) < 0.85)
-      if (softAll.length < 4) continue
+      const softGroup = items.filter((m) => !Number.isInteger(m.tier) && (Number(m.importance) || 0) < 0.85)
+      if (softGroup.length < 4) continue
+      const fresh = softGroup.filter((m) => (Number(m.at) || 0) > since || (Number(m.mergedAt) || 0) > since)
+      if (!fresh.length) continue
+      const from = Math.min(...fresh.map(timeOf)) - MERGE_NEIGHBOR_DAYS * 86400_000
+      const softAll = since ? softGroup.filter((m) => fresh.includes(m) || timeOf(m) >= from) : softGroup
+      if (softAll.length < 2) continue
       groups++
       // 按时间排好、每批最多 MERGE_BATCH 条：一次塞几十条，推理模型会在思考里逐条分析，把输出预算耗光、一条都合不出来
       softAll.sort((a, b) => (Number(a.saidAt || a.at) || 0) - (Number(b.saidAt || b.at) || 0))
@@ -2587,7 +2599,12 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       } catch (error) { log.warn(`合并 ${who} 的记忆失败：`, error.message) }
       }
     }
-    if (groups) log.info(`记忆合并：看了 ${groups} 组、调了 ${calls} 次模型，并掉 ${merged} 条`)
+    if (version === forgetVersion) {
+      const st = load()
+      st.mergeRun = { at: startedAt, groups, calls, merged }
+      save(st)
+    }
+    if (groups) log.info(`记忆合并：看了 ${groups} 组、调了 ${calls} 次模型，并掉 ${merged} 条${since ? '' : '（第一次，整体过了一遍）'}`)
     return { groups, calls, merged }
   }
 
