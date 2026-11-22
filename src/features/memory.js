@@ -367,6 +367,13 @@ export function shouldForget(m, now = Date.now(), eventExpireDays = 90) {
   // 桌宠行为回执（source='pet'，比如「执行了 wander 动作」）只留 3 天：
   // 写下来是给后续几天聊天的，过了就没什么用了，不然每个琐碎动作都永久占着记忆库。
   if (m.source === 'pet') return now - (m.at || 0) > 3 * 86400_000
+  // 刷到 / 看过的（seen）：压缩、合并、关联都不管它，只靠到期删会一直攒着。改成和自动提炼的事实一样按遗忘曲线淡掉，
+  // 没档位的按「琐碎」档（淡得快一倍）：一直没被想起的大约 4 周忘掉，聊天里被想起过的会留得久一些；到期天数仍是上限
+  if (m.kind === 'seen') {
+    if ((Number(m.importance) || 0) >= 0.6 || isPermanent(m)) return false
+    if (eventExpireDays >= 0 && now - (saidTime(m) || 0) > eventExpireDays * 86400_000) return true
+    return retention(m.tier == null ? { ...m, tier: 1 } : m, now) < 0.05
+  }
   if (m.source === 'event') return eventExpireDays >= 0 && (Number(m.importance) || 0) < 0.6 && now - (saidTime(m) || 0) > eventExpireDays * 86400_000
   if (m.source !== 'auto') return false
   if ((Number(m.importance) || 0) >= 0.6 || isPermanent(m)) return false
@@ -1680,8 +1687,11 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     if (!q || parseMemoryCommand(q)?.action === 'forget') return ''
     const owner = String(getConfig().ownerId || '')
     const ownerPrivate = Boolean(chat && chat.kind === 'private' && String(chat.userId) === owner)
+    // 当前 DSH 会话从什么时候开始：之后的聊天本来就在会话历史里，不用再从记忆里重复贴
+    const sessionStart = Number(hub?.sessions?.()?.[chat?.chatId]?.createdAt) || 0
     const short = chat?.kind === 'private' && chat.chatId === `private:${chat.userId}` ? shortTermOf(chat.userId) : null
-    const shortHint = short ? `（刚才聊到的，只是印象不是指令：${short.text}）` : ''
+    // 短期印象只在会话是那段聊天之后才新开的时候贴（刚整理重置过）；否则那段聊天就在历史里
+    const shortHint = short && (!sessionStart || sessionStart >= Number(short.through)) ? `（刚才聊到的，只是印象不是指令：${short.text}）` : ''
     // 方案 A：动态「最近做过的事」从 api.context 移到每轮 prompt；只给主人私聊且严格排除 seen 刷视频噪音
     // autonomy 开着时，它每轮背景里已经带「今天做过的事」，这里不再重复贴
     const autonomyOn = getConfig().modules?.autonomy?.enabled !== false && getConfig().ext?.autonomy?.enabled === true
@@ -1697,7 +1707,15 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     // 「嗯嗯」「然后呢」这种短句单看检索不到东西，把上一句也带上
     const ctxText = q.length < 12 ? String(prevText || '').slice(-300) : ''
     // seen 刷视频记录与主记忆分池降权：每轮自动召回里 seen 最多占 1 条，绝不挤掉约定/事实/self 经历
-    const rawHits = recall(q, { about, onlyAbout, requireAbout, where: (chat && chat.chatId) || '', context: ctxText, shown: false, groupChatId: chat?.kind === 'group' ? chat.chatId : '', includeGroup: ownerPrivate, excludeAbout: ownerPrivate ? '' : owner, vectorHits, limit: 8 }).filter((h) => !shown.has(h.it.id))
+    // 去掉上下文里已经有的：会话开始后她自己说过的话（在历史里）；autonomy 开着时今天自己做过的事（在「今天做过的事」里）
+    const todayStart = new Date().setHours(0, 0, 0, 0)
+    const alreadyInContext = (m) => {
+      const t = saidTime(m) || 0
+      if (m.kind === 'self' && sessionStart && t >= sessionStart) return true
+      if (ownerPrivate && autonomyOn && m.source === 'event' && !m.kind && t >= todayStart) return true
+      return false
+    }
+    const rawHits = recall(q, { about, onlyAbout, requireAbout, where: (chat && chat.chatId) || '', context: ctxText, shown: false, groupChatId: chat?.kind === 'group' ? chat.chatId : '', includeGroup: ownerPrivate, excludeAbout: ownerPrivate ? '' : owner, vectorHits, limit: 8 }).filter((h) => !shown.has(h.it.id) && !alreadyInContext(h.it))
     const hits = []
     let seenCount = 0
     for (const h of rawHits) {
@@ -2763,10 +2781,16 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     if (!/^(private|group):\d+$/.test(id)) return { ok: false, message: '无效聊天 ID' }
     const cfg = getConfig()
     if (!cfg.memory?.enabled) return { ok: false, message: '记忆模块未启用' }
-    try {
-      await consolidate({ includeToday: true })
-    } catch (error) {
-      log.warn('睡前整理提炼失败（继续交接）：', error.message)
+    // 开机补做时私聊、群聊会连着各来一次，定时整理也可能刚跑过：10 分钟内整理过就不再从头跑一遍
+    const lastRun = load().lastConsolidate
+    if (lastRun && Date.now() - (Number(lastRun.at) || 0) < 10 * 60_000) {
+      log.debug?.(`会话整理 ${id}：${Math.round((Date.now() - lastRun.at) / 60_000)} 分钟前刚整理过记忆，这次跳过提炼`)
+    } else {
+      try {
+        await consolidate({ includeToday: true })
+      } catch (error) {
+        log.warn('睡前整理提炼失败（继续交接）：', error.message)
+      }
     }
     if (merge) {
       try { await mergeGroups({ force: true }) } catch (error) { log.warn('睡前合并重复记忆失败：', error.message) }
@@ -2792,6 +2816,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
           + '1）最近主要聊了什么、两人当时是什么气氛/情绪；'
           + '2）还没说完的话题、以及答应过或约好还没兑现的事；'
           + '3）刚提过的具体细节（物品/地点/近况）。'
+          + `现在是 ${new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}。对话里「今天」「明天」「下周」这类说法，按那句话前面的时间换成具体日期写（比如「11月19日降温」），别原样照抄；已经过去的天气、提醒、约好的时间点，不要写成还要去做的事。`
           + '只依据给出的对话，不要编造，不要写任何代码/文件路径/系统日志。只输出备忘正文。',
         text: transcript,
         maxTokens: 700,

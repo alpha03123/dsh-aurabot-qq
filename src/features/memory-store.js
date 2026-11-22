@@ -147,8 +147,24 @@ export function createMemoryStorage({ directory = () => dataDir(), log = console
     selectDirectory()
     if (backend === 'json') return
     if (existsSync(path('memory-json-fallback.json'))) {
-      fallback(new Error('上次 SQLite 写入失败，继续使用 JSON，避免读到旧数据'))
-      return
+      // 以前：一次写失败就永远用 JSON。现在：启动时自动重试一次——旧库（停在失败那一刻、比 JSON 旧）挪到旁边留底，
+      // 再走下面「库不存在 → 从 memories.json 迁移」的路（迁移有逐条核对，不一致就继续用 JSON，旧库和 JSON 都不删）。
+      if (Database && existsSync(path('memories.json'))) {
+        try {
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+          for (const suffix of ['', '-wal', '-shm']) {
+            if (existsSync(path('memory.sqlite' + suffix))) renameSync(path('memory.sqlite' + suffix), path(`memory.sqlite.stale-${stamp}${suffix}`))
+          }
+          renameSync(path('memory-json-fallback.json'), path(`memory-json-fallback.recovered-${stamp}.json`))
+          log?.warn?.(`记忆存储：上次 SQLite 写入失败后一直用 JSON，现在从 JSON 重新建库（旧库留底为 memory.sqlite.stale-${stamp}）`)
+        } catch (error) {
+          fallback(new Error('上次 SQLite 写入失败，自动重建前挪旧库没成功，继续使用 JSON：' + error.message))
+          return
+        }
+      } else {
+        fallback(new Error('上次 SQLite 写入失败，继续使用 JSON，避免读到旧数据'))
+        return
+      }
     }
     if (backend === 'sqlite') {
       try {

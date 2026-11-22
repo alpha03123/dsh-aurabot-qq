@@ -176,7 +176,9 @@ async function runStream (llm, params, attempts) {
 
 /**
  * @param {object} dsh 宿主 ctx
- * @param {{system:string, text:string, images?:Array<{data:string, mediaType:string}>, maxTokens?:number, temperature?:number, reasoningEffort?:string, cfg?:object, model?:{provider:string, model:string}, key?:string}} o  key：用途，写进小脑留底（core/trace.js），不填就按调用位置认
+ * @param {{system:string, text:string, images?:Array<{data:string, mediaType:string}>, maxTokens?:number, temperature?:number, reasoningEffort?:string, cfg?:object, model?:{provider:string, model:string}, key?:string, timeoutMs?:number, source?:string}} o
+ *   key：用途，写进小脑留底（core/trace.js），不填就按调用位置认；timeoutMs：总时长上限（含放宽预算的重试），超了就中断并报「模型调用超时」；
+ *   source：哪个模块发起的（写进留底，比如 autonomy）
  * @returns {Promise<string>}
  */
 export async function askModel (dsh, o) {
@@ -202,21 +204,36 @@ export async function askModel (dsh, o) {
     maxTokens: o.maxTokens || 600,
     temperature: o.temperature ?? 0.3,
   }
-  let effort = await pickReasoningEffort(dsh, t.provider, t.model, o.reasoningEffort === undefined ? 'low' : o.reasoningEffort)
+  const wantEffort = o.reasoningEffort === undefined ? 'low' : o.reasoningEffort
+  let effort = await pickReasoningEffort(dsh, t.provider, t.model, wantEffort)
   let widened = false
   const attempts = []
   const t0 = Date.now()
+  const timeoutMs = Number(o.timeoutMs) > 0 ? Number(o.timeoutMs) : 0
+  const timeoutError = () => new Error('模型调用超时（' + Math.round(timeoutMs / 1000) + ' 秒）')
   let result = ''
   let failed = ''
   try {
     for (let attempt = 0; ; attempt++) {
+      // 有总时长上限时，每次尝试只给剩下的时间；模型卡住就中断，别让后台一直挂着
+      let ac = null
+      let timer = null
+      if (timeoutMs) {
+        const left = t0 + timeoutMs - Date.now()
+        if (left <= 0) throw timeoutError()
+        ac = new AbortController()
+        timer = setTimeout(() => ac.abort(timeoutError()), left)
+        timer.unref?.()
+      }
       try {
-        const out = await runStream(llm, effort ? { ...base, reasoningEffort: effort } : base, attempts)
+        const params = effort ? { ...base, reasoningEffort: effort } : base
+        const out = await runStream(llm, ac ? { ...params, signal: ac.signal } : params, attempts)
         // 推理模型可能把输出预算全花在思考上，一个字没写：放宽预算再试一次
         if (out || widened) { result = out; return out }
         widened = true
         base.maxTokens = Math.max(base.maxTokens, Math.min(4000, base.maxTokens * 3))
       } catch (error) {
+        if (ac && ac.signal.aborted) throw timeoutError()
         // 能力探测没查到 / 模型临时不认：去掉思考强度再来一次
         if (attempt === 0 && effort && isUnsupportedEffort(error)) {
           cacheReasoning(t.provider, t.model, null)
@@ -224,6 +241,8 @@ export async function askModel (dsh, o) {
           continue
         }
         throw error
+      } finally {
+        clearTimeout(timer)
       }
     }
   } catch (error) {
@@ -233,11 +252,16 @@ export async function askModel (dsh, o) {
     const last = attempts[attempts.length - 1] || {}
     writeTrace({
       kind: 'ask',
+      ...(o.source ? { source: o.source } : {}),
       key: o.key || '',
       caller: callerOf(),
       provider: t.provider,
       model: t.model,
+      maxTokens: o.maxTokens || 600,
       temperature: base.temperature,
+      ...(timeoutMs ? { timeoutMs } : {}),
+      reasoningEffortRequested: wantEffort || null,
+      reasoningEffortSent: last.reasoningEffort || null,
       images: (o.images || []).length,
       system: base.system,
       input: cleanText(o.text),
