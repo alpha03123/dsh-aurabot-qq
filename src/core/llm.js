@@ -106,6 +106,17 @@ export async function modelReasoning (dsh, provider, model) {
   return value
 }
 
+// 想要的思考档位模型不支持、被换成别的档时，提醒一次（同一模型同一档只提醒一次）
+let effortFallbackLog = null
+const effortWarned = new Set()
+export function onEffortFallback (fn) { effortFallbackLog = typeof fn === 'function' ? fn : null }
+function warnEffortFallback (provider, model, want, got) {
+  const key = `${provider}|${model}|${want}`
+  if (effortWarned.has(key)) return
+  effortWarned.add(key)
+  try { effortFallbackLog?.(`模型 ${provider}/${model} 不支持思考档位「${want}」，实际用的是「${got || '不传'}」`) } catch (error) {}
+}
+
 /** 把想要的档位收敛成这个模型真正支持的；给 '' / 不支持时返回 undefined（= 不传）。 */
 export async function pickReasoningEffort (dsh, provider, model, want) {
   const llm = dsh.llm || dsh.get('llm')
@@ -119,7 +130,9 @@ export async function pickReasoningEffort (dsh, provider, model, want) {
   }
   const w = String(want || '')
   if (w && r.efforts.includes(w)) return w
-  return r.default && r.efforts.includes(r.default) ? r.default : undefined
+  const got = r.default && r.efforts.includes(r.default) ? r.default : undefined
+  if (w) warnEffortFallback(provider, model, w, got)
+  return got
 }
 
 const isUnsupportedEffort = (error) => {

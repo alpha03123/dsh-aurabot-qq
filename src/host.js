@@ -22,7 +22,7 @@ import { createHub, workspaceDirOf } from './chat/hub.js'
 import { grantOwner, moveWorkspace, realWorkspace } from './core/workspace-move.js'
 import { createLocal, fileOf, toImageBuffer } from './local/local.js'
 import { createGroupRoles } from './chat/group-roles.js'
-import { defaultModel, askModel, modelReasoning, modelVision, clearReasoningCache, clearVisionCache } from './core/llm.js'
+import { defaultModel, askModel, modelReasoning, modelVision, clearReasoningCache, clearVisionCache, onEffortFallback } from './core/llm.js'
 import { mimeOf } from './chat/inbound.js'
 import { dataDir, ensureDir } from './core/store.js'
 import { setTraceOptions, readTraces } from './core/trace.js'
@@ -61,6 +61,7 @@ export function isChatSession(hub, session) {
 export function apply(ctx) {
   const logger = createLogger({ dsh: ctx })
   const log = logger.child('core')
+  onEffortFallback((msg) => logger.child('llm').warn(msg))
   // 恢复备份必须在读配置之前：读完配置后内存里的旧状态会写回去
   try {
     const restored = applyPendingRestore()
