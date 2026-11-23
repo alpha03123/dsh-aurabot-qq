@@ -80,6 +80,18 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     return lines
   }
   const hm = (t) => { const d = new Date(Number(t) || Date.now()); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
+  const whenLabel = (t) => {
+    const d = new Date(Number(t) || Date.now())
+    const now = new Date()
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const targetStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+    const days = Math.round((todayStart - targetStart) / 86_400_000)
+    const time = hm(d.getTime())
+    if (days <= 0) return `今天 ${time}`
+    if (days === 1) return `昨天 ${time}`
+    if (days === 2) return `前天 ${time}`
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${time}（${days}天前）`
+  }
   // 能不能发评论 / 回复：Cookie 里要有 bili_jct，今天也没因为风控之类暂停
   const canPost = (s) => Boolean(parseCookie(cfg().cookie).bili_jct) && s.pauseDay !== dayKey()
   const pauseIf = (s, error) => {
@@ -111,8 +123,8 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
     s.saved = list.map((x) => (x.shownAt ? x : { ...x, shownAt: now }))
     save(s)
     return [
-      '【你攒着想跟他说的】（之前刷 B 站看到、想等他来找你时再提的；聊到合适的时候自然地提，这会儿不合适就先不提）',
-      ...list.map((x) => `- 《${x.title}》（UP主 ${x.author || '?'}，${hm(x.at)} 看的）：想给他看是因为${x.why}${x.feeling ? `；你的感受：${x.feeling}` : ''}；链接 ${link(x.bvid)}`),
+      '【你攒着想跟他说的】（之前刷 B 站看到、想等他来找你时再提的；注意每条标注的观看日期，不是今天刚看的别说成「刚看」；聊到合适的时候自然地提，这会儿不合适就先不提）',
+      ...list.map((x) => `- 《${x.title}》（UP主 ${x.author || '?'}，${whenLabel(x.at)} 看的）：想给他看是因为${x.why}${x.feeling ? `；你的感受：${x.feeling}` : ''}；链接 ${link(x.bvid)}`),
       '细节用 bili_video 翻。',
     ].join('\n')
   }
