@@ -242,7 +242,8 @@ DiscordAdapter.prototype.getGroupMemberList = async function (uin, params) {
   return (Array.isArray(list) ? list : []).filter((m) => m?.user?.id).map((m) => ({ group_id: params.group_id, user_id: this.createId(m.user.id), user_name: memberName(m) }));
 };
 
-// set_input_status → 「正在输入」；set_self_nickname → 同步各服务器昵称；其他照常
+// set_input_status → 「正在输入」；set_self_status → Discord 自定义状态；set_self_nickname → 同步各服务器昵称；其他照常
+let lastPresenceCmd = null;
 const origExecute = OneBotV12ActionService.prototype.execute;
 OneBotV12ActionService.prototype.execute = async function (action, params = {}) {
   if (action === "set_input_status") {
@@ -252,6 +253,36 @@ OneBotV12ActionService.prototype.execute = async function (action, params = {}) 
       : await dmChannelOf(adapter, accountId, adapter.coerceId(String(params.user_id)).string);
     if (channelId) await adapter.requireBot(accountId).getREST().request(`/channels/${channelId}/typing`, { method: "POST" });
     return {};
+  }
+  if (action === "set_self_status") {
+    const { adapter, accountId } = this.context;
+    const bot = adapter.requireBot(accountId);
+    const text = String(params.text ?? params.state ?? "").trim().slice(0, 80);
+    const status = ["online", "idle", "dnd", "invisible"].includes(params.status) ? params.status : "online";
+    const cmd = {
+      type: "update_presence",
+      since: null,
+      activities: text ? [{ name: "Custom Status", type: 4, state: text }] : [],
+      status,
+      afk: status === "idle",
+    };
+    lastPresenceCmd = { bot, cmd };
+    try {
+      bot.sendGatewayCommand(cmd);
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+    if (!bot._presenceHooked) {
+      bot._presenceHooked = true;
+      const resend = () => {
+        if (lastPresenceCmd?.cmd) {
+          try { bot.sendGatewayCommand(lastPresenceCmd.cmd); } catch {}
+        }
+      };
+      bot.on("ready", resend);
+      bot.on("resumed", resend);
+    }
+    return { ok: true, text, status };
   }
   if (action === "set_self_nickname") {
     const { adapter, accountId } = this.context;

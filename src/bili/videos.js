@@ -56,6 +56,35 @@ export function hasVideo(bvid) {
   return existsSync(fileOf(bvid))
 }
 
+/** 是否有存过的视频档案（给只读聊天工具判定用）。 */
+export function hasAnyVideos() {
+  try {
+    return readdirSync(dir()).some((f) => f.endsWith('.json'))
+  } catch (error) {
+    return false
+  }
+}
+
+/** 把她在这个视频下的点赞、评论、楼中楼互动记进同一份档案，消除记忆断层。 */
+export function appendVideoInteraction(bvid, { title = '', comment = null, reply = null, liked = false } = {}) {
+  if (!bvid) return
+  const old = readJson(fileOf(bvid), null) || { bvid, title: String(title || '').slice(0, 120), url: `https://www.bilibili.com/video/${bvid}` }
+  const next = { ...old, savedAt: Date.now() }
+  if (title && !next.title) next.title = String(title).slice(0, 120)
+  if (liked) next.liked = true
+  if (comment && comment.text) {
+    const list = Array.isArray(old.myComments) ? old.myComments.slice() : []
+    list.unshift({ at: Date.now(), text: String(comment.text).slice(0, 200), ...(comment.replyTo ? { replyTo: String(comment.replyTo).slice(0, 40) } : {}) })
+    next.myComments = list.slice(0, 20)
+  }
+  if (reply && reply.myReply) {
+    const list = Array.isArray(old.myReplies) ? old.myReplies.slice() : []
+    list.unshift({ at: Date.now(), who: String(reply.who || '').slice(0, 40), theySaid: String(reply.theySaid || '').slice(0, 140), myReply: String(reply.myReply).slice(0, 200) })
+    next.myReplies = list.slice(0, 20)
+  }
+  writeJson(fileOf(bvid), next)
+}
+
 /** 字幕 / 转写排成带时间的行（约 20 秒一行），再按字数分页。 */
 function transcriptPages(rec) {
   // 字幕一两秒一句：每 20 秒左右并成一行，标一次时间
@@ -91,11 +120,16 @@ function transcriptPages(rec) {
 export function videoText(rec, page = 1) {
   const pages = transcriptPages(rec)
   const n = Math.max(1, Math.min(pages.length || 1, Math.round(Number(page) || 1)))
+  const fmtAt = (t) => (t ? new Date(t).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '')
+  const myComments = Array.isArray(rec.myComments) ? rec.myComments : []
+  const myReplies = Array.isArray(rec.myReplies) ? rec.myReplies : []
   const head = [
     `《${rec.title}》 UP主：${rec.author || '?'}${rec.duration ? '  时长 ' + clock(rec.duration) : ''}  播放 ${rec.play || 0}${rec.tname ? '  分区：' + rec.tname : ''}`,
     `链接：${rec.url}`,
-    rec.watchedAt ? `你看的时间：${new Date(rec.watchedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}` : '',
+    rec.watchedAt ? `你看的时间：${fmtAt(rec.watchedAt)}${rec.liked ? '（点过赞）' : ''}` : (rec.liked ? '你给这个视频点过赞' : ''),
     rec.feeling ? `你当时的感受：${rec.feeling}` : '',
+    myComments.length ? '你在这个视频下评过：\n' + myComments.slice(0, 5).map((c) => `  - ${fmtAt(c.at)} ${c.replyTo ? `回复 @${c.replyTo}：` : ''}${c.text}`).join('\n') : '',
+    myReplies.length ? '你和网友的楼中楼互动：\n' + myReplies.slice(0, 5).map((r) => `  - ${fmtAt(r.at)} ${r.who} 说「${r.theySaid}」→ 你回「${r.myReply}」`).join('\n') : '',
   ]
   const extra = n === 1 ? [
     rec.desc ? `简介：${rec.desc}` : '',

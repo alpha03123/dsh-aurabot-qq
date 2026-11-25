@@ -470,17 +470,39 @@ export function chunkText(text, max = MESSAGE_MAX) {
   return out
 }
 
+function splitLongChatLine(line) {
+  const s = String(line || '').trim()
+  if (s.length <= 26 || /https?:\/\/|`/.test(s)) return [s]
+  // 按句末标点或破折号拆细，短碎片（<6字）并回相邻句，避免拆出单字碎片
+  const rawParts = s
+    .split(/(?:(?<=[。！？!?])\s*|(?<=~|～)\s+|——+)/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  if (rawParts.length <= 1) return [s]
+  const out = []
+  for (const p of rawParts) {
+    if (out.length && (p.length < 6 || out[out.length - 1].length < 6)) {
+      out[out.length - 1] = `${out[out.length - 1]} ${p}`.trim()
+    } else {
+      out.push(p)
+    }
+  }
+  return out.length ? out : [s]
+}
+
 export function splitLines(text) {
   const t = String(text || '').trim()
   if (!t) return []
   if (t.length > MESSAGE_MAX) return chunkText(t)
   if (t.includes('```') || t.length > 240) return [t]
   const lines = t.split(/\n+/).map((s) => s.trim()).filter(Boolean)
-  if (lines.length <= 1) return lines
+  if (!lines.length) return []
   // 像列表 / 步骤的多行内容（一大半以数字或符号开头）也整段发
-  const listy = lines.filter((l) => /^(\d+[.、)]|[-*•·])/.test(l)).length
-  if (listy >= Math.ceil(lines.length / 2)) return [t]
-  return lines
+  if (lines.length > 1) {
+    const listy = lines.filter((l) => /^(\d+[.、)]|[-*•·])/.test(l)).length
+    if (listy >= Math.ceil(lines.length / 2)) return [t]
+  }
+  return lines.flatMap(splitLongChatLine)
 }
 
 /** Discord 会渲染 Markdown：代码块、粗体照留，只去掉标题（# 在 Discord 里是超大号字）。 */
@@ -508,6 +530,6 @@ export function wantsVoice(text) {
 export function bubbleDelay(next = '', rand = Math.random) {
   if (typeof next === 'function') { rand = next; next = '' }
   const len = String(next || '').length
-  const typing = 350 + len * 110 // 大约每秒 9 个字
-  return Math.round(Math.min(4500, Math.max(700, typing)) * (0.8 + rand() * 0.5))
+  const typing = 280 + len * 45 // 按字数线性递增：5字≈0.5s，15字≈0.95s，25字≈1.4s，封顶≈1.9s
+  return Math.round(Math.min(1850, Math.max(420, typing)) * (0.88 + rand() * 0.24))
 }

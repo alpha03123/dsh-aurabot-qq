@@ -19,6 +19,10 @@ export default {
     memory.list('') // 启动时完成旧 JSON 迁移，不必等第一条聊天或打开面板。
 
     api.context(({ chat, sessionId }) => (chat.kind === 'system' ? '' : memory.contextFor(chat, sessionId)))
+    api.rule(() => {
+      if (!api.config().memory.enabled) return ''
+      return '系统每轮只自动附带少量相关记忆；对方追问更早聊过的事、以前约过什么、或你拿不准记没记过时，先用 recall_memory（或 lookup_person 查某个人）翻一下再答，别硬蒙。'
+    })
     // #79：随消息变化的相关记忆放在「交给她的内容」里，不放进每轮都会追加的运行时上下文快照
     api.on('prompt', async (content, info) => {
       try {

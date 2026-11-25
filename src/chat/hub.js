@@ -1016,7 +1016,10 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
           if (localImageBlocked(chatId, it.value)) log.warn(`${chatId}：回复里的本机图片不在允许的目录里，没发`)
           else await sendImage(chatId, it.value, replyId, userId)
         }
-        if (i < items.length - 1 && !opts.simulate) await pause(bubbleDelay(items[i + 1].kind === 'text' ? items[i + 1].value : '') * mood().delay)
+        if (i < items.length - 1 && !opts.simulate) {
+          pingTyping(chatId)
+          await pause(Math.min(2000, Math.round(bubbleDelay(items[i + 1].kind === 'text' ? items[i + 1].value : '') * mood().delay)))
+        }
       }
     })
     if (disposed) return
@@ -1075,7 +1078,6 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       slowNoticeSent.delete(key)
       clearSlowNotices(key)
       running.delete(chatId)
-      stopTyping(key)
       const d = event.data || {}
       const completed = d.reason && d.reason.kind === 'completed'
       const text = st.lastTurn === d.turn ? st.text : ''
@@ -1093,22 +1095,31 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       st.system = null
       st.wantVoice = false
       if (sys) {
+        stopTyping(key)
         if (completed) sys.resolve(text)
         else sys.reject(new Error('这一轮没正常结束：' + (d.reason?.kind || '?')))
         return
       }
       if (!completed) {
+        stopTyping(key)
         const detail = String(d.reason?.error?.message || d.reason?.failure?.message || '').replace(/\s+/g, ' ').slice(0, 180)
         log.warn(`${chatId} 这一轮没正常结束（${d.reason?.kind || '?'}${detail ? '：' + redact(detail) : ''}），不发`)
         release(chatId)
         return
       }
-      if (chatId.startsWith('system:')) return // 已超时的后台轮次不能误发到 QQ
-      if (!text) return release(chatId)
-      // 发完再放开：发送期间来的消息也攒到下一段
+      if (chatId.startsWith('system:')) {
+        stopTyping(key)
+        return // 已超时的后台轮次不能误发到 QQ
+      }
+      if (!text) {
+        stopTyping(key)
+        return release(chatId)
+      }
+      // 发完再放开：发送期间来的消息也攒到下一段；等所有气泡发完再停 typing
       const p = deliver(chatId, text, { wantVoice, autoReply, userText: st.lastText || '', own: true, selfInitiated: st.lastSelf === true })
         .catch((error) => log.warn('发送出错：', error.message))
         .finally(() => {
+          stopTyping(key)
           if (deliveries.get(chatId) === p) deliveries.delete(chatId)
           release(chatId)
         })
@@ -1582,6 +1593,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     if (msg.kind === 'private') lastPrivateAt.set(msg.userId, now)
     onActivity?.({ kind: 'in', chatId: msg.chatId, userId: msg.userId, nickname: msg.nickname, text, direct: msg.kind === 'private' || msg.mentioned || mode === 'must', owner: isOwner(cfg, msg.userId) })
 
+    if (!holdMs) pingTyping(msg.chatId)
     enqueue({ chatId: msg.chatId, kind: msg.kind, userId: msg.userId, groupId: msg.groupId, nickname: msg.nickname }, content, msg.userId, wantsVoice(msg.text), mode, { stickerPick, holdMs })
   }
 
@@ -1869,19 +1881,31 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     return content.filter((c) => c.type === 'text')
   }
 
-  // 私聊里等她回复时，在 QQ 上显示「对方正在输入…」（模型慢的时候让人知道她在想）
+  // 等她回复时显示「对方正在输入…」（Discord typing 约 10s 过期，每 7s 刷新一次，直到所有气泡发完）
   const typing = new Map() // sessionKey → timer
+  function pingTyping(chatId) {
+    if (disposed) return
+    const cfg = getConfig()
+    if (!cfg.enabled || cfg.dryRun) return
+    const s = String(chatId || '')
+    if (s.startsWith('private:')) {
+      onebot.call('set_input_status', { user_id: oid(s.slice(8)), event_type: 1 }, { timeoutMs: 5000 }).catch(() => {})
+    } else if (s.startsWith('group:')) {
+      onebot.call('set_input_status', { group_id: oid(s.slice(6)), event_type: 1 }, { timeoutMs: 5000 }).catch(() => {})
+    }
+  }
   function startTyping(key, chat) {
     if (disposed) return
     const cfg = getConfig()
-    if (chat.kind !== 'private' || !cfg.enabled || cfg.dryRun || typing.has(key)) return
-    const ping = () => { if (!disposed) onebot.call('set_input_status', { user_id: oid(chat.userId), event_type: 1 }, { timeoutMs: 5000 }).catch(() => {}) }
+    if ((chat.kind !== 'private' && chat.kind !== 'group') || !cfg.enabled || cfg.dryRun || typing.has(key)) return
+    const cid = chat.chatId || (chat.kind === 'group' ? `group:${chat.groupId}` : `private:${chat.userId}`)
+    const ping = () => pingTyping(cid)
     ping()
     const started = Date.now()
     const t = setInterval(() => {
       if (Date.now() - started > 6 * 60_000) return stopTyping(key)
       ping()
-    }, 15_000)
+    }, 7_000)
     t.unref?.()
     typing.set(key, t)
   }

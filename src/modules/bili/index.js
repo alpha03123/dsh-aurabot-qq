@@ -2,6 +2,7 @@
 
 import { readFileSync } from 'node:fs'
 import { createBili } from '../../bili/duty.js'
+import { hasAnyVideos } from '../../bili/videos.js'
 import { defineTool, str } from '../../tools/tools.js'
 import { permOf, profileToolVisible, profilePermits } from '../../chat/access.js'
 import { avatarSource } from '../../features/avatar-source.js'
@@ -39,34 +40,40 @@ export default {
       } catch (error) { return content }
     })
 
-    // 看视频谁发的链接都能看，评论要主人开口
+    // 看视频谁发的链接都能看，评论要主人开口；
+    // 即使面板关了 bili.enabled，只要本地有自主生活刷过存下来的视频，也保留只读的 bili_recent / bili_video，避免「攒着想聊却翻不到细节」的记忆断层。
     api.tool(({ chat, sessionId }) => {
-      if (!api.config().bili.enabled || chat.kind === 'system') return []
-      return [
-        defineTool({
-          name: 'bili_watch',
-          description: '打开一个 B 站视频看看：读标题、简介、字幕和热评，看完再跟大家聊。别人发来 B 站链接、BV 号或分享卡片时用。link 填链接或 BV 号。',
-          properties: { link: str('B 站链接、b23.tv 短链或 BV 号') },
-          required: ['link'],
-          execute: async ({ link }) => bili.watch(String(link || '')),
-        }),
+      if (chat.kind === 'system') return []
+      const enabled = Boolean(api.config().bili.enabled)
+      const readOnlyArchive = [
         defineTool({
           name: 'bili_recent',
-          description: '查你最近在 B 站看过、分享给主人的视频（标题 + 链接）。主人问「刚才那个视频链接发我」「你分享的是哪个视频」时用；query 填标题里的词，不填就是最近几个。',
+          description: '查你最近在 B 站看过、评过、分享给主人的视频（标题 + 链接 + 你当时的互动）。主人问「刚才那个视频链接发我」「你最近刷了啥」时用；query 填标题里的词，不填就是最近几个。',
           properties: { query: str('可选：标题里的词') },
           required: [],
           execute: async ({ query }) => bili.recent(String(query || '')),
         }),
         defineTool({
           name: 'bili_video',
-          description: '翻一个你看过的 B 站视频的完整内容：字幕 / 语音转写全文（带时间）、画面、弹幕、评论区、链接。聊到某个视频的细节（讲了啥、哪段、评论怎么说）时用。query 填 BV 号或标题里的词；字幕长会分页，page 填第几页。',
+          description: '翻一个你看过的 B 站视频的完整内容：字幕 / 语音转写全文（带时间）、画面、弹幕、评论区、你发过的评论与互动、链接。聊到某个视频的细节（讲了啥、哪段、评论怎么说、你当时评了啥）时用，只挑对方问到的部分自然接话，别照念全文。query 填 BV 号或标题里的词；字幕长会分页，page 填第几页。',
           properties: { query: str('BV 号或标题里的词'), page: str('可选：字幕第几页，默认 1') },
           required: ['query'],
           execute: async ({ query, page }) => bili.video(String(query || ''), Number(page) || 1),
         }),
+      ]
+      if (!enabled) return hasAnyVideos() ? readOnlyArchive : []
+      return [
+        defineTool({
+          name: 'bili_watch',
+          description: '打开一个 B 站视频看看：读标题、简介、字幕、画面和热评，看完再跟大家聊。别人发来 B 站链接、BV 号或分享卡片时用。看完按自己性格挑最戳你的 1~2 个点随口聊，别报菜名或写总结腔。link 填链接或 BV 号。',
+          properties: { link: str('B 站链接、b23.tv 短链或 BV 号') },
+          required: ['link'],
+          execute: async ({ link }) => bili.watch(String(link || '')),
+        }),
+        ...readOnlyArchive,
         defineTool({
           name: 'bili_comment',
-          description: '在一个 B 站视频下发评论（只有主人让你发的时候才用）。link 填链接或 BV 号，text 是评论内容。要 @ 人就写 @完整昵称 并在后面空一格，@主人 会换成主人的 B 站号。',
+          description: '在一个 B 站视频下发评论（只有主人让你发的时候才用）。评论保持你自己的性格和日常网感，短句自然吐槽或接梗，别写复述剧情的总结腔。link 填链接或 BV 号，text 是评论内容。要 @ 人就写 @完整昵称 并在后面空一格，@主人 会换成主人的 B 站号。',
           properties: { link: str('B 站链接或 BV 号'), text: str('评论内容') },
           required: ['link', 'text'],
           execute: async ({ link, text }) => {

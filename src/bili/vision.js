@@ -32,6 +32,31 @@ export function frameTimes(durationSec, count) {
   return [...new Set(out)]
 }
 
+/** 远程抽帧时间点（秒）：优先纳入弹幕高峰（按热度），剩余槽位再用均匀分布补齐，避免长视频错过高能画面。 */
+export function remoteFrameTimes(durationSec, count, peaks = []) {
+  const base = frameTimes(durationSec, count)
+  const d = Number(durationSec) || 0
+  if (!base.length || !Array.isArray(peaks) || !peaks.length) return base
+  const n = Math.max(1, Math.min(12, Math.round(Number(count) || 6)))
+  const hi = Math.max(0, Math.floor(d) - 1)
+  const minGap = Math.max(5, Math.min(30, d / (n * 2.5)))
+  const picked = []
+  const hot = peaks
+    .filter((p) => p && Number.isFinite(Number(p.at)))
+    .slice()
+    .sort((a, b) => (Number(b.n) || 0) - (Number(a.n) || 0))
+  for (const p of hot) {
+    if (picked.length >= n) break
+    const t = Math.min(Math.max(0, Math.round(Number(p.at) + 5)), hi)
+    if (!picked.some((x) => Math.abs(x - t) < minGap)) picked.push(t)
+  }
+  for (const t of base) {
+    if (picked.length >= n) break
+    if (!picked.some((x) => Math.abs(x - t) < minGap)) picked.push(t)
+  }
+  return picked.sort((a, b) => a - b)
+}
+
 /** 挑一路流来抽帧：优先 H.264（兼容性最好）、短边不低于 480、带宽最低的那路。 */
 export function pickVideoStream(list = []) {
   const ok = (list || []).filter((v) => v && v.baseUrl)
@@ -260,7 +285,7 @@ export async function lookWithVision({ dsh, api, info, getConfig, log, deps = {}
     const span = Number.isFinite(covered) ? Math.min(Number(info.duration) || 0, covered / 1000) : Number(info.duration)
     // 整段抽帧最多 60 秒，避免坏流按帧数倍增等待时间。
     const deadline = Date.now() + 60_000
-    for (const t of frameTimes(span > 0 ? span : info.duration, c.visionFrames)) {
+    for (const t of remoteFrameTimes(span > 0 ? span : info.duration, c.visionFrames, peaks)) {
       const remaining = deadline - Date.now()
       if (remaining <= 0) break
       let url = stream && stream.baseUrl

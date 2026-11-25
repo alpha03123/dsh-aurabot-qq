@@ -302,3 +302,124 @@ test('评论里的 @昵称 按昵称查到 mid 一起发，查不到的留作文
   await api.postComment(1, '没有艾特')
   assert.equal(posts[1].has('at_name_to_mid'), false)
 })
+
+test('两段式自主挑片：支持挑片与 skim 深度（跳过抽帧），也支持全都不看直接划走', async () => {
+  const { dataDir } = await import('../src/core/store.js')
+  const { rmSync } = await import('node:fs')
+  rmSync(dataDir('bili.json'), { force: true })
+  let visionCalls = 0
+  let pickJsonStr = JSON.stringify({ picks: [{ i: 2, depth: 'skim' }], skipReason: '' })
+  const fakeApi = {
+    nav: async () => ({ isLogin: true, uname: '星璃' }),
+    search: async () => [
+      { bvid: 'BV1111111111', aid: 11, title: '无聊视频', author: 'A', play: 20000, pubdate: Date.now(), duration: 600, desc: '普通' },
+      { bvid: 'BV2222222222', aid: 22, title: '白噪音雨声', author: 'B', play: 30000, pubdate: Date.now(), duration: 3600, desc: '助眠' },
+    ],
+    popular: async () => [],
+    view: async ({ bvid }) => ({ bvid, aid: bvid === 'BV2222222222' ? 22 : 11, cid: 9, title: bvid === 'BV2222222222' ? '白噪音雨声' : '无聊视频', author: 'B', play: 30000, duration: 3600, desc: '助眠' }),
+    subtitle: async () => '雨声滴答',
+    comments: async () => [{ rpid: 501, name: '热评网友', text: '太好睡了', like: 300 }],
+    postComment: async () => ({ rpid: 1, missed: [] }),
+    likeVideo: async () => {},
+  }
+  const hub = {
+    runSystemTurn: async (name, title, prompt) => {
+      if (prompt.includes('先扫一眼标题和简介')) return pickJsonStr
+      if (prompt.includes('挑 3 个')) return '["雨声"]'
+      if (prompt.includes('看完说说你的想法')) return JSON.stringify([{ i: 1, feeling: '雨声挺安静', like: false, comment: '', share: '', remember: '' }])
+      return ''
+    },
+    lastBotToOwner: { at: 0, text: '' },
+  }
+  const cfg = normalize({ enabled: true, dryRun: false, ownerId: '10000001', bili: { enabled: true, cookie: 'SESSDATA=x; bili_jct=y', perRun: 3, vision: true } })
+  const b = duty.createBili({ getConfig: () => cfg, hub, memory: { list: () => [], recentEvents: () => [], addEvent: () => {} }, log: { info() {}, warn() {}, debug() {} }, api: fakeApi, vision: async () => { visionCalls++; return { text: '画面', frames: [] } } })
+  const r1 = await b.run({ force: true })
+  assert.equal(r1.ok, true)
+  assert.equal(r1.watched, 1, '只看她挑中的第 2 个')
+  assert.equal(visionCalls, 0, 'skim 深度跳过抽帧看画面')
+  assert.equal(r1.items[0].bvid, 'BV2222222222')
+
+  // 全都不看直接划走
+  rmSync(dataDir('bili.json'), { force: true })
+  pickJsonStr = JSON.stringify({ picks: [], skipReason: '今天刷到的都没意思' })
+  const r2 = await b.run({ force: true })
+  assert.equal(r2.ok, true)
+  assert.equal(r2.skipped, true)
+  assert.equal(r2.watched, 0)
+  assert.match(r2.message, /没意思/)
+})
+
+test('记忆闭环 + 热评楼中楼接梗 + 逐条点赞 + seed 碎碎念话头', async () => {
+  const { dataDir } = await import('../src/core/store.js')
+  const { rmSync } = await import('node:fs')
+  rmSync(dataDir('bili.json'), { force: true })
+  const posted = []
+  const likedAids = []
+  const seenEvents = []
+  const fakeApi = {
+    nav: async () => ({ isLogin: true, uname: '星璃' }),
+    search: async () => [{ bvid: 'BV3333333333', aid: 33, title: '挖着吃的奶茶', author: 'UP', play: 50000, pubdate: Date.now(), desc: '测评' }],
+    popular: async () => [],
+    view: async () => ({ bvid: 'BV3333333333', aid: 33, cid: 9, title: '挖着吃的奶茶', author: 'UP', play: 50000, desc: '测评' }),
+    subtitle: async () => '茶百道杨枝甘露 23块',
+    comments: async () => [{ rpid: 888, name: '化奈落77', text: '喜茶那杯还得自己冻', like: 200 }],
+    postComment: async (aid, message, opts) => { posted.push({ aid, message, opts }); return { rpid: 999, missed: [] } },
+    likeVideo: async (aid) => { likedAids.push(aid) },
+  }
+  const hub = {
+    runSystemTurn: async (name, title, prompt) => {
+      if (prompt.includes('挑 3 个')) return '["奶茶"]'
+      if (prompt.includes('看完说说你的想法')) {
+        return JSON.stringify([{
+          i: 1,
+          feeling: '看着好馋',
+          like: true,
+          comment: '确实|||店家把最后一步外包啦(=｀ω´=)',
+          replyTo: '化奈落77',
+          share: '想顺嘴吐槽下 32 块的老药桔奶茶',
+          when: 'seed',
+          remember: '',
+        }])
+      }
+      return ''
+    },
+    lastBotToOwner: { at: 0, text: '' },
+  }
+  const cfg = normalize({ enabled: true, dryRun: false, ownerId: '10000001', bili: { enabled: true, cookie: 'SESSDATA=x; bili_jct=y', perRun: 1, like: true, comment: true, maxCommentsPerDay: 3 } })
+  const b = duty.createBili({ getConfig: () => cfg, hub, memory: { list: () => [], recentEvents: () => [], addEvent: (e) => { if (e.kind === 'seen') seenEvents.push(e) } }, log: { info() {}, warn() {}, debug() {} }, api: fakeApi })
+  const r = await b.run({ force: true })
+  assert.equal(r.ok, true)
+  assert.equal(r.liked, 1)
+  assert.equal(r.commented, 1)
+  assert.deepEqual(likedAids, [33])
+  assert.equal(posted.length, 1)
+  assert.deepEqual(posted[0].opts, { root: 888, parent: 888 }, '按 replyTo 精准楼中楼回复热评')
+  assert.ok(!posted[0].message.includes('|||'), '自动清洗 ||| 分隔符')
+  assert.match(posted[0].message, /回复 @化奈落77 :确实，店家把最后一步外包啦/)
+  // 视频档案里看得到点赞和评论
+  const detail = b.video('BV3333333333')
+  assert.equal(detail.ok, true)
+  assert.match(detail.message, /点过赞/)
+  assert.match(detail.message, /你在这个视频下评过/)
+  assert.match(detail.message, /回复 @化奈落77/)
+  // bili_recent 看得到互动状态
+  const rec = b.recent('奶茶')
+  assert.equal(rec.ok, true)
+  assert.equal(rec.list[0].commented, true)
+  assert.equal(rec.list[0].liked, true)
+  assert.equal(rec.list[0].saved, true)
+  // seen 记忆把感受和评论合在一条里
+  assert.match(seenEvents[0].text, /看着好馋.*回 化奈落77/)
+  // seed 模式不把链接硬塞进私聊背景
+  const savedTxt = b.savedForChat()
+  assert.match(savedTxt, /碎碎念话头/)
+  assert.ok(!savedTxt.includes('https://www.bilibili.com/video/BV3333333333'))
+})
+
+test('长视频远程抽帧优先命中弹幕高峰', async () => {
+  const { remoteFrameTimes } = await import('../src/bili/vision.js')
+  const times = remoteFrameTimes(1222, 6, [{ at: 190, n: 23 }, { at: 770, n: 37 }])
+  assert.equal(times.length, 6)
+  assert.ok(times.includes(195), '包含 3:15 弹幕高峰')
+  assert.ok(times.includes(775), '包含 12:55 弹幕高峰')
+})
