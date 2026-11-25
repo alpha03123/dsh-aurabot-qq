@@ -72,11 +72,11 @@ function setup(t) {
   return { cfg, hub, make, state, now }
 }
 
-test('人物墙包含画像、事实及个人梗概，主人优先，详情按 QQ 精确关联', (t) => {
+test('人物墙包含画像与事实，主人优先，详情按 QQ 精确关联', (t) => {
   const s = setup(t)
   const mem = s.make()
   const people = mem.personaOverview()
-  assert.deepEqual(people.map((p) => p.qq), [OWNER, ALICE, BOB, CHARLIE])
+  assert.deepEqual(people.map((p) => p.qq), [OWNER, ALICE, BOB])
   assert.equal(people[0].isOwner, true)
   const alice = people.find((p) => p.qq === ALICE)
   assert.equal(alice.notes, 3, '包括过时的事实')
@@ -84,12 +84,10 @@ test('人物墙包含画像、事实及个人梗概，主人优先，详情按 Q
   assert.equal(alice.style, '话很短')
   assert.equal(people.find((p) => p.qq === BOB).name, '阿杰', '没有画像时用事实里的名字')
   assert.equal(people.find((p) => p.qq === BOB).lastActive, s.now - 400, '关于别人的事实也能记录发言人的活跃时间')
-  assert.equal(people.find((p) => p.qq === CHARLIE).notes, 0, '只有梗概的人也会出现')
-  assert.deepEqual(mem.personaPerson(CHARLIE).gists.map((g) => g.id), ['charlie-gist'])
   const detail = mem.personaPerson(ALICE)
   assert.equal(detail.person.qq, ALICE)
   assert.deepEqual(new Set(detail.notes.map((m) => m.id)), new Set(['alice-fact', 'alice-hearsay', 'alice-old']))
-  assert.deepEqual(detail.gists.map((g) => g.id), ['alice-gist'], '群聊整体的梗概不会冒充个人梗概')
+  assert.deepEqual(detail.gists, [], '梗概层已精简移除')
   assert.equal(mem.personaPerson(''), null)
   assert.equal(mem.personaPerson('99999999'), null)
 })
@@ -147,23 +145,6 @@ test('群印象按更新时间排列，支持部分修改、清空和重启后�
   assert.equal(s.state().rev, 10)
 })
 
-test('梗概按发生时间排序，可按聊天、层级和人物筛选；删除会刷新检索索引', (t) => {
-  const s = setup(t)
-  const mem = s.make()
-  assert.deepEqual(mem.gists().map((g) => g.id), ['group-gist', 'owner-impression', 'alice-gist', 'charlie-gist'])
-  assert.deepEqual(mem.gists({ chatId: 'group:777', level: '1' }).map((g) => g.id), ['group-gist', 'alice-gist'])
-  assert.deepEqual(mem.gists({ about: OWNER, level: 2 }).map((g) => g.id), ['owner-impression'])
-  const recall = () => mem.recall('寒潮围巾', { where: 'group:777', groupChatId: 'group:777', shown: false })
-  assert.ok(recall().some((hit) => hit.it.id === 'group-gist'))
-  assert.equal(mem.deleteGist('group-gist').ok, true)
-  assert.equal(s.state().rev, 8)
-  assert.ok(!recall().some((hit) => hit.it.id === 'group-gist'), '已删除的梗概不能继续被想起')
-  assert.ok(!s.make().gists().some((g) => g.id === 'group-gist'))
-  assert.equal(mem.deleteGist('group-gist').ok, false)
-  assert.equal(mem.deleteGist('other-kind').ok, false)
-  assert.equal(s.state().rev, 8)
-})
-
 test('人物和记忆面板路由接到同一份 store', async (t) => {
   const s = setup(t)
   const routes = new Map()
@@ -184,8 +165,7 @@ test('人物和记忆面板路由接到同一份 store', async (t) => {
   assert.equal((await call('/profiles')).list.find((p) => p.qq === ALICE).alias, '小明')
   assert.equal((await call('/memory/chats')).list.length, 2)
   assert.equal((await call('/memory/chats/save', { body: { chatId: 'group:777', vibe: '欢快' } })).ok, true)
-  assert.equal((await call('/memory/gists', { query: { chatId: 'group:777', level: '1' } })).list.length, 2)
-  assert.equal((await call('/memory/gists/delete', { body: { id: 'alice-gist' } })).ok, true)
+  assert.deepEqual((await call('/memory/gists')).list, [])
   assert.deepEqual((await call('/persona/person', { query: { qq: ALICE } })).gists, [])
   assert.equal((await call('/memory/update', { body: { id: 'alice-fact', text: '阿明现在喜欢雕塑' } })).ok, true)
   assert.equal((await call('/persona/person', { query: { qq: ALICE } })).notes.find((m) => m.id === 'alice-fact').text, '阿明现在喜欢雕塑')

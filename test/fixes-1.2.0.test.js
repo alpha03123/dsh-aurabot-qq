@@ -261,9 +261,10 @@ test('心情基线可配，衰减往基线靠（#139）', async () => {
 test('聊天流水保留和新开关的配置规范化（#140 #141 #142 #143）', async () => {
   const { normalize } = await import('../src/core/config.js')
   const d = normalize({})
-  assert.equal(d.memory.keepChatlogDays, 7)
-  assert.equal(normalize({ memory: { keepChatlogDays: 0 } }).memory.keepChatlogDays, 7, '老配置的默认值')
-  assert.equal(normalize({ memory: { keepChatlogDays: 0, keepChatlogSet: true } }).memory.keepChatlogDays, 0, '面板里选的 0 要算数')
+  assert.equal(d.memory.keepChatlogDays, -1, '新版默认永久保留 L0 原话正本')
+  assert.equal(normalize({ memory: { keepChatlogDays: 7, gistEnabled: true } }).memory.keepChatlogDays, -1, '老配置默认 7 天自动迁移至永久保留')
+  assert.equal(normalize({ memory: { keepChatlogDays: 0, keepChatlogV2: true } }).memory.keepChatlogDays, 0, '迁移后手动选的 0 要算数')
+  assert.equal(normalize({ memory: { keepChatlogDays: 14, keepChatlogV2: true } }).memory.keepChatlogDays, 14, '迁移后手动选的天数要保留')
   assert.equal(d.memory.mergeGroups, false)
   assert.equal(d.chat.seedHistory, false)
   assert.equal(d.group.ignoreAtOthers, false)

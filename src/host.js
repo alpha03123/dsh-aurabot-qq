@@ -507,10 +507,9 @@ export function apply(ctx) {
     handler: (req, res) => answer(res, () => {
       let path = ''
       try { path = new URL(req.url, 'http://x').pathname } catch (error) {}
-      // 【复审 2·P1-2】模块 prefix 路由也过 CSRF：实测本机 socket + 恶意 Origin 能跨站打
-      // POST /aurabot/api/heybox/run、/ext/phone/run 等无 token 的模块路由（真实触发逛/ADB）。
-      // 模块路由有自己的 Host 闸与鉴权，但同样缺跨站防护；桌宠 native 客户端不带 Origin，
-      // 不受影响；桌面面板的 fetch 是同源，也不受影响。
+      // 模块 prefix 路由与管理面共享本机闸、DNS rebinding 闸与 CSRF 闸（/ext/ /asset/ /open/ 豁免）
+      if (panelBlocked(req, res)) return undefined
+      if (!ADMIN_EXEMPT_PREFIXES.some((p) => path.startsWith(p)) && adminHostBlocked(req, res)) return undefined
       if (csrfBlocked(req, res)) return undefined
       return mods.handle(path, req, res)
     }),

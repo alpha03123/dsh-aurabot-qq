@@ -2653,7 +2653,7 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('div', { style: { marginTop: 10 } },
             h(Row, { label: '多久回到平常', hint: '半衰期' }, f.range('mood.halfLifeHours', 0.5, 24, 0.5, (v) => v + ' 小时')),
             h(Row, { label: '平常是多少', hint: '基线：没人说话时心情会慢慢往这个值靠（默认 60）' }, f.range('mood.base', 10, 90, 1, (v) => v + ' / 100')),
-            h(Row, { label: '聊天流水留多久', hint: '默认留 7 天，刚说过的话靠它想起来；0 = 整理完就删；-1 = 永久保留；其他数字 = 留这么多天。留得越久，本机存的聊天原文越多' }, f.num('memory.keepChatlogDays', { min: -1, max: 3650 })),
+            h(Row, { label: '聊天流水留多久', hint: '默认 -1 = 永久保留原话正本（供原话回溯与离线核对）；0 = 整理完就删；其他数字 = 留这么多天' }, f.num('memory.keepChatlogDays', { min: -1, max: 3650 })),
             h(Row, { label: '整理时合并重复记忆', hint: '同一个人名下说的是一件事的条目并成一条。每个人多一次模型调用，默认关' }, f.sw('memory.mergeGroups')),
             h(Row, { label: '用模型判断心情', hint: '每轮聊完用模型判一次（能分清开玩笑和真骂、ta主动找你时的心意），更准；每轮多一次很短的模型调用。关着就按关键词' }, f.sw('mood.judge'))),
           (st.mood.history || []).length ? h('div', { className: 'ab-list', style: { marginTop: 8 } }, st.mood.history.slice(0, 6).map((x, i) => h('div', { key: i, className: 'ab-li' },
@@ -2701,10 +2701,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h(Row, { label: '每轮最多想起几条' }, f.range('memory.recallCount', 0, 12, 1, (v) => v + ' 条')),
           h(Row, { label: '什么时候自动翻旧账' }, f.select('memory.recallMode', [{ value: 'always', label: '每轮都查' }, { value: 'trigger', label: '提到过去时才查' }])),
           h(Row, { label: '翻旧账的触发词', hint: '一行一个，也可用逗号分隔；主动查记忆的工具不受影响' }, f.list('memory.recallTriggers')),
-          h(Row, { label: '记得刚才聊到哪', hint: '同一个人在不同平台接着聊时，也能记得刚才聊到哪。每段聊天多一次很短的模型调用。' }, f.sw('memory.shortTerm')),
-          h(Row, { label: '记住最近多久的聊天' }, f.num('memory.shortTermHours', { min: 0.1, step: 0.1 }), h('span', { className: 'ab-muted' }, '小时')),
-          h(Row, { label: '聊天停多久后整理' }, f.num('memory.shortTermIdleMinutes', { min: 0 }), h('span', { className: 'ab-muted' }, '分钟')),
-          h(Row, { label: '刚才的印象最多多少字' }, f.num('memory.shortTermChars', { min: 1 }), h('span', { className: 'ab-muted' }, '字')),
           h('div', { className: 'ab-section-title' }, '人物与群印象'),
           h(Row, { label: '讨厌的人说话时不接的几率', hint: '消息仍会看到和记住；0% 表示照常回复，主人和一起说话的其他人不受影响' }, f.range('memory.dislikeSilence', 0, 1, 0.05, (v) => Math.round(v * 100) + '%')),
           h(Row, { label: '每项人物印象最多多少字' }, f.num('memory.profileFieldChars', { min: 0 })),
@@ -2712,14 +2708,10 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h(Row, { label: '人物画像总字数上限' }, f.num('memory.profileChars', { min: 0 })),
           h(Row, { label: '记住群印象', hint: '只在对应的群里带上' }, f.sw('memory.chatImpression')),
           h(Row, { label: '群印象字数上限' }, f.num('memory.chatImpressionChars', { min: 0 })),
-          h('div', { className: 'ab-section-title' }, '压缩与遗忘'),
-          h(Row, { label: '压缩旧聊天和记忆', hint: '原话到期前先压成梗概；失败或预算不足时保留原文' }, f.sw('memory.gistEnabled')),
-          h(Row, { label: '梗概过多少天变成印象' }, f.num('memory.gistDays', { min: 0 })),
-          h(Row, { label: '印象保留多少天' }, f.num('memory.impressionDays', { min: 0 })),
-          h(Row, { label: '每天最多压缩多少批', hint: '压缩同时占用下面的每日整理批次' }, f.num('memory.gistDailyBatches', { min: 0 })),
-          h(Row, { label: '每天整理和压缩共用批次' }, f.num('memory.extractDailyBatches', { min: 0 })),
-          h(Row, { label: '把细节浓缩成长期印象', hint: '具体的事慢慢淡忘，留下更概括的关系和感受（比如「主人很疼她，总惦记她爱吃的东西」）。这些印象不会被自动整理改掉，也不会过期；手动加的和你自己总结的不会被压缩。每次整理最多多两次模型调用，默认开。' }, f.sw('memory.compress')),
-          h(Row, { label: '多久以前的事开始浓缩', hint: '这些天以前、而且最近没怎么被想起的记忆才会被概括；常被聊到的不压，最近的事先留着具体细节。默认 14 天' }, f.num('memory.compressAfterDays', { min: 1, max: 365 }), h('span', { className: 'ab-muted' }, '天')),
+          h('div', { className: 'ab-section-title' }, '原话核对与认识页'),
+          h(Row, { label: '每天提炼批次上限' }, f.num('memory.extractDailyBatches', { min: 0 })),
+          h(Row, { label: '离线原话核对纠错（Dreaming）', hint: '谷时与睡后自动对照当时聊天原话核验提炼出的记忆，修正偏差或作废玩笑/误听。默认开。' }, f.sw('memory.dreamAudit')),
+          h(Row, { label: '主人私聊第一人称认识页（Wiki）', hint: '维护「我」与核心认识页 Markdown，常驻只带目录，不进群聊。默认开。' }, f.sw('memory.wiki')),
           h(Row, { label: '私聊时想起别处的话', hint: '和你私聊时，带上她最近 24 小时在别的聊天里说过的话，每轮多占约 300 字。只进你的私聊，别处一律不带。默认关。' }, f.sw('memory.crossContext')),
           h('div', { className: 'ab-section-title' }, '向量检索（实验性）'),
           h('div', { className: 'ab-note' }, '默认关闭。请自己准备兼容 OpenAI 的 embedding 服务，例如 Ollama 的 bge-m3。开启后会把记忆文字和查询文字发给填写的地址；使用云端服务时请自行确认。'),
@@ -2752,7 +2744,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
     }
     const gistSource = (id) => String(id || '').startsWith('group:') ? '群 ' + String(id).slice(6)
       : String(id || '').startsWith('private:') ? '私聊 ' + String(id).slice(8) : (id || '来源未知')
-    const gistLevel = (g) => g.kind === 'seen' ? '看过的内容' : g.level === 1 ? '梗概' : g.level === 2 ? '印象' : '其他'
     const memoryEnded = (m) => Boolean(m.invalidAt || (m.validUntil && m.validUntil <= Date.now()))
 
     const FACES = ['#4d7fc4', '#3e9c8f', '#8a6fc0', '#c07a4d', '#c05f7e', '#5f8f4e']
@@ -2870,7 +2861,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('div', { className: 'ab-flex', style: { marginTop: 10 } }, h(Btn, { kind: 'primary', disabled: !changed, onClick: save }, '保存'))) :
         h('div', { className: 'ab-pm-traits' }, traits.map(([key, label]) => h('div', { key, className: 'ab-pm-trait' },
           h('div', { className: 'k' }, label), h('div', { className: cx('v', !p[key] && 'empty') }, p[key] || '还不了解')))),
-        data.shortTerm ? h(Card, { title: '刚才聊到哪' }, h('div', null, data.shortTerm.text)) : null,
         h(Card, { title: '私聊里的相处经验', desc: '私聊时优先用这里，上面的「说话方式」和「怎么相处」在群里用。' },
           h(InsightCard, { p: { key: 'qq:' + qq, list: data.insights || [] }, style: data.styles || [], toast, onSaved: () => load(true) })),
         (data.relations || []).length ? h(Card, { title: '人物关系' }, data.relations.map((r) => h('div', { key: r.id, className: 'ab-pm-fact' },
@@ -2884,7 +2874,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           } }, '删'))))) : null,
         h(Card, { title: `记得的事 ${live.length ? live.length : ''}`.trim() },
           live.length ? live.map((m) => h(PersonaFact, { key: m.id, m, toast, onChanged: () => load(true) })) : h(Empty, { text: '还没记住关于这个人的事。' })),
-        data.gists.length ? h(Card, { title: '留下的感觉' }, h(GistLine, { list: data.gists, toast, onChanged: () => load(true) })) : null,
         old.length ? h('details', { className: 'ab-card' }, h('summary', { className: 'ab-small' }, `已过时的 ${old.length} 条`),
           h('div', { style: { marginTop: 8 } }, old.map((m) => h(PersonaFact, { key: m.id, m, toast, onChanged: () => load(true) })))) : null)
     }
@@ -2928,12 +2917,12 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
           h('button', { type: 'button', className: 'ab-pm-link danger', onClick: remove }, '删')) : null)
     }
 
-    /** 聊天梗概和看过内容共用时间线。 */
+    /** 看过内容的时间线。 */
     function GistLine({ list, toast, onChanged, showFrom }) {
       const remove = async (g) => {
-        if (!confirm('删除这条' + gistLevel(g) + '？')) return
-        const r = await post(g.kind === 'seen' ? '/memory/delete' : '/memory/gists/delete', { id: g.id })
-        toast(r.message, r.ok ? 'ok' : 'err')
+        if (!confirm('删除这条看过的内容？')) return
+        const r = await post('/memory/delete', { id: g.id })
+        toast(r.ok ? '已删除' : (r.message || '删除失败'), r.ok ? 'ok' : 'err')
         if (r.ok) await onChanged()
       }
       let day = ''
@@ -2941,9 +2930,9 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
         const when = memoryDate(g.saidAt || g.at).split(' ')[0]
         const head = when !== day ? h('div', { key: 'd' + g.id, className: 'ab-pm-tl-day' }, when) : null
         day = when
-        return [head, h('div', { key: g.id, className: cx('ab-pm-tl-item', Number(g.level) >= 2 && 'feel') },
+        return [head, h('div', { key: g.id, className: 'ab-pm-tl-item' },
           h('div', { className: 'main' }, h('div', { className: 'text' }, g.displayText || g.text),
-            h('div', { className: 'from' }, [g.kind === 'seen' ? '看过的内容' : '', ...(g.platforms || []), showFrom && g.chatId ? gistSource(g.chatId) : ''].filter(Boolean).join(' · '))),
+            h('div', { className: 'from' }, ['看过的内容', ...(g.platforms || []), showFrom && g.chatId ? gistSource(g.chatId) : ''].filter(Boolean).join(' · '))),
           h('div', { className: 'ab-pm-acts' }, h('button', { type: 'button', className: 'ab-pm-link danger', onClick: () => remove(g) }, '删')))]
       }))
     }
@@ -2997,8 +2986,6 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       const [list, setList] = useState(null)
       const [error, setError] = useState('')
       const [chat, setChat] = useState('')
-      const [level, setLevel] = useState('')
-      const [kind, setKind] = useState('')
       const [platform, setPlatform] = useState('')
       const load = async () => {
         const r = await get('/memory/timeline')
@@ -3012,17 +2999,13 @@ body[data-ds-dark-theme] .ab-root,.ab-root.ab-dark{--ab-shadow:0 1px 2px rgba(0,
       if (list === null) return h(Empty, { icon: '⏳', text: '加载中…' })
       const chats = [...new Set(list.map((g) => g.chatId).filter(Boolean))]
       const platforms = [...new Set(list.flatMap((g) => g.platforms || []))].sort()
-      const shown = list.filter((g) => (!chat || g.chatId === chat) && (!level || String(g.level) === level) && (!kind || g.kind === kind) && (!platform || (g.platforms || []).includes(platform)))
-      return h(Card, { title: '时间轴', desc: '聊过的梗概和看过的内容，都能在这里翻一翻。', right: h('div', { className: 'ab-pm-filters' },
-        h('select', { className: 'ab-select', 'aria-label': '筛选经历类型', value: kind, onChange: (e) => { setKind(e.target.value); setLevel('') } },
-          h('option', { value: '' }, '全部经历'), h('option', { value: 'gist' }, '聊天的梗概'), h('option', { value: 'seen' }, '看过的内容')),
+      const shown = list.filter((g) => (!chat || g.chatId === chat) && (!platform || (g.platforms || []).includes(platform)))
+      return h(Card, { title: '时间轴', desc: '看过的内容记录，都能在这里翻一翻。', right: h('div', { className: 'ab-pm-filters' },
         h('select', { className: 'ab-select', 'aria-label': '筛选平台', value: platform, onChange: (e) => setPlatform(e.target.value) },
           h('option', { value: '' }, '全部平台'), platforms.map((id) => h('option', { key: id, value: id }, id))),
         h('select', { className: 'ab-select', 'aria-label': '筛选聊天', value: chat, onChange: (e) => setChat(e.target.value) },
-          h('option', { value: '' }, '全部聊天'), chats.map((id) => h('option', { key: id, value: id }, gistSource(id)))),
-        h('select', { className: 'ab-select', 'aria-label': '筛选层级', value: level, disabled: kind === 'seen', onChange: (e) => setLevel(e.target.value) },
-          h('option', { value: '' }, '全部'), h('option', { value: '1' }, '梗概'), h('option', { value: '2' }, '印象'))) },
-      shown.length ? h(GistLine, { list: shown, toast, onChanged: load, showFrom: !chat }) : h(Empty, { text: list.length ? '没有符合条件的记录。' : '还没有压缩过的记忆，流水到期后会慢慢出现。' }))
+          h('option', { value: '' }, '全部聊天'), chats.map((id) => h('option', { key: id, value: id }, gistSource(id))))) },
+      shown.length ? h(GistLine, { list: shown, toast, onChanged: load, showFrom: !chat }) : h(Empty, { text: list.length ? '没有符合条件的记录。' : '还没有看过的内容记录。' }))
     }
 
     /** 最近几轮她想起了什么、因为哪些词想起来的。 */

@@ -283,11 +283,19 @@ export function applyPendingRestore(now = Date.now()) {
   const keep = join(backupsDir(), `pre-restore-${now}`)
   const files = listFiles(stage)
   // 整套记忆一起替换：恢复旧 JSON 时不能让现有 SQLite 遮住它；恢复新库时也
-  // 不能把另一代 WAL 接到新库上，或让旧的 JSON 回退标记覆盖恢复结果。
-  if (existsSync(join(stage, 'memory.sqlite')) || existsSync(join(stage, 'memories.json'))) {
+  // 不能把另一代 WAL 接到新库上，或让旧的 JSON 回退标记/较新的认识页残留。
+  const hasMemoryBackup = existsSync(join(stage, 'memory.sqlite')) || existsSync(join(stage, 'memories.json'))
+  if (hasMemoryBackup) {
     for (const name of MEMORY_FILES) {
       const current = join(root, name)
       if (existsSync(current) && statSync(current).isFile()) move(current, join(keep, name))
+    }
+  }
+  if (hasMemoryBackup || existsSync(join(stage, 'memory-wiki'))) {
+    const wikiDir = join(root, 'memory-wiki')
+    if (existsSync(wikiDir) && statSync(wikiDir).isDirectory()) {
+      for (const cur of listFiles(wikiDir)) move(cur, join(keep, relative(root, cur)))
+      rmSync(wikiDir, { recursive: true, force: true })
     }
   }
   for (const from of files) {

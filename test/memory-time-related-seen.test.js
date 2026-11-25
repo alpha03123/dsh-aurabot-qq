@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Script } from 'node:vm'
 import { normalize } from '../src/core/config.js'
-import { createMemoryStore, buildIndex, search, memoryLine, parseValidityDate, pastWindow, compressionClusters, shouldForget, SEEN_META_LIMITS, RELATED_LIMIT } from '../src/features/memory.js'
+import { createMemoryStore, buildIndex, search, memoryLine, parseValidityDate, pastWindow, shouldForget, SEEN_META_LIMITS, RELATED_LIMIT } from '../src/features/memory.js'
 import memoryModule from '../src/modules/memory/index.js'
 
 const OWNER = '10000001'
@@ -232,7 +232,6 @@ test('seen 仍存 items/event、meta 限长、显示不冒充说话人且不污�
   assert.doesNotMatch(memoryLine(read), /\[主人\]|说：/)
   assert.doesNotMatch(mem.contextFor(ownerChat), /看过《候鸟迁徙》（拍鸟的阿明）/, '方案 A + seen 分池：看过的视频不再常驻系统快照')
   assert.match(mem.recallHint(ownerChat, '候鸟迁徙'), /看过《候鸟迁徙》（拍鸟的阿明）/, '按需回忆仍可找到看过的视频')
-  assert.equal(compressionClusters(Array.from({ length: 4 }, (_, i) => ({ ...m, id: String(i), at: Date.now() - 30 * DAY, saidAt: Date.now() - 30 * DAY }))).length, 0)
   assert.equal(await mem.buildProfile(OWNER), false)
   assert.equal(calls.length, 0)
   seed([...state().items.map((m) => ({ ...m, about: OWNER })), { ...m, id: 'legacy-seen', about: OWNER }])
@@ -263,20 +262,13 @@ test('只有 seen 的流水直接推进进度，不调用提炼、画像或经�
   assert.deepEqual(mem.list(''), [])
 })
 
-test('时间轴类型和平台筛选使用 meta.platform / via 汇总，路由沿用同一个 store', async (t) => {
-  const { mem, seed, cfg, hub, dsh } = setup(t)
-  seed([], { gists: [
-    { id: 'qq', kind: 'gist', chatId: ownerChat.chatId, level: 1, text: '聊了天气', at: Date.now(), via: ['custom-chat', 'other-chat'] },
-    { id: 'old-via', kind: 'gist', chatId: 'group:999', level: 2, text: '相处愉快', at: Date.now() - 1000, via: 'legacy-platform' },
-  ] })
+test('时间轴类型和平台筛选使用 meta.platform，路由沿用同一个 store', async (t) => {
+  const { mem, cfg, hub, dsh } = setup(t)
   const seen = mem.addEvent({ kind: 'seen', meta: { title: '候鸟', platform: 'custom-video' } })
   assert.deepEqual(mem.timeline({ kind: 'seen' }).map((m) => m.id), [seen.id])
-  assert.equal(mem.timeline({ kind: 'gist' }).length, 2)
   assert.equal(mem.timeline({ kind: 'seen', platform: 'custom-chat' }).length, 0)
-  assert.equal(mem.timeline({ platform: 'legacy-platform' })[0].id, 'old-via')
-  assert.equal(mem.timeline({ level: 1 }).length, 1)
   const platforms = new Set(mem.timeline().flatMap((m) => m.platforms))
-  assert.deepEqual(platforms, new Set(['custom-chat', 'other-chat', 'legacy-platform', 'custom-video']))
+  assert.deepEqual(platforms, new Set(['custom-video']))
   const routes = new Map()
   memoryModule.setup({ config: () => cfg, dsh, log, core: { hub, http: { query: (req) => req.query || {} } }, context() {}, on() {}, every() {}, tool() {}, route: (path, handler) => routes.set(path, handler) })
   const response = await routes.get('/memory/timeline')({ query: { kind: 'seen', platform: 'custom-video' } })
@@ -284,27 +276,12 @@ test('时间轴类型和平台筛选使用 meta.platform / via 汇总，路由�
   assert.match(response.list[0].displayText, /看过《候鸟》/)
 })
 
-test('流水压成 gist 时保留所有 via，seen 不混入聊天梗概', async (t) => {
-  const at = Date.now() - 2 * DAY
-  const { mem, calls } = setup(t, { memory: { keepChatlogDays: 0, keepChatlogSet: true }, rows: [
-    { chatId: ownerChat.chatId, who: '主人', uid: OWNER, text: '计划去旅行', via: 'custom-chat', t: at },
-    { chatId: ownerChat.chatId, who: '主人', uid: OWNER, text: '想去杭州', via: 'other-chat', t: at + 1 },
-    { chatId: ownerChat.chatId, who: '作者', text: 'SEEN_GIST_POISON', kind: 'seen', via: 'video-site', t: at + 2 },
-  ] })
-  assert.equal((await mem.consolidate({ includeToday: true })).ok, true)
-  const gist = mem.gists().find((g) => g.origin === 'chatlog')
-  assert.ok(gist)
-  assert.deepEqual(gist.via, ['custom-chat', 'other-chat'])
-  assert.deepEqual(mem.timeline({ platform: 'custom-chat' }).map((m) => m.id), [gist.id])
-  for (const call of calls) assert.doesNotMatch(call.text, /SEEN_GIST_POISON/)
-})
-
-test('面板脚本可解析，人物详情显示时间段和相关事实，时间轴提供类型/平台筛选', () => {
+test('面板脚本可解析，人物详情显示时间段和相关事实，时间轴提供平台/聊天筛选', () => {
   const source = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
   new Script(source)
   assert.match(source, /m\.validityText/)
   assert.match(source, /m\.relatedItems/)
-  assert.match(source, /筛选经历类型/)
+  assert.match(source, /筛选聊天/)
   assert.match(source, /筛选平台/)
   assert.match(source, /get\('\/memory\/timeline'\)/)
 })

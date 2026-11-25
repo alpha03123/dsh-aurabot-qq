@@ -164,12 +164,18 @@ test('F5：mergeGroups 不跨聊天合并（模型混入跨来源 id 会被拒�
   assert.equal(store.list('').filter((m) => /GROUP_MERGE_/.test(m.text)).length, 4, '群来源条目保持原样')
   assert.equal(store.list('').filter((m) => /OWNER_MERGE_/.test(m.text)).length, 4, '主人私聊来源条目保持原样')
 
-  // ② 同来源内合并（正向对照）：模型只报本组 id → 允许合并，且合并结果保留合法来源
+  // ② 同来源内合并（正向对照）：独立目录避免 ① 的 mergeRun 增量时间跳过，模型只报本组 id → 允许合并，且保留合法来源
+  const dir2 = join(ROOT, 'f5-ok')
+  mkdirSync(dir2, { recursive: true })
+  process.env.AURABOT_DATA_DIR = dir2
   mode.crossAttempt = false
-  const r2 = await store.consolidate({ includeToday: true })
+  const store2 = createMemoryStore({ dsh: mergeDsh(() => process.env.AURABOT_DATA_DIR, mode), getConfig: () => cfg, hub, log })
+  for (let i = 0; i < 4; i++) store2.add({ text: `GROUP_MERGE_${i} 小七喜欢篮球`, about: GUEST, aboutName: '群友小七', source: 'auto', chatId: G555_CHAT, importance: 0.4 })
+  for (let i = 0; i < 4; i++) store2.add({ text: `OWNER_MERGE_${i} 主人私下说小七欠他500块`, about: GUEST, aboutName: '群友小七', source: 'auto', chatId: OWNER_CHAT, importance: 0.4 })
+  const r2 = await store2.consolidate({ includeToday: true })
   assert.equal(r2.ok, true)
-  const merged = store.list('').filter((m) => m.text.includes('MERGED_CANARY'))
+  const merged = store2.list('').filter((m) => m.text.includes('MERGED_CANARY'))
   assert.ok(merged.length >= 2, '同一来源内部应能合并（两个来源各一组）')
   for (const m of merged) assert.equal([G555_CHAT, OWNER_CHAT].includes(m.chatId), true, '合并结果必须保留合法来源 chatId')
-  assert.equal(store.list('').some((m) => m.text.includes('MERGED_CANARY') && !m.chatId), false, '不允许出现没有来源的合并条目')
+  assert.equal(store2.list('').some((m) => m.text.includes('MERGED_CANARY') && !m.chatId), false, '不允许出现没有来源的合并条目')
 })

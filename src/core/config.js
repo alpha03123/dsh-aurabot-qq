@@ -238,12 +238,10 @@ export const DEFAULTS = {
   debug: { trace: true, traceDays: 7 }, // trace：小脑留底，后台每次模型调用的完整输入输出记到 traces/日期.jsonl（排查用，只存本机）；traceDays：留几天
   memory: {
     enabled: true, recallCount: 6, recallMode: 'always', recallTriggers: ['上次', '上回', '之前', '以前', '那天', '那次', '还记得', '记不记得', '说过', '提过', '答应', '约好', '那时候'],
-    dailyConsolidate: true, consolidateTimes: ['04:00', '16:00'], keepChatlogDays: 7, keepChatlogSet: false, mergeGroups: false, compress: true, compressAfterDays: 14, instantCommands: true, groupMemory: true, searchRrf: true,
+    dailyConsolidate: true, consolidateTimes: ['04:00', '16:00'], keepChatlogDays: -1, mergeGroups: false, instantCommands: true, groupMemory: true, searchRrf: true, dreamAudit: true, wiki: true,
     profileFieldChars: 40, profilePeople: 2, profileChars: 240, chatImpression: true, chatImpressionChars: 120, dislikeSilence: 0.85,
-    shortTerm: true, shortTermHours: 2, shortTermIdleMinutes: 3, shortTermChars: 150,
-    gistEnabled: true, gistDays: 180, impressionDays: 365, gistDailyBatches: 6, tierDays: { 1: 7, 2: 30, 3: 90 },
     extractIdleMinutes: 30, extractMinLines: 20, ownerExtractIdleMinutes: 10, ownerExtractMinLines: 2, extractDailyBatches: 24, capacity: { auto: 2000, event: 600, diary: 400 }, eventExpireDays: 90, vector: { enabled: false, baseUrl: '', model: '', apiKey: '' },
-  }, // extractIdleMinutes 为 0 时关闭空闲提炼；主人私聊用 ownerExtract*（聊完安静 10 分钟就提炼）；手动记忆不受容量限制；tierDays 已不再使用（档位改为调激活度衰减快慢）
+  }, // keepChatlogDays=-1 默认永久保留原话正本；extractIdleMinutes 为 0 时关闭空闲提炼；主人私聊用 ownerExtract*；手动记忆不受容量限制
   song: {
     enabled: false,
     root: '', // 翻唱环境目录，留空 = 自动（老安装 C:\Aurabot\rvc，新安装在用户目录下）
@@ -560,20 +558,19 @@ export function normalize(raw) {
   c.memory.recallCount = num(c.memory.recallCount, 6, 0, BIG)
   c.memory.recallMode = c.memory.recallMode === 'trigger' ? 'trigger' : 'always'
   c.memory.recallTriggers = [...new Set((Array.isArray(c.memory.recallTriggers) ? c.memory.recallTriggers : String(c.memory.recallTriggers || '').split(/[\n,，;；]+/)).filter((x) => typeof x === 'string').map((x) => x.trim().slice(0, 40)).filter(Boolean))].slice(0, 100)
-  for (const k of ['chatImpression', 'gistEnabled', 'shortTerm']) c.memory[k] = bool(c.memory[k], true)
+  c.memory.chatImpression = bool(c.memory.chatImpression, true)
   c.memory.dislikeSilence = num(c.memory.dislikeSilence, 0.85, 0, 1)
-  c.memory.shortTermHours = num(c.memory.shortTermHours, 2, 0.1, BIG)
-  c.memory.shortTermIdleMinutes = num(c.memory.shortTermIdleMinutes, 3, 0, BIG)
-  c.memory.shortTermChars = Math.round(num(c.memory.shortTermChars, 150, 1, BIG))
-  for (const k of ['profileFieldChars', 'profilePeople', 'profileChars', 'chatImpressionChars', 'gistDays', 'impressionDays', 'gistDailyBatches']) c.memory[k] = Math.round(num(c.memory[k], DEFAULTS.memory[k], 0, BIG))
-  if (!isObj(c.memory.tierDays)) c.memory.tierDays = {}
-  for (const k of ['1', '2', '3']) c.memory.tierDays[k] = Math.round(num(c.memory.tierDays[k], DEFAULTS.memory.tierDays[k], 0, BIG))
-  // 老版本的 0 是当时的默认值，不是谁选的：升级后改成留 7 天，以后面板里再选 0 才算数
-  const keepUnset = raw?.memory?.keepChatlogDays === 0 && !raw.memory.keepChatlogSet
-  c.memory.keepChatlogDays = keepUnset ? 7 : num(c.memory.keepChatlogDays, 7, -1, 3650)
-  c.memory.keepChatlogSet = true
+  for (const k of ['profileFieldChars', 'profilePeople', 'profileChars', 'chatImpressionChars']) c.memory[k] = Math.round(num(c.memory[k], DEFAULTS.memory[k], 0, BIG))
+  // 存量老配置升级迁移：旧版默认把 keepChatlogDays 写成 7（靠 gists 兜底）或极老版未设的 0；
+  // 移除 gists 后统一一次性迁成 -1（永久保留原话正本），后续用户主动改成有限天数则原样保留。
+  const legacyDefaultKeep = Boolean(raw?.memory && !raw.memory.keepChatlogV2 && (
+    ((raw.memory.keepChatlogSet || 'gistEnabled' in raw.memory) && raw.memory.keepChatlogDays === 7)
+    || (raw.memory.keepChatlogDays === 0 && !raw.memory.keepChatlogSet)
+  ))
+  c.memory.keepChatlogDays = legacyDefaultKeep ? -1 : num(c.memory.keepChatlogDays, -1, -1, 3650)
+  c.memory.keepChatlogV2 = true
   c.memory.mergeGroups = bool(c.memory.mergeGroups, false)
-  for (const k of ['instantCommands', 'groupMemory', 'searchRrf']) c.memory[k] = bool(c.memory[k], true)
+  for (const k of ['instantCommands', 'groupMemory', 'searchRrf', 'dreamAudit', 'wiki']) c.memory[k] = bool(c.memory[k], true)
   c.memory.crossContext = bool(c.memory.crossContext, false)
   c.memory.extractIdleMinutes = num(c.memory.extractIdleMinutes, 30, 0, BIG)
   c.memory.extractMinLines = Math.round(num(c.memory.extractMinLines, 20, 1, BIG))
@@ -583,9 +580,7 @@ export function normalize(raw) {
   if (!isObj(c.memory.capacity)) c.memory.capacity = {}
   for (const k of ['auto', 'event', 'diary']) c.memory.capacity[k] = Math.round(num(c.memory.capacity[k], DEFAULTS.memory.capacity[k], 0, BIG))
   c.memory.eventExpireDays = num(c.memory.eventExpireDays, 90, -1, BIG)
-  // 记忆压缩：具体的事慢慢淡忘、概括成长期印象（默认开；可以关；多少天以前的细节才参与概括）
-  c.memory.compress = bool(c.memory.compress, true)
-  c.memory.compressAfterDays = Math.round(num(c.memory.compressAfterDays, 14, 1, 365))
+  for (const oldKey of ['keepChatlogSet', 'compress', 'compressAfterDays', 'shortTerm', 'shortTermHours', 'shortTermIdleMinutes', 'shortTermChars', 'gistEnabled', 'gistDays', 'impressionDays', 'gistDailyBatches', 'tierDays', 'skipGistWhenVault']) delete c.memory[oldKey]
   if (!isObj(c.memory.vector)) c.memory.vector = { ...DEFAULTS.memory.vector }
   c.memory.vector.enabled = bool(c.memory.vector.enabled, false)
   for (const k of ['baseUrl', 'model', 'apiKey']) c.memory.vector[k] = String(c.memory.vector[k] || '').trim()
