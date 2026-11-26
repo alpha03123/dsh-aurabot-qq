@@ -35,7 +35,7 @@ export default {
         const cfg = api.config()
         if (!info || !info.chat || !Array.isArray(content) || !cfg.ownerId) return content
         if (info.chat.chatId !== `private:${cfg.ownerId}` || String(info.senderId || '') !== String(cfg.ownerId)) return content
-        const text = bili.savedForChat()
+        const text = bili.savedForChat(info.sessionId || '')
         return text ? [{ type: 'text', text }, ...content] : content
       } catch (error) { return content }
     })

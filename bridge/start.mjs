@@ -286,7 +286,8 @@ OneBotV12ActionService.prototype.execute = async function (action, params = {}) 
   }
   if (action === "set_self_nickname") {
     const { adapter, accountId } = this.context;
-    const rest = adapter.requireBot(accountId).getREST();
+    const bot = adapter.requireBot(accountId);
+    const rest = bot.getREST();
     const nick = String(params.nickname || "").trim().slice(0, 32);
     if (!nick) return { ok: false };
     // 走代理时偶尔 TLS 握手断掉（DISCORD_REST_NETWORK_ERROR）：每个请求最多试 3 次
@@ -295,15 +296,30 @@ OneBotV12ActionService.prototype.execute = async function (action, params = {}) 
         try { return await fn(); } catch (error) { if (i >= 2) throw error; await new Promise((r) => setTimeout(r, 2000)); }
       }
     };
-    const guilds = await retry(() => rest.request("/users/@me/guilds"));
-    const list = Array.isArray(guilds) ? guilds : [];
-    for (const g of list) {
-      if (!g?.id) continue;
-      try {
-        await retry(() => rest.request(`/guilds/${g.id}/members/@me`, { method: "PATCH", body: { nick } }));
-      } catch {}
+    const syncGuildNicks = async (targetNick) => {
+      const guilds = await retry(() => rest.request("/users/@me/guilds"));
+      const list = Array.isArray(guilds) ? guilds : [];
+      let failed = 0;
+      for (const g of list) {
+        if (!g?.id) continue;
+        try {
+          await retry(() => rest.request(`/guilds/${g.id}/members/@me`, { method: "PATCH", body: { nick: targetNick } }));
+        } catch (err) {
+          failed++;
+          console.warn(`[bridge] set_self_nickname guild ${g.id} failed: ${err?.message || err}`);
+        }
+      }
+      return { count: list.length, failed };
+    };
+    bot._lastDesiredNick = nick;
+    if (!bot._nickHooked) {
+      bot._nickHooked = true;
+      bot.on("ready", () => {
+        if (bot._lastDesiredNick) syncGuildNicks(bot._lastDesiredNick).catch((err) => console.warn(`[bridge] ready nickname sync failed: ${err?.message || err}`));
+      });
     }
-    return { ok: true, count: list.length };
+    const res = await syncGuildNicks(nick);
+    return { ok: true, count: res.count, failed: res.failed };
   }
   return origExecute.call(this, action, params);
 };

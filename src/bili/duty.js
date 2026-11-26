@@ -131,17 +131,21 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       ...freshSaved(s).filter((y) => y.bvid !== v.bvid)].slice(0, SAVED_MAX)
     record(s, { kind: 'save', title: v.title, bvid: v.bvid, text: why })
   }
-  /** 主人来私聊时给她的背景：攒着的那几个视频。第一次给出去就记下时间（之后再留 40 分钟，够这次聊天用） */
-  function savedForChat() {
+  /** 主人来私聊时给她的背景：攒着的那几个视频。同一个会话里每条只贴一次（已经在会话历史里，不再每轮刷屏）；换了新会话 40 分钟内仍可带一次 */
+  function savedForChat(sessionId = '') {
     const s = load()
     const list = freshSaved(s)
     if (!list.length) { if ((s.saved || []).length) { s.saved = []; save(s) } return '' }
+    const sid = String(sessionId || '')
+    const toShow = sid ? list.filter((x) => x.shownSession !== sid) : list
+    if (!toShow.length) return ''
     const now = Date.now()
-    s.saved = list.map((x) => (x.shownAt ? x : { ...x, shownAt: now }))
+    const shownIds = new Set(toShow.map((x) => x.bvid))
+    s.saved = list.map((x) => (shownIds.has(x.bvid) ? { ...x, shownAt: x.shownAt || now, ...(sid ? { shownSession: sid } : {}) } : x))
     save(s)
     return [
       '【你攒着想跟他说的】（之前刷 B 站看到的备选话头；注意每条标注的观看日期，不是今天刚看的别说成「刚看」。如果对方现在只是刚打招呼或聊别的事，先正常接他的话，别一上来急着甩视频链接；真聊到相关话题或自然闲着时再顺嘴提一句，不合适就先留着不提）',
-      ...list.map((x) => x.mode === 'seed'
+      ...toShow.map((x) => x.mode === 'seed'
         ? `- 《${x.title}》（${whenLabel(x.at)} 看的，碎碎念话头）：${x.why}${x.feeling ? `；当时反应：${x.feeling}` : ''}（不用主动甩链接，他真问起再用 bili_recent 翻）`
         : `- 《${x.title}》（UP主 ${x.author || '?'}，${whenLabel(x.at)} 看的）：想提是因为${x.why}${x.feeling ? `；你当时的反应：${x.feeling}` : ''}；链接 ${link(x.bvid)}`),
       '细节用 bili_video 翻；不必硬塞链接，他想看再发也行。',
