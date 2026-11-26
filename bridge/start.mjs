@@ -183,6 +183,14 @@ DiscordAdapter.prototype.sendMessage = async function (uin, params) {
 
 const origHistory = DiscordAdapter.prototype.getMessageHistory;
 DiscordAdapter.prototype.getMessageHistory = async function (uin, params) {
+  const before = params?.before ? String(params.before).trim() : "";
+  if (before) {
+    const channelId = await channelOf(this, uin, params?.scene_type, params?.scene_id);
+    if (!channelId) return [];
+    const limit = Math.max(1, Math.min(100, Number(params?.limit) || 50));
+    const list = await this.requireBot(uin).getREST().request(`/channels/${channelId}/messages`, { query: { limit, before } });
+    return (Array.isArray(list) ? list : []).map((msg) => this.convertMessageToInfo(msg));
+  }
   if (params?.scene_type !== "private") return origHistory.call(this, uin, params);
   const channelId = await channelOf(this, uin, "private", params.scene_id);
   const messages = await this.requireBot(uin).getMessageHistory(channelId, params.limit || 50);
@@ -224,7 +232,11 @@ DiscordAdapter.prototype.getGroupMemberInfo = async function (uin, params) {
   try {
     const guild = await guildOf(this, uin, channelId);
     const m = guild ? await rest.request(`/guilds/${guild}/members/${userId}`) : null;
-    if (m) return { group_id: params.group_id, user_id: params.user_id, user_name: memberName(m) || userId };
+    if (m) {
+      const joinMs = m.joined_at ? Date.parse(m.joined_at) : Date.now();
+      const join_time = Number.isFinite(joinMs) ? Math.floor(joinMs / 1000) : Math.floor(Date.now() / 1000);
+      return { group_id: params.group_id, user_id: params.user_id, user_name: memberName(m) || userId, join_time };
+    }
   } catch {}
   try {
     const u = await rest.request(`/users/${userId}`);

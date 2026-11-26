@@ -74,7 +74,13 @@ const sceneOf = (p) => (p.group_id !== undefined && p.group_id !== null && p.gro
   ? { scene_type: 'group', scene_id: idStr(p.group_id) }
   : { scene_type: 'private', scene_id: idStr(p.user_id) })
 
-const member = (m) => ({ user_id: idStr(m?.user_id), nickname: m?.user_displayname || m?.user_name || idStr(m?.user_id), card: m?.user_displayname || m?.user_name || '', role: 'member' })
+const member = (m) => ({
+  user_id: idStr(m?.user_id),
+  nickname: m?.user_displayname || m?.user_name || idStr(m?.user_id),
+  card: m?.user_displayname || m?.user_name || '',
+  role: 'member',
+  ...(Number(m?.join_time) > 0 ? { join_time: Number(m.join_time) } : {}),
+})
 const fileSeg = (p) => ({ type: 'file', data: { file: p.file, name: p.name, filename: p.name } })
 
 /**
@@ -114,9 +120,9 @@ export function toV12Call(action, params = {}) {
     case 'get_msg':
       return { action: 'get_message', params: { message_id: idStr(p.message_id), ...sceneOf(p) }, map: messageInfoToV11 }
     case 'get_group_msg_history':
-      return { action: 'get_message_history', params: { scene_type: 'group', scene_id: idStr(p.group_id), limit: Number(p.count) || 20 }, map: (d) => ({ messages: (Array.isArray(d) ? d : d?.messages || []).map(messageInfoToV11).sort((a, b) => (Number(a.time) || 0) - (Number(b.time) || 0)) }) }
+      return { action: 'get_message_history', params: { scene_type: 'group', scene_id: idStr(p.group_id), limit: Number(p.count) || 20, ...(p.message_id ? { before: idStr(p.message_id) } : {}) }, map: (d) => ({ messages: (Array.isArray(d) ? d : d?.messages || []).map(messageInfoToV11).sort((a, b) => (Number(a.time) || 0) - (Number(b.time) || 0)) }) }
     case 'get_friend_msg_history':
-      return { action: 'get_message_history', params: { scene_type: 'private', scene_id: idStr(p.user_id), limit: Number(p.count) || 20 }, map: (d) => ({ messages: (Array.isArray(d) ? d : d?.messages || []).map(messageInfoToV11).sort((a, b) => (Number(a.time) || 0) - (Number(b.time) || 0)) }) }
+      return { action: 'get_message_history', params: { scene_type: 'private', scene_id: idStr(p.user_id), limit: Number(p.count) || 20, ...(p.message_id ? { before: idStr(p.message_id) } : {}) }, map: (d) => ({ messages: (Array.isArray(d) ? d : d?.messages || []).map(messageInfoToV11).sort((a, b) => (Number(a.time) || 0) - (Number(b.time) || 0)) }) }
     case 'delete_msg':
       return { action: 'delete_message', params: { message_id: idStr(p.message_id) }, map: same }
     case 'set_input_status':

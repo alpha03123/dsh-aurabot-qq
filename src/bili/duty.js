@@ -664,6 +664,21 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
       log.warn('刷 B 站出错：', error.message)
       return { ok: false, message: error.message }
     } finally {
+      // 合并盘上并发写入的 savedForChat 标记（shownAt / shownSession），避免跑完一轮刷 B 站覆盖聊天里刚标过的状态
+      try {
+        const disk = load()
+        if (Array.isArray(disk?.saved) && Array.isArray(s.saved)) {
+          const byBv = new Map(disk.saved.filter((x) => x && x.bvid).map((x) => [x.bvid, x]))
+          for (const item of s.saved) {
+            const d = item && byBv.get(item.bvid)
+            if (!d) continue
+            if ((Number(d.shownAt) || 0) > (Number(item.shownAt) || 0)) {
+              item.shownAt = d.shownAt
+              if (d.shownSession) item.shownSession = d.shownSession
+            }
+          }
+        }
+      } catch {}
       save(s)
       busy = false
     }

@@ -2573,14 +2573,16 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     const existing = wiki.open(pageTitle)
     const gap = wikiGaps()
     const lastRefresh = Number(s.lastWikiRefreshAt) || 0
+    const extraText = String(extraContext || '').trim()
+    const extraHash = extraText ? createHash('sha1').update(extraText).digest('hex') : ''
     const hasNewFacts = facts.some((m) => (Number(m.at) || 0) > lastRefresh)
+    const hasNewExtra = Boolean(extraHash && extraHash !== s.lastWikiExtraHash)
     const pageHasGap = (!existing.ok && facts.length > 0)
       || gap.staleRefs.some((x) => x.title === pageTitle)
       || (gap.brokenLinks || []).some((x) => x.from === pageTitle || x.to === pageTitle)
       || gap.outside.includes(pageTitle)
-    if (!force && !hasNewFacts && !pageHasGap) return { ok: true, skipped: true, reason: '认识页已是最新，无需重写' }
+    if (!force && !hasNewFacts && !pageHasGap && !hasNewExtra) return { ok: true, skipped: true, reason: '认识页已是最新，无需重写' }
     const currentBody = existing.ok ? existing.page.body : ''
-    const extraText = String(extraContext || '').trim()
     let out = ''
     try {
       out = await askModel(dsh, {
@@ -2612,6 +2614,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     if (!saved.ok) return saved
     const cur = load()
     cur.lastWikiRefreshAt = now
+    if (extraHash) cur.lastWikiExtraHash = extraHash
     save(cur)
     log.info(`第一人称认识页已更新：「${pageTitle}」（${clean.length} 字）`)
     return { ok: true, title: pageTitle, chars: clean.length, gaps: wikiGaps() }
@@ -2798,7 +2801,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     }
     let groups = 0, calls = 0, merged = 0
     for (const [who, items] of by) {
-      const softGroup = items.filter((m) => !Number.isInteger(m.tier) && (Number(m.importance) || 0) < 0.85)
+      const softGroup = items.filter((m) => !isPermanent(m) && (Number(m.importance) || 0) < 0.85)
       if (softGroup.length < 4) continue
       const fresh = softGroup.filter((m) => (Number(m.at) || 0) > since || (Number(m.mergedAt) || 0) > since)
       if (!fresh.length) continue
@@ -3045,7 +3048,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       }
       if (auditRes?.deferred || wikiRes?.deferred) {
         const st = load()
-        st.pendingDream = { at: Date.now(), chatId: id, wiki: isOwnerChat }
+        st.pendingDream = { at: Date.now(), chatId: id, wiki: isOwnerChat, ...(extraText ? { extraContext: extraText.slice(0, 1200) } : {}) }
         save(st)
       }
     }
@@ -3085,7 +3088,9 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     } catch (error) {
       log.warn('生成睡前会话交接失败，退回原话衔接：', error.message)
     }
-    const tailCount = Math.max(0, Math.min(30, Math.floor(numOpt(lastLines, 8))))
+    const reqTail = Math.max(0, Math.min(30, Math.floor(numOpt(lastLines, 8))))
+    // 交接摘要失败时即使调用方传了 lastLines:0，也自动退回最近 6 句原话，避免零交接直接归档导致失忆
+    const tailCount = summary ? reqTail : Math.max(reqTail, 6)
     const tail = tailCount ? rawRows.slice(-tailCount)
       .map((l) => `[${stamp(l.t || Date.now())}] ${whoOf(l)}：${clipText(l.text, 120)}`)
       .join('\n') : ''
@@ -3093,7 +3098,11 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       summary ? `【近期要点】\n${summary}` : '',
       tail ? `【上次最后几句】\n${tail}` : '',
     ].filter(Boolean).join('\n\n')
-    if (handoff && typeof hub?.setSessionHandoff === 'function') {
+    if (!handoff) {
+      log.warn(`会话整理中止：${id} 未能生成交接内容，保留当前会话`)
+      return { ok: false, message: '未能生成交接内容，已保留当前会话' }
+    }
+    if (typeof hub?.setSessionHandoff === 'function') {
       hub.setSessionHandoff(id, handoff, { day })
     }
     const archived = typeof hub?.resetChat === 'function' ? hub.resetChat(id) : false
@@ -3146,7 +3155,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       const pending = s.pendingDream
       try {
         const ar = await auditMemories()
-        const wr = pending.wiki && cfg.wiki !== false ? await refreshWiki() : null
+        const wr = pending.wiki && cfg.wiki !== false ? await refreshWiki({ extraContext: pending.extraContext || '' }) : null
         if (!ar?.deferred && !wr?.deferred) {
           const s2 = load()
           delete s2.pendingDream

@@ -1116,7 +1116,7 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
         return release(chatId)
       }
       // 发完再放开：发送期间来的消息也攒到下一段；等所有气泡发完再停 typing
-      const p = deliver(chatId, text, { wantVoice, autoReply, userText: st.lastText || '', own: true, selfInitiated: st.lastSelf === true })
+      const p = deliver(chatId, text, { wantVoice, autoReply, userText: st.lastSelf ? '' : (st.lastText || ''), own: true, selfInitiated: st.lastSelf === true })
         .catch((error) => log.warn('发送出错：', error.message))
         .finally(() => {
           stopTyping(key)
@@ -2106,8 +2106,15 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
       log.info(`${chat.chatId}：她还在忙，这句直接插进当前这一轮（steer）`)
       await withPromptCapture(sources, () => agent.steer(message))
     } else {
+      const acquiredBusy = !busy.has(chat.chatId)
+      if (acquiredBusy) busy.set(chat.chatId, Date.now())
       running.add(chat.chatId)
-      await withPromptCapture(sources, () => agent.followup(message))
+      try {
+        await withPromptCapture(sources, () => agent.followup(message))
+      } catch (error) {
+        if (acquiredBusy) release(chat.chatId)
+        throw error
+      }
     }
     try {
       if (dsh.sessions && typeof dsh.sessions.flush === 'function') await dsh.sessions.flush(agent.session)
@@ -2320,9 +2327,15 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     const m = map()
     const e = m.chats[chatId]
     if (!e) return false
+    const key = sessionKey(e.sessionId)
     Promise.resolve(reg?.archiveSession?.(e.sessionId)).catch((error) => log.debug('归档会话失败：', error.message))
-    sessionToChat.delete(sessionKey(e.sessionId))
-    turnState.delete(sessionKey(e.sessionId))
+    const rec = mounted.get(key)
+    if (rec) { unmount(rec); mounted.delete(key) }
+    stopTyping(key)
+    clearSlowNotices(key)
+    slowNoticeSent.delete(key)
+    sessionToChat.delete(key)
+    turnState.delete(key)
     outputSources.delete(chatId)
     delete m.chats[chatId]
     saveMap(m)
@@ -2336,14 +2349,20 @@ export function createHub({ dsh, getConfig, log, onebot, stickers, tts, buildToo
     const m = map()
     let n = 0
     for (const [chatId, e] of Object.entries(m.chats)) {
+      const key = sessionKey(e.sessionId)
       try {
         // 可能返回 Promise：必须接住 rejection，未处理的 rejection 会让 DSH 宿主退出
         Promise.resolve(reg?.archiveSession?.(e.sessionId)).catch((error) => log.debug('归档会话失败：', error.message))
       } catch (error) {
         log.debug('归档会话失败：', error.message)
       }
-      sessionToChat.delete(sessionKey(e.sessionId))
-      turnState.delete(sessionKey(e.sessionId))
+      const rec = mounted.get(key)
+      if (rec) { unmount(rec); mounted.delete(key) }
+      stopTyping(key)
+      clearSlowNotices(key)
+      slowNoticeSent.delete(key)
+      sessionToChat.delete(key)
+      turnState.delete(key)
       outputSources.delete(chatId)
       delete m.chats[chatId]
       n++

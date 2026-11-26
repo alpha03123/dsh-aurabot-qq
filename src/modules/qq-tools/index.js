@@ -152,9 +152,9 @@ export default {
           return { ok: true, message: '卡片发出去了' }
         },
       }))
-      // 跨天搜聊天流水：只读。chat_history 只能翻当前聊天最近 50 条，
-      // 想找几天前说过的一句话没有入口，这里按关键词翻本地流水（按天存的那份）。
-      tools.push(defineTool({
+      // 跨天搜聊天流水：仅在未启用 memory 模块时由 qq-tools 提供兜底版本；
+      // memory 启用时由 memory 模块提供带日期翻看、原话前后文与群聊隐私隔离的同名工具，避免后者被覆盖。
+      if (!api.config().memory?.enabled) tools.push(defineTool({
         name: 'search_chatlog',
         description: '在本地聊天流水里按关键词跨天搜旧对话（只读）。记不清以前说过什么、对方提过的人名约定梗，先搜这个再答；想找「几天前那句话」时比 chat_history 管用。',
         properties: {
@@ -222,7 +222,7 @@ export default {
           if (t) {
             const [kind, id] = t.split(':')
             const okList = kind === 'group' ? cfg.allow.groups : kind === 'private' ? [cfg.ownerId, ...cfg.allow.private] : []
-            if (!okList.includes(String(id))) return { ok: false, message: '不在白名单里，不能发' }
+            if (!okList.map(String).includes(String(id))) return { ok: false, message: '不在白名单里，不能发' }
             chatId = `${kind}:${id}`
           }
           const abs = String(file || '')

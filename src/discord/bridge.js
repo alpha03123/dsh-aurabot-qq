@@ -99,13 +99,15 @@ export function createDiscordBridge({ getConfig, saveDiscord, rootDir, dataDir, 
       const port = await freePort()
       const bridgeData = join(dataDir, 'bridge')
       mkdirSync(bridgeData, { recursive: true })
+      const proxyUrl = cfg().proxyUrl || ''
       const env = {
         ...process.env,
         DISCORD_TOKEN: cfg().token,
         BRIDGE_PORT: String(port),
         BRIDGE_ACCESS_TOKEN: accessToken(),
         BRIDGE_DATA_DIR: bridgeData,
-        DISCORD_PROXY_URL: cfg().proxyUrl || '',
+        DISCORD_PROXY_URL: proxyUrl,
+        ...(proxyUrl ? { HTTPS_PROXY: proxyUrl, HTTP_PROXY: proxyUrl, NO_PROXY: '127.0.0.1,localhost', NODE_USE_ENV_PROXY: '1' } : {}),
         FFMPEG_PATH: getConfig().bili?.ffmpegPath || process.env.FFMPEG_PATH || '',
       }
       ready = null
