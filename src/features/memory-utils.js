@@ -1,4 +1,5 @@
 // 记忆模块纯逻辑工具：切词、相似度、倒排索引与 BM25 检索、时间/有效期解析、遗忘衰减与模型输出解析。
+import { randomUUID } from 'node:crypto'
 import { clipText } from '../core/text.js'
 
 export const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -536,9 +537,9 @@ export function normalizeRelation(x, { chatId = '', names = new Map(), owner = '
   return { id: randomUUID().slice(0, 8), subj, subjQq, pred, obj, objQq, chatId, speaker: author, at: Date.now() }
 }
 
-const relationText = (r) => `${r.subj} ${r.pred} ${r.obj}`
-const relationPair = (r) => [r.subjQq || r.subj, r.objQq || r.obj].sort().join('|')
-const relationHas = (r, qq, names = []) => r.subjQq === qq || r.objQq === qq || names.includes(r.subj) || names.includes(r.obj)
+export const relationText = (r) => `${r.subj} ${r.pred} ${r.obj}`
+export const relationPair = (r) => [r.subjQq || r.subj, r.objQq || r.obj].sort().join('|')
+export const relationHas = (r, qq, names = []) => r.subjQq === qq || r.objQq === qq || names.includes(r.subj) || names.includes(r.obj)
 
 const SENSITIVE_TEXT = /密码|口令|验证码|token|api.?key|secret|身份证|银行卡/i
 

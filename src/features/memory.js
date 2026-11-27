@@ -34,7 +34,7 @@ import {
   saidTime, parseSaidAt, stamp, memoryLine, shortTitle, isLocalVectorUrl, shouldForget,
   isPermanent, retention, diversify, parseMemoryCommand, looksLikeRuleMemory,
   stripMemoryHints, matchesMemoryKeyword, parseReflection, parseFacts, parseExtraction,
-  normalizeRelation, normalizeSourceRef, matchSourceLine, parseDreamAudits, checkAuditFix,
+  normalizeRelation, relationText, relationPair, relationHas, normalizeSourceRef, matchSourceLine, parseDreamAudits, checkAuditFix,
 } from './memory-utils.js'
 export * from './memory-utils.js'
 
