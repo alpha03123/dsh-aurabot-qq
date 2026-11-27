@@ -1,5 +1,6 @@
 // 记忆检索与 L0 原话视图：隐私过滤、常驻要紧事、记忆目录（memory_tree）、原话窗口与归档搜索。
 import { clipText } from '../core/text.js'
+import { MEM_LIMITS } from './memory-limits.js'
 import {
   dayKey, isCurrent, isPermanent, memoryLine, parseMemoryCommand, retention, saidTime, search,
   shortTitle, stamp, stripMemoryHints, tokenize, matchesMemoryKeyword, normalizeSourceRef,
@@ -49,7 +50,7 @@ export function createMemoryChatlog({ getConfig, hub, load, promote, isOwnerPriv
    * 按重要度 → 用过几次 → 说的时间排。排序故意不用随时间连续变化的激活度，免得每小时触发一次 DSH 快照重贴；
    * 激活度只用来把已经淡掉的（< 0.2）挡在外面。
    */
-  function keyFactsFor(chat, { maxItems = 10, maxChars = 600, maxItemChars = 80, now = Date.now(), excludeText = '', sinceAt = 0, heading = '' } = {}) {
+  function keyFactsFor(chat, { maxItems = MEM_LIMITS.FRESH_FACTS_ITEMS, maxChars = MEM_LIMITS.FRESH_FACTS_CHARS, maxItemChars = MEM_LIMITS.FRESH_FACT_ITEM, now = Date.now(), excludeText = '', sinceAt = 0, heading = '' } = {}) {
     if (!getConfig().memory?.enabled || maxChars < 40) return ''
     const owner = String(getConfig().ownerId || '')
     const uses = (m) => (Number(m.hitDays) || 0) + 2 * (Number(m.clicks) || 0)
@@ -159,7 +160,7 @@ export function createMemoryChatlog({ getConfig, hub, load, promote, isOwnerPriv
         t: Number(l.t) || 0,
         who: l.who === 'bot' ? '我' : (owner && String(l.uid || '') === owner ? (getConfig().ownerName || '主人') : (l.who || '对方')),
         uid: String(l.uid || ''),
-        text: stripMemoryHints(String(l.text || '')).replace(/\s+/g, ' ').trim().slice(0, 180),
+        text: stripMemoryHints(String(l.text || '')).replace(/\s+/g, ' ').trim().slice(0, MEM_LIMITS.CHATLOG_LINE),
         hit: Boolean(l.hit),
       }))
       .filter((l) => l.text)
@@ -233,7 +234,7 @@ export function createMemoryChatlog({ getConfig, hub, load, promote, isOwnerPriv
         day: d,
         t: Number(l.t) || 0,
         who: l.who === 'bot' ? '我' : (owner && String(l.uid || '') === owner ? (getConfig().ownerName || '主人') : (l.who || '对方')),
-        text: stripMemoryHints(String(l.text || '')).replace(/\s+/g, ' ').trim().slice(0, 180),
+        text: stripMemoryHints(String(l.text || '')).replace(/\s+/g, ' ').trim().slice(0, MEM_LIMITS.CHATLOG_LINE),
       }))
       .filter((l) => l.text)
 
@@ -349,11 +350,11 @@ export function createMemoryChatlog({ getConfig, hub, load, promote, isOwnerPriv
     promote(found.map((m) => m.id), now)
     const allById = new Map(visible)
     const lines = found.map((m) => {
-      const rel = (m.related || []).map((rid) => allById.get(String(rid))).filter(Boolean).slice(0, 3).map((r) => `#${r.id} ${shortTitle(r, 18)}`)
+      const rel = (m.related || []).map((rid) => allById.get(String(rid))).filter(Boolean).slice(0, 5).map((r) => `#${r.id} ${shortTitle(r, MEM_LIMITS.RELATED_TITLE)}`)
       const head = `#${m.id} ${memoryLine(m, now)}${rel.length ? `（相关：${rel.join('；')}）` : ''}`
       if (!withContext) {
         const hint = m.sourceRef?.quote
-          ? `（原话摘录：「${clipText(m.sourceRef.quote, 48)}」，需看前后文可传 withContext:true）`
+          ? `（原话摘录：「${clipText(m.sourceRef.quote, MEM_LIMITS.QUOTE_TEXT)}」，需看前后文可传 withContext:true）`
           : (m.sourceRef ? `（有 ${m.sourceRef.day || '当时'} 原话记录，可传 withContext:true 展开）` : '')
         return head + hint
       }

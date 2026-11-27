@@ -8,11 +8,12 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { dataDir } from '../core/store.js'
+import { MEM_LIMITS } from './memory-limits.js'
 
 const SENSITIVE = /密码|口令|验证码|token|api.?key|secret|身份证|银行卡/i
 const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i
 const MAX_TITLE_CHARS = 40
-const MAX_CONTENT_CHARS = 6000
+const MAX_CONTENT_CHARS = 12000
 const MAX_LINKS = 80
 const SELF_TITLE = '我'
 const INDEX_TITLE = '目录'
@@ -231,7 +232,7 @@ export function createMemoryWiki({ directory = () => dataDir('memory-wiki'), log
   }
 
   /** 给主人私聊常驻上下文用的极简目录（≤ maxChars 字），不含全文，避免破坏前缀缓存。 */
-  function catalogText({ maxChars = 240 } = {}) {
+  function catalogText({ maxChars = MEM_LIMITS.WIKI_CATALOG } = {}) {
     const docs = listAll().filter((d) => d.scope === 'owner')
     if (!docs.length) return ''
     const self = docs.find((d) => d.isSelf)
@@ -239,16 +240,16 @@ export function createMemoryWiki({ directory = () => dataDir('memory-wiki'), log
     const others = docs.filter((d) => !d.isSelf && !d.isIndex)
     const parts = []
     if (self) {
-      const first = sliceChars(self.body.replace(/\s+/g, ' ').trim(), 80)
+      const first = sliceChars(self.body.replace(/\s+/g, ' ').trim(), MEM_LIMITS.WIKI_CATALOG_EXCERPT)
       parts.push(`关于「我」：${first}`)
     }
     if (index) {
       const summary = index.links.length
-        ? index.links.slice(0, 10).map((t) => `[[${t}]]`).join('、')
-        : sliceChars(index.body.replace(/\s+/g, ' ').trim(), 120)
+        ? index.links.slice(0, 20).map((t) => `[[${t}]]`).join('、')
+        : sliceChars(index.body.replace(/\s+/g, ' ').trim(), MEM_LIMITS.WIKI_CATALOG_EXCERPT)
       parts.push(`认识目录：${summary}`)
     } else if (others.length) {
-      parts.push(`认识页（用 wiki_open 展开）：${others.slice(0, 10).map((d) => `[[${d.title}]]`).join('、')}`)
+      parts.push(`认识页（用 wiki_open 展开）：${others.slice(0, 20).map((d) => `[[${d.title}]]`).join('、')}`)
     }
     const text = parts.join('；')
     if (!text) return ''
@@ -307,7 +308,12 @@ export function createMemoryWiki({ directory = () => dataDir('memory-wiki'), log
    * 给主人私聊常驻上下文用的核心认识页全文（只直注主人页 + 可选「我」页，永不把所有主题子页全灌入；
    * 其余主题子页继续走极简目录 [[标题]]，聊到再按需 wiki_open 展开，既不健忘也不无限膨胀）。
    */
-  function residentText({ ownerTitle = '主人', maxOwnerChars = 1500, maxSelfChars = 500, maxCatalogChars = 240 } = {}) {
+  function residentText({
+    ownerTitle = '主人',
+    maxOwnerChars = MEM_LIMITS.WIKI_OWNER_PAGE,
+    maxSelfChars = MEM_LIMITS.WIKI_SELF_PAGE,
+    maxCatalogChars = MEM_LIMITS.WIKI_CATALOG,
+  } = {}) {
     const docs = listAll().filter((d) => d.scope === 'owner')
     if (!docs.length) return { hasOwnerPage: false, text: '', updatedAt: 0 }
     const wantKey = keyOf(ownerTitle)
@@ -324,7 +330,7 @@ export function createMemoryWiki({ directory = () => dataDir('memory-wiki'), log
       blocks.push(`【关于「我」的笔记】\n${body}`)
     }
     if (otherDocs.length) {
-      const names = otherDocs.slice(0, 12).map((d) => `[[${d.title}]]`).join('、')
+      const names = otherDocs.slice(0, 20).map((d) => `[[${d.title}]]`).join('、')
       blocks.push(sliceChars(`（其它专题认识页，需要时可用 wiki_open 翻看：${names}）`, maxCatalogChars))
     }
     return {
