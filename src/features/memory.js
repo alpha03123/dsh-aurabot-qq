@@ -212,6 +212,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
   /** 她自己做过的事（唱了歌、在空间评论了谁……）：记成「经历」，最近一天的会常驻在上下文里。
    *  kind 'seen' = 看过的内容；kind 'self' = 她在聊天里说过的自己的事（不常驻，只按相关度被想起，见 extractSelf）。 */
   function addEvent({ text, about = '', aboutName = '', tags = [], importance = 0.45, kind, meta, saidAt, chatId = '', sourceRef }) {
+    if (getConfig().memory?.wikiMode === 'active') return { ok: true, skipped: true }
     return add({ text, about, aboutName, tags: ['经历', ...tags], importance, source: 'event', kind: kind === 'seen' || kind === 'self' ? kind : undefined, meta, saidAt, chatId, sourceRef })
   }
 

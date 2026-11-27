@@ -180,9 +180,20 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   async function chooseKeywords() {
     const c = cfg()
     const interests = [...(c.keywords || []), ...(getConfig().group.interests || [])]
-    // 本地改（2026-11-17）：她自己看过 / 做过的事（seen、经历）不算「关于主人的事」，否则「我想补几部番」会被当成主人推荐的
-    const about = (memory?.list?.('') || []).filter((m) => m.kind !== 'seen' && m.source !== 'event' && (String(m.about) === String(getConfig().ownerId) || /喜欢|爱|想|在玩|在看|追/.test(m.text))).slice(0, 12).map((m) => m.text)
-    const recent = (memory?.recentEvents?.(72, 8) || []).filter((m) => m.kind === 'seen' || (m.tags || []).includes('B站')).slice(0, 6).map((m) => m.text)
+    const activeWiki = getConfig().memory?.wikiMode === 'active'
+    let about = []
+    let recent = []
+    if (activeWiki) {
+      const ownerDoc = memory?.wiki?.open?.('认识/主人')
+      if (ownerDoc?.ok && ownerDoc.page?.body) {
+        about = ownerDoc.page.body.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).slice(0, 14)
+      }
+      recent = (load().history || []).filter((h) => h && h.title).slice(0, 8).map((h) => `看过《${h.title}》`)
+    } else {
+      // 本地改（2026-11-17）：她自己看过 / 做过的事（seen、经历）不算「关于主人的事」，否则「我想补几部番」会被当成主人推荐的
+      about = (memory?.list?.('') || []).filter((m) => m.kind !== 'seen' && m.source !== 'event' && (String(m.about) === String(getConfig().ownerId) || /喜欢|爱|想|在玩|在看|追/.test(m.text))).slice(0, 12).map((m) => m.text)
+      recent = (memory?.recentEvents?.(72, 8) || []).filter((m) => m.kind === 'seen' || (m.tags || []).includes('B站')).slice(0, 6).map((m) => m.text)
+    }
     try {
       const out = await think(`你想去 B 站刷点视频。你感兴趣的：${interests.join('、') || '随便看看'}。\n你记得的关于${owner()}和大家的事：\n${about.map((t) => '- ' + t).join('\n') || '（暂无）'}\n你自己最近刷过 / 看过的：\n${recent.map((t) => '- ' + t).join('\n') || '（暂无）'}\n\n挑 3 个这次想搜的关键词（可以是你自己想看的，也可以是${owner()}可能喜欢、你想分享给${owner()}的），别和最近刷过的重复。只输出 JSON 数组，例如 ["白米饭 做法","猫咪 搞笑"]。`)
       const arr = pickJson(out, []).map((k) => String(k).trim()).filter(Boolean)
