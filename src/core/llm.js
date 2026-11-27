@@ -231,7 +231,7 @@ export async function askModel (dsh, o) {
         // 推理模型可能把输出预算全花在思考上，一个字没写：放宽预算再试一次
         if (out || widened) { result = out; return out }
         widened = true
-        base.maxTokens = Math.max(base.maxTokens, Math.min(4000, base.maxTokens * 3))
+        base.maxTokens = Math.max(base.maxTokens, Math.min(24000, base.maxTokens * 3))
       } catch (error) {
         if (ac && ac.signal.aborted) throw timeoutError()
         // 能力探测没查到 / 模型临时不认：去掉思考强度再来一次

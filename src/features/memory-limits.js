@@ -13,18 +13,18 @@ export const MEM_LIMITS = {
   INSIGHT_MAX_ITEMS: 12,     // 相处经验条数上限
   QUOTE_TEXT: 400,           // sourceRef / 命令原话摘录上限
 
-  // 常驻上下文与认识页（Wiki）上限
-  OWNER_RESIDENT: 12000,     // 主人私聊常驻记忆总上限
-  OTHER_RESIDENT: 4800,      // 非主人/群聊/无主人页兜底常驻总上限
-  WIKI_OWNER_PAGE: 6000,     // 主人认识页直注全文上限
-  WIKI_RECENT_PAGE: 3000,    // 近期与约定热层直注上限
-  WIKI_SELF_PAGE: 2400,      // 「我」认识页直注全文上限
-  WIKI_CATALOG: 1500,        // 认识页目录摘要上限（含关键词概要）
-  WIKI_CATALOG_EXCERPT: 300, // 目录里单页简介上限
+  // 常驻上下文与认识页（Wiki）上限（适配 1M 上下文大模型，宁可完整也不扣扣嗖嗖截断）
+  OWNER_RESIDENT: 40000,     // 主人私聊常驻记忆总上限
+  OTHER_RESIDENT: 8000,      // 非主人/群聊/无主人页兜底常驻总上限
+  WIKI_OWNER_PAGE: 20000,    // 主人认识页直注全文上限
+  WIKI_RECENT_PAGE: 10000,   // 近期与约定热层直注上限
+  WIKI_SELF_PAGE: 10000,     // 「我」认识页直注全文上限
+  WIKI_CATALOG: 6000,        // 认识页目录摘要上限（含关键词概要）
+  WIKI_CATALOG_EXCERPT: 600, // 目录里单页简介上限
   WIKI_REFRESH_FACTS: 60,    // 刷新认识页参考的记忆条数
-  WIKI_REFRESH_TOKENS: 3200, // 刷新认识页输出预算
-  WIKI_DREAM_TOKENS: 3600,   // 新版结构化 Dreaming 输出预算
-  WIKI_EXTRA_CONTEXT: 4000,  // 睡前传给认识页的日程与核实线索上限
+  WIKI_REFRESH_TOKENS: 6000, // 刷新认识页输出预算
+  WIKI_DREAM_TOKENS: 12000,  // 新版结构化 Dreaming 输出预算
+  WIKI_EXTRA_CONTEXT: 8000,  // 睡前传给认识页的日程与核实线索上限
 
   // 近期事实 / 召回 / 跨会话 / 原话检索上限
   FRESH_FACTS_ITEMS: 20,     // 主人认识页后新增事实条数
@@ -41,7 +41,7 @@ export const MEM_LIMITS = {
   TAIL_LINE: 400,            // 未提炼尾流水单条字数
   TAIL_MAX_HITS: 6,          // 未提炼尾流水命中条数
   GROUP_BACKDROP_LINE: 500,  // 群聊见闻单条字数
-  CHATLOG_LINE: 800,         // 原话检索与上下文窗口单条字数
+  CHATLOG_LINE: 2000,        // 原话检索与上下文窗口单条字数
   RELATED_TITLE: 80,         // 关联记忆短标题字数
 
   // 跨日会话交接（Handoff）上限

@@ -17,8 +17,8 @@ import { MEM_LIMITS } from './memory-limits.js'
 const SENSITIVE = /(?:密码|口令|验证码|token|api.?key|secret)\s*[:：=是为]\s*\S{4,}|(?:身份证|银行卡)(?:号|号码)?\s*[:：=是为]?\s*\d{6,}|\bsk-[a-zA-Z0-9_-]{16,}\b|\b\d{17}[\dXx]\b/i
 const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i
 const MAX_TITLE_CHARS = 40
-const MAX_CONTENT_CHARS = 12000
-const MAX_LINKS = 80
+const MAX_CONTENT_CHARS = 40000
+const MAX_LINKS = 160
 const MAX_HISTORY_PER_PAGE = 60
 
 export const SELF_PAGE = '我'
@@ -535,7 +535,7 @@ export function createMemoryWiki({ directory = () => dataDir('memory-wiki'), log
     }
     for (const [rawPage, rawDesc] of Object.entries(summaryUpdates || {})) {
       const p = normalizeWikiPath(rawPage, { ownerName: ownerName() })
-      const desc = String(rawDesc || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 300)
+      const desc = String(rawDesc || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 600)
       if (p && !RESIDENT_SET.has(p) && desc) existingSummaries.set(p, desc)
     }
     const memories = docs.filter((d) => d.folder === '回忆').sort((a, b) => b.path.localeCompare(a.path))

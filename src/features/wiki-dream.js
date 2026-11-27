@@ -18,7 +18,7 @@ import { INDEX_PAGE, normalizeWikiPath, OWNER_PAGE, RECENT_PAGE, SELF_PAGE } fro
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 const REL_WORD = /(明天|后天|大后天|今晚|今天|昨天|昨晚|前天|下周|下礼拜|这周|本周|下个月|这个月|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天])/
 const ABS_DATE = /(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}月\d{1,2}[日号]?|\d{1,2}[-/.]\d{1,2})/
-const ARCHIVE_COMPRESS_THRESHOLD = 1800
+const ARCHIVE_COMPRESS_THRESHOLD = 6000
 const CONSECUTIVE_FAIL_ALERT = 3
 
 function parseYmd(day) {
@@ -259,7 +259,7 @@ export function createWikiDream({
         const detail = String(row.detail || row.note || row.why || '').replace(/\s+/g, ' ').trim()
         if (!action && !detail) continue
         if (/^(sleep|wake|idle|tick)$/i.test(action) && !detail) continue
-        out.push(`[${day} ${fmtHm(row.at)}] ${action}${detail && detail !== action ? '：' + clipText(detail, 260) : ''}`)
+        out.push(`[${day} ${fmtHm(row.at)}] ${action}${detail && detail !== action ? '：' + clipText(detail, 800) : ''}`)
       }
       return out
     } catch {
@@ -272,7 +272,7 @@ export function createWikiDream({
     const effort = cfg.memory?.dreamReasoningEffort || 'medium'
     let lastError = ''
     for (let attempt = 0; attempt < 2; attempt++) {
-      const maxTokens = attempt === 0 ? baseTokens : Math.max(7200, baseTokens * 2)
+      const maxTokens = attempt === 0 ? baseTokens : Math.max(24000, baseTokens * 2)
       let rawOut = ''
       try {
         rawOut = await askModel(dsh, {
@@ -293,7 +293,7 @@ export function createWikiDream({
       lastError = parsed.error
       // 仅在输出疑似截断/JSON 不完整时放宽预算重试一次；空返回直接失败（askModel 内部已放宽试过一次）
       if (!parsed.truncated || attempt > 0) break
-      log?.warn?.(`${key} 输出不完整（${parsed.error}），放宽 maxTokens=${Math.max(7200, baseTokens * 2)} 重试一次`)
+      log?.warn?.(`${key} 输出不完整（${parsed.error}），放宽 maxTokens=${Math.max(24000, baseTokens * 2)} 重试一次`)
     }
     return { ok: false, error: lastError || '模型输出校验失败' }
   }
@@ -411,7 +411,7 @@ export function createWikiDream({
       '   - 无延续性的临时近况或琐事超过 7~14 天后用 remove 请出热层降温。',
       `3. ${SELF_PAGE}（常驻·我自己）：我自己的近况、收送的物品、出门见闻、手头小事与持续心境；普通三餐、洗漱、作息等常规日常流水不记进来；超过 7~14 天且不再进行的旧琐碎近况自然 remove 精简。`,
       `4. ${monthPage}（按月归档·温层）：当月共同经历、已核销约定与值得留存的具体往事。具体名称、数字、地点、物品与公历日期原样保留，不要泛化抹掉细节；常规吃喝洗睡流水不记进来。`,
-      `5. ${INDEX_PAGE}（常驻目录）：不要放进 ops；在 indexSummary 字段里给出今天新增或改动过的 回忆/YYYY-MM（或 专题/...）的完整检索关键词概要（保留该页原有核心词并追加今天的新词，顿号分隔，只列有检索价值的事件、专有名词与主题，不列日期号、常规作息或一次性琐事，240字内）。`,
+      `5. ${INDEX_PAGE}（常驻目录）：不要放进 ops；在 indexSummary 字段里给出今天新增或改动过的 回忆/YYYY-MM（或 专题/...）的完整检索关键词概要（保留该页原有核心词并追加今天的新词，顿号分隔，只列有检索价值的事件、专有名词与主题，不列日期号、常规作息或一次性琐事，400字内）。`,
       '',
       '【编辑操作协议】',
       '- 已有页面只能用 add / replace / remove；仅标注「（尚不存在）」的页面可用 create 或 add。',
