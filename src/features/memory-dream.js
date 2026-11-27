@@ -291,7 +291,7 @@ export function createMemoryDream({
       } catch (error) { log.warn(`合并 ${who} 的记忆失败：`, error.message) }
       }
     }
-    if (version === forgetVersion) {
+    if (version === getForgetVersion()) {
       const st = load()
       st.mergeRun = { at: startedAt, groups, calls, merged }
       save(st)
