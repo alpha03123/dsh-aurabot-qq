@@ -84,18 +84,19 @@ export function createBili({ getConfig, hub, memory, log, dsh, api: injected, vi
   let login = { at: 0, key: '', value: { isLogin: false, uname: '' } }
 
   const owner = () => getConfig().ownerName || '主人'
-  /** 最近一天和主人的私聊（最多 8 行）：判断「这个视频跟最近聊的有没有关系」用 */
+  /** 最近 48 小时和主人的私聊原话（带日期时间戳、不截断、零脑内旁白）：判断「这个视频跟最近聊的有没有关系」用 */
   const ownerChat = () => {
     const id = getConfig().ownerId
     if (!id || typeof hub.chatLogOf !== 'function') return []
-    const since = Date.now() - 24 * 3600_000
-    const days = [dayKey(new Date(since)), dayKey()]
-    const rows = [...new Set(days)].flatMap((d) => hub.chatLogOf(d) || []).filter((r) => r && r.chatId === `private:${id}` && Number(r.t) >= since && r.text)
-    const lines = rows.slice(-8).map((r) => `${hm(r.t)} ${r.who === 'bot' ? `你发给${owner()}` : owner()}：${String(r.text).slice(0, 60)}`)
-    // 最后一条是她发的、主人还没回：标出来（之前只写「你：」，模型常把她自己的话当成主人说的）
-    if (rows.length && rows[rows.length - 1].who === 'bot') lines.push(`（${owner()}到现在还没回）`)
-    return lines
+    const now = Date.now()
+    const since = now - 48 * 3600_000
+    const days = [...new Set([dayKey(new Date(since)), dayKey(new Date(now - 24 * 3600_000)), dayKey(new Date(now))])]
+    const rows = days
+      .flatMap((d) => hub.chatLogOf(d) || [])
+      .filter((r) => r && r.chatId === `private:${id}` && !r.forgottenAt && r.kind !== 'seen' && Number(r.t) >= since && r.text)
+    return rows.slice(-40).map((r) => `[${mdhm(r.t)}] ${r.who === 'bot' ? `你发给${owner()}` : owner()}：${String(r.text).trim()}`)
   }
+  const mdhm = (t) => { const d = new Date(Number(t) || Date.now()); return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
   const hm = (t) => { const d = new Date(Number(t) || Date.now()); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
   const whenLabel = (t) => {
     const d = new Date(Number(t) || Date.now())

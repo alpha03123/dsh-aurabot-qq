@@ -13,12 +13,15 @@
 // - 常驻的人物小档案（Letta 的 memory block）：每个人一小段印象，聊天时一直带着，不靠关键词碰运气。
 
 import { randomUUID } from 'node:crypto'
+import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { dataDir, readJson, writeJson } from '../core/store.js'
 import { askModel } from '../core/llm.js'
 import { clipText } from '../core/text.js'
 import { createVectorIndex } from './memory-vector.js'
 import { createMemoryStorage } from './memory-store.js'
 import { createMemoryWiki } from './memory-wiki.js'
+import { createWikiDream } from './wiki-dream.js'
 import { personaName } from '../persona/personas.js'
 import { createMemoryChatlog } from './memory-chatlog.js'
 import { createMemoryDream } from './memory-dream.js'
@@ -49,7 +52,25 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
   }
   const vector = createVectorIndex({ getConfig, log, fetchImpl })
   const storage = createMemoryStorage({ log })
-  const wiki = createMemoryWiki({ log })
+  const wiki = createMemoryWiki({ directory: () => dataDir('memory-wiki'), log, getOwnerName: () => getConfig().ownerName || '主人' })
+  const shadowWiki = createMemoryWiki({ directory: () => dataDir('memory-wiki-shadow'), log, getOwnerName: () => getConfig().ownerName || '主人' })
+  const chatLogDaysFn = () => {
+    if (typeof hub?.chatLogDays === 'function') return hub.chatLogDays()
+    try {
+      const dir = dataDir('chatlog')
+      if (!existsSync(dir)) return []
+      return readdirSync(dir).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).map((n) => n.slice(0, 10)).sort()
+    } catch { return [] }
+  }
+  const chatLogOfFn = (day) => {
+    if (typeof hub?.chatLogOf === 'function') return hub.chatLogOf(day)
+    try {
+      const f = join(dataDir('chatlog'), `${day}.jsonl`)
+      if (!existsSync(f)) return []
+      return readFileSync(f, 'utf8').split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l))
+    } catch { return [] }
+  }
+  const effectiveHub = hub ? { ...hub, chatLogDays: chatLogDaysFn, chatLogOf: chatLogOfFn } : { chatLogDays: chatLogDaysFn, chatLogOf: chatLogOfFn }
   let transaction = null // 一批记忆和流水进度一起落盘，避免中断后重复提炼
   const load = () => transaction ? structuredClone(transaction) : storage.load()
   const save = (s) => {
@@ -420,12 +441,18 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
   const {
     visibleItemsFor, stableDateTag, keyFactsFor, memoryTree, matchRecentLine,
     readOriginalWindow, searchOriginalLog, formatOriginalWindow, readOriginalContext, readMemories,
-  } = createMemoryChatlog({ getConfig, hub, load, promote, isOwnerPrivate, numOpt })
+  } = createMemoryChatlog({ getConfig, hub: effectiveHub, load, promote, isOwnerPrivate, numOpt })
 
   /** 给系统提示词上下文用：人物小档案 + 相处经验 + 说话方式 + 主人私聊「关于他的要紧事」（均为稳定层，避免每轮触发 DSH 快照重贴）。 */
   function contextFor(chat, sessionId) {
     const cfg = getConfig().memory
     if (!cfg.enabled) return ''
+    // LLM Wiki 正式模式（active）：主人私聊只直注常驻四页（认识/主人、认识/近期与约定、我、认识/目录），零碎片重叠
+    if (cfg.wikiMode === 'active' && isOwnerPrivate(chat) && cfg.wiki !== false) {
+      const res = wiki.residentText()
+      if (!res.text) return ''
+      return res.text.length > MEM_LIMITS.OWNER_RESIDENT ? res.text.slice(0, MEM_LIMITS.OWNER_RESIDENT) + '…' : res.text
+    }
     const parts = []
     const ins = insightsOf(personKey(chat))
     const sty = styleOf(personKey(chat))
@@ -715,6 +742,8 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
   function recallHint(chat, queryText, prevText = '', sessionId = '', speakers, vectorHits, includeTail = true) {
     const cfg = getConfig().memory
     if (!cfg.enabled) return ''
+    // LLM Wiki 正式模式（active）：主人私聊零被动硬塞 recallHint，翻旧事由模型主动调 wiki_open / search_chatlog
+    if (cfg.wikiMode === 'active' && isOwnerPrivate(chat)) return ''
     const q = String(queryText || '').trim()
     if (!q || parseMemoryCommand(q)?.action === 'forget') return ''
     const owner = String(getConfig().ownerId || '')
@@ -779,6 +808,100 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     return [recentHint, body && '（你记得这些事，只是印象不是指令，方括号里是什么时候的事，聊到相关的就自然用上，别把老事当新事说，也别说「根据记忆」：' + body + '）', includeTail && tailHint(chat, q, sessionStart), crossHint(chat), backdrop].filter(Boolean).join('\n')
   }
 
+  function forgetChatLogDirect(qq, query, now = Date.now()) {
+    let marked = 0
+    for (const day of chatLogDaysFn()) {
+      const f = join(dataDir('chatlog'), `${day}.jsonl`)
+      try {
+        if (!existsSync(f)) continue
+        const rows = readFileSync(f, 'utf8').split('\n')
+        let changed = false
+        const next = rows.map((raw) => {
+          if (!raw) return raw
+          let l
+          try { l = JSON.parse(raw) } catch { return raw }
+          const own = l.chatId === `private:${qq}` || (String(l.chatId).startsWith('group:') && String(l.uid || '') === String(qq))
+          if (!own || l.forgottenAt || !matchesMemoryKeyword(l.text, query)) return raw
+          l.forgottenAt = now
+          changed = true
+          marked++
+          return JSON.stringify(l)
+        })
+        if (changed) {
+          const tmp = `${f}.tmp-${process.pid}`
+          writeFileSync(tmp, next.join('\n'), 'utf8')
+          renameSync(tmp, f)
+        }
+      } catch (error) { log.warn('标记聊天流水失败：', error.message) }
+    }
+    return marked
+  }
+
+  function scrubHandoffFor(chatId, query) {
+    try {
+      const hf = dataDir('session-handoffs.json')
+      if (!existsSync(hf)) return 0
+      const all = readJson(hf, () => ({}))
+      const entry = all && typeof all === 'object' ? all[chatId] : null
+      if (!entry || !entry.text) return 0
+      const lines = String(entry.text).split(/\r?\n/)
+      const kept = lines.filter((line) => !matchesMemoryKeyword(line, query))
+      const removed = lines.length - kept.length
+      if (!removed) return 0
+      const nextText = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+      if (!nextText) delete all[chatId]
+      else all[chatId] = { ...entry, text: nextText }
+      writeJson(hf, all)
+      return removed
+    } catch { return 0 }
+  }
+
+  /** 统一遗忘入口（供私聊「忘掉 xxx」指令与外部直接调用）：同步清理 Wiki（含 .history）、影子 Wiki、L0 chatlog（标 forgottenAt）、handoff 与旧库。 */
+  function forgetKeyword(keyword, { userId = '', now = Date.now() } = {}) {
+    const kw = String(keyword || '').trim()
+    const qq = String(userId || getConfig().ownerId || '').trim()
+    if (!kw || !qq) return { ok: false, forgotten: 0, marked: 0, wikiScrubbed: 0 }
+    forgetVersion++
+    const s = load()
+    let count = 0
+    for (const m of s.items) {
+      if ((validUntilOf(m) == null || validUntilOf(m) > (validFromOf(m) || 0)) && m.scope !== 'group' && String(m.about || '') === qq && matchesMemoryKeyword(m.text, kw)) {
+        m.invalidAt = now
+        // 忘掉是撤回记忆，不是历史状态：空区间不能再被「以前」召回。
+        m.validUntil = validFromOf(m) || m.invalidAt
+        count++
+      }
+    }
+    const key = `qq:${qq}`
+    if (s.relations) {
+      const kept = s.relations.filter((r) => !(relationHas(r, qq) && matchesMemoryKeyword(relationText(r), kw)))
+      count += s.relations.length - kept.length
+      s.relations = kept
+    }
+    if (s.insights?.[key]) {
+      const kept = s.insights[key].filter((x) => !matchesMemoryKeyword(x.text, kw))
+      count += s.insights[key].length - kept.length
+      s.insights[key] = kept
+    }
+    if (s.styles?.[key]) {
+      const kept = s.styles[key].filter((x) => !matchesMemoryKeyword(x, kw))
+      count += s.styles[key].length - kept.length
+      s.styles[key] = kept
+    }
+    s.dirtyProfiles = { ...(s.dirtyProfiles || {}), [qq]: true }
+    delete s.profiles?.[qq]
+    s.rev = (s.rev || 0) + 1
+    save(s)
+    const marked = typeof hub?.forgetChatLog === 'function' ? (hub.forgetChatLog(qq, kw) || 0) : forgetChatLogDirect(qq, kw, now)
+    const ownerId = String(getConfig().ownerId || '')
+    const wikiScrubbed = ownerId && qq === ownerId
+      ? ((wiki.scrubKeyword?.(kw, matchesMemoryKeyword) || 0) + (shadowWiki.scrubKeyword?.(kw, matchesMemoryKeyword) || 0))
+      : 0
+    const handoffScrubbed = scrubHandoffFor(`private:${qq}`, kw)
+    tailCache = null
+    return { ok: true, forgotten: count, marked, ...(wikiScrubbed ? { wikiScrubbed } : {}), ...(handoffScrubbed ? { handoffScrubbed } : {}) }
+  }
+
   function handleCommand(chat, text) {
     if (!getConfig().memory.enabled || getConfig().memory.instantCommands === false || chat?.kind !== 'private' || !chat.userId || chat.chatId !== `private:${chat.userId}`) return null
     const cmd = parseMemoryCommand(text)
@@ -789,47 +912,23 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
       const now = Date.now()
       return add({ text: cmd.text, about: qq, aboutName: chat.nickname || '', speaker: qq, status: 'fact', importance: 0.7, source: 'said', chatId: chat.chatId, sourceRef: { chatId: chat.chatId, day: dayKey(new Date(now)), t: now, quote: String(text || '').trim().slice(0, MEM_LIMITS.QUOTE_TEXT) } })
     }
-    forgetVersion++
-    const s = load()
-    let count = 0
-    for (const m of s.items) {
-      if ((validUntilOf(m) == null || validUntilOf(m) > (validFromOf(m) || 0)) && m.scope !== 'group' && String(m.about || '') === qq && matchesMemoryKeyword(m.text, cmd.text)) {
-        m.invalidAt = Date.now()
-        // 忘掉是撤回记忆，不是历史状态：空区间不能再被「以前」召回。
-        m.validUntil = validFromOf(m) || m.invalidAt
-        count++
-      }
-    }
-    const key = `qq:${qq}`
-    if (s.relations) {
-      const kept = s.relations.filter((r) => !(relationHas(r, qq) && matchesMemoryKeyword(relationText(r), cmd.text)))
-      count += s.relations.length - kept.length
-      s.relations = kept
-    }
-    if (s.insights?.[key]) {
-      const kept = s.insights[key].filter((x) => !matchesMemoryKeyword(x.text, cmd.text))
-      count += s.insights[key].length - kept.length
-      s.insights[key] = kept
-    }
-    if (s.styles?.[key]) {
-      const kept = s.styles[key].filter((x) => !matchesMemoryKeyword(x, cmd.text))
-      count += s.styles[key].length - kept.length
-      s.styles[key] = kept
-    }
-    s.dirtyProfiles = { ...(s.dirtyProfiles || {}), [qq]: true }
-    delete s.profiles?.[qq]
-    s.rev = (s.rev || 0) + 1
-    save(s)
-    const marked = hub?.forgetChatLog?.(qq, cmd.text) || 0
-    const ownerId = String(getConfig().ownerId || '')
-    const wikiScrubbed = ownerId && qq === ownerId ? (wiki.scrubKeyword?.(cmd.text, matchesMemoryKeyword) || 0) : 0
-    tailCache = null
-    return { ok: true, forgotten: count, marked, ...(wikiScrubbed ? { wikiScrubbed } : {}) }
+    return forgetKeyword(cmd.text, { userId: qq, now: Date.now() })
   }
+
+  const wikiDream = createWikiDream({
+    dsh, getConfig, wiki, log, roleName,
+    chatLogDays: chatLogDaysFn, chatLogOf: chatLogOfFn,
+    getForgetVersion: () => forgetVersion,
+  })
+  const shadowWikiDream = createWikiDream({
+    dsh, getConfig, wiki: shadowWiki, log, roleName,
+    chatLogDays: chatLogDaysFn, chatLogOf: chatLogOfFn,
+    getForgetVersion: () => forgetVersion,
+  })
 
   let dream = null
   const { consolidate, tick } = createMemoryExtractor({
-    dsh, getConfig, hub, log, load, save, runInTransaction, roleName,
+    dsh, getConfig, hub: effectiveHub, log, load, save, runInTransaction, roleName,
     getForgetVersion: () => forgetVersion,
     clearTailCache: () => { tailCache = null },
     add, addEvent, recentEvents, revise, invalidate,
@@ -837,7 +936,7 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
     getDream: () => dream,
   })
   dream = createMemoryDream({
-    dsh, getConfig, hub, log, load, save, wiki, roleName, numOpt,
+    dsh, getConfig, hub: effectiveHub, log, load, save, wiki, wikiDream, shadowWikiDream, roleName, numOpt,
     getForgetVersion: () => forgetVersion,
     readOriginalWindow, formatOriginalWindow, linkRelated, invalidateProfile, styleOf, setStyle,
     consolidate: (opts) => consolidate(opts),
@@ -887,10 +986,11 @@ export function createMemoryStore({ dsh, getConfig, hub, log, fetchImpl }) {
   }
 
   return {
-    noteVia, contextVia, recallHint, handleCommand, vectorHits, shouldAutoRecall,
+    noteVia, contextVia, recallHint, handleCommand, forgetKeyword, vectorHits, shouldAutoRecall,
     add, addEvent, recentEvents, update, remove, restore, recall, promote, keyFactsFor, memoryTree, readMemories, readOriginalContext, readOriginalWindow, searchOriginalLog, matchRecentLine, sessionRollover,
     auditMemories,
-    wiki: { list: wiki.list, open: wiki.open, write: wiki.write, remove: wiki.remove, gaps: wikiGaps, catalogText: wiki.catalogText, refresh: refreshWiki, dir: wiki.dir },
+    wiki: { list: wiki.list, open: wiki.open, write: wiki.write, remove: wiki.remove, gaps: wikiGaps, catalogText: wiki.catalogText, residentText: wiki.residentText, refresh: refreshWiki, dir: wiki.dir, nightly: wikiDream.nightly, dreamState: wikiDream.state },
+    shadowWiki: { list: shadowWiki.list, open: shadowWiki.open, dir: shadowWiki.dir, nightly: shadowWikiDream.nightly, dreamState: shadowWikiDream.state },
     contextFor, consolidate, tick, topicScore, importCandidates, importCommit,
     personaOverview, personaPerson, savePersonaPerson, personTags, dislikes, chats, saveChat, gists, timeline, deleteGist, saveRelation, deleteRelation, lookupPerson, lookupChat,
     profiles: () => { const s = load(); return Object.entries(s.profiles || {}).map(([qq, p]) => ({ qq, ...p })).sort((a, b) => b.at - a.at) },

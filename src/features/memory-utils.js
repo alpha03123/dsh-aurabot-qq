@@ -403,11 +403,13 @@ export function parseMemoryCommand(text) {
   const m = String(text || '').trim().match(/^(?:请|麻烦|你)?\s*(记住|你要记得|要记得|忘掉|忘记|别记|不要记)(?:[：:,，\s]+)?(.+?)\s*[。！!]*$/s)
   if (!m) return null
   const content = m[2].trim().replace(/^[「『“"]|[」』”"]$/g, '').trim()
-  // 「记住了吗」「忘掉吧」「别记这个」是聊天不是吩咐，也说不清要记什么、忘什么
-  if ([...content.replace(/[\s\p{P}\p{S}]/gu, '')].length < 3 || /^(?:了|吧|吗|呢|啊|呀|哦|嘛|没)|^(?:这个|那个|这些|那些|它|这件事|那件事|刚才的?|上面的?)[\s\p{P}\p{S}]*$/u.test(content)) return null
+  const action = /^(忘|别|不要)/.test(m[1]) ? 'forget' : 'remember'
+  // 「记住了吗」「忘掉吧」「别记这个」是聊天不是吩咐；忘掉支持 2 字词（如「忘掉 林夏」）
+  const minLen = action === 'forget' ? 2 : 3
+  if ([...content.replace(/[\s\p{P}\p{S}]/gu, '')].length < minLen || /^(?:了|吧|吗|呢|啊|呀|哦|嘛|没)|^(?:这个|那个|这些|那些|它|这件事|那件事|刚才的?|上面的?)[\s\p{P}\p{S}]*$/u.test(content)) return null
   // 密码这类东西不该长期存着
-  if (/密码|口令|验证码|token|api.?key|身份证|银行卡/i.test(content)) return null
-  return { action: /^(忘|别|不要)/.test(m[1]) ? 'forget' : 'remember', text: content.slice(0, 200) }
+  if (/密码|口令|验证码|token|api.?key|secret|身份证|银行卡/i.test(content)) return null
+  return { action, text: content.slice(0, 200) }
 }
 
 /** 非主人不能把指令和权限写成长久记忆。 */

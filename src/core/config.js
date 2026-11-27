@@ -238,7 +238,7 @@ export const DEFAULTS = {
   debug: { trace: true, traceDays: 7 }, // trace：小脑留底，后台每次模型调用的完整输入输出记到 traces/日期.jsonl（排查用，只存本机）；traceDays：留几天
   memory: {
     enabled: true, recallCount: 6, recallMode: 'always', recallTriggers: ['上次', '上回', '之前', '以前', '那天', '那次', '还记得', '记不记得', '说过', '提过', '答应', '约好', '那时候'],
-    dailyConsolidate: true, consolidateTimes: ['04:00', '16:00'], keepChatlogDays: -1, mergeGroups: false, instantCommands: true, groupMemory: true, searchRrf: true, dreamAudit: true, wiki: true, injectStyle: true,
+    dailyConsolidate: true, consolidateTimes: ['04:00', '16:00'], keepChatlogDays: -1, mergeGroups: false, instantCommands: true, groupMemory: true, searchRrf: true, dreamAudit: true, wiki: true, wikiMode: 'shadow', injectStyle: true,
     profileFieldChars: 40, profilePeople: 2, profileChars: 240, chatImpression: true, chatImpressionChars: 120, dislikeSilence: 0.85,
     extractIdleMinutes: 30, extractMinLines: 20, ownerExtractIdleMinutes: 10, ownerExtractMinLines: 2, extractDailyBatches: 24, capacity: { auto: 2000, event: 600, diary: 400 }, eventExpireDays: 90, vector: { enabled: false, baseUrl: '', model: '', apiKey: '' },
   }, // keepChatlogDays=-1 默认永久保留原话正本；extractIdleMinutes 为 0 时关闭空闲提炼；主人私聊用 ownerExtract*；手动记忆不受容量限制
@@ -571,6 +571,7 @@ export function normalize(raw) {
   c.memory.keepChatlogV2 = true
   c.memory.mergeGroups = bool(c.memory.mergeGroups, false)
   for (const k of ['instantCommands', 'groupMemory', 'searchRrf', 'dreamAudit', 'wiki', 'injectStyle']) c.memory[k] = bool(c.memory[k], true)
+  c.memory.wikiMode = ['shadow', 'active', 'legacy'].includes(c.memory.wikiMode) ? c.memory.wikiMode : 'shadow'
   c.memory.crossContext = bool(c.memory.crossContext, false)
   c.memory.extractIdleMinutes = num(c.memory.extractIdleMinutes, 30, 0, BIG)
   c.memory.extractMinLines = Math.round(num(c.memory.extractMinLines, 20, 1, BIG))

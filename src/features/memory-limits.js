@@ -17,11 +17,13 @@ export const MEM_LIMITS = {
   OWNER_RESIDENT: 12000,     // 主人私聊常驻记忆总上限
   OTHER_RESIDENT: 4800,      // 非主人/群聊/无主人页兜底常驻总上限
   WIKI_OWNER_PAGE: 6000,     // 主人认识页直注全文上限
+  WIKI_RECENT_PAGE: 3000,    // 近期与约定热层直注上限
   WIKI_SELF_PAGE: 2400,      // 「我」认识页直注全文上限
-  WIKI_CATALOG: 1000,        // 认识页目录摘要上限
+  WIKI_CATALOG: 1500,        // 认识页目录摘要上限（含关键词概要）
   WIKI_CATALOG_EXCERPT: 300, // 目录里单页简介上限
   WIKI_REFRESH_FACTS: 60,    // 刷新认识页参考的记忆条数
   WIKI_REFRESH_TOKENS: 3200, // 刷新认识页输出预算
+  WIKI_DREAM_TOKENS: 3600,   // 新版结构化 Dreaming 输出预算
   WIKI_EXTRA_CONTEXT: 4000,  // 睡前传给认识页的日程与核实线索上限
 
   // 近期事实 / 召回 / 跨会话 / 原话检索上限

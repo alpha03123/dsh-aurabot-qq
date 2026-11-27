@@ -288,7 +288,7 @@ export function createMemoryChatlog({ getConfig, hub, load, promote, isOwnerPriv
 
     if (!out.length) {
       const capHint = (truncatedByDays || truncatedByLines) ? `（默认只检索了最近 ${days.length} 天内的记录，查更早请指定 day 如 2026-03）` : ''
-      return { ok: true, lines: [], message: q ? `照字面没找到「${query}」${capHint}；原话可能换了说法，可换词再查，或不带 query 按 day（YYYY-MM-DD）直接翻那天的对话。` : `没有找到对应的原话记录${capHint}` }
+      return { ok: true, lines: [], message: q ? `照字面没找到相关原话${capHint}；原话可能换了说法，可换更短核心词再查，或不带 query 按 day（YYYY-MM-DD）直接翻那天的对话。` : `没有找到对应的原话记录${capHint}` }
     }
     const rendered = []
     for (const l of out) {
