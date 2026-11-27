@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // LLM Wiki 记忆系统的回放验收（E2E，全程真实模型）。用法见同目录 README.md。
-//   node tools/wiki-acceptance/run.mjs --mode replay            35 天模拟时间线 + 检查 + 语言层探针
+//   node tools/wiki-acceptance/run.mjs --mode replay            35 天模拟时间线 + 检查 + 语言层探针（默认 Suite A）
+//   node tools/wiki-acceptance/run.mjs --mode replay --suite b  Suite B 独立盲测回放 + 检查 + 语言层探针
 //   node tools/wiki-acceptance/run.mjs --mode real              用线上真实 chatlog 生成初版 Wiki，给人看
 // 只读线上数据目录（config.json / personas / real 模式的 chatlog），所有写入都在 --out 目录。
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs'
@@ -18,6 +19,7 @@ const REPO = resolve(HERE, '../..')
 const { values: args } = parseArgs({
   options: {
     mode: { type: 'string', default: 'replay' },
+    suite: { type: 'string', default: 'a' },
     out: { type: 'string' },
     source: { type: 'string' },
     adapter: { type: 'string' },
@@ -29,9 +31,12 @@ const { values: args } = parseArgs({
 
 const mode = args.mode
 if (!['replay', 'real'].includes(mode)) throw new Error('--mode 只能是 replay 或 real')
+const suite = String(args.suite || 'a').toLowerCase()
+if (!['a', 'b'].includes(suite)) throw new Error('--suite 只能是 a 或 b')
 const stampStr = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-')
 const sourceDir = resolve(args.source || process.env.REPLAY_SOURCE_DIR || join(homedir(), '.dsh', 'plugins-data', 'aurabot'))
-const outDir = resolve(args.out || join(HERE, 'out', `${mode}-${stampStr}`))
+const outPrefix = mode === 'replay' && suite !== 'a' ? `${mode}-${suite}` : mode
+const outDir = resolve(args.out || join(HERE, 'out', `${outPrefix}-${stampStr}`))
 const adapterPath = resolve(args.adapter || join(HERE, 'adapter.mjs'))
 mkdirSync(outDir, { recursive: true })
 
@@ -49,9 +54,10 @@ const dataDir = prepareSandbox({ sourceDir, outDir, withRealChat: mode === 'real
 process.env.AURABOT_DATA_DIR = dataDir
 installClock()
 
-const { START, END, DAYS } = await import('./timeline.mjs')
-const { EVERY_NIGHT, AFTER_NIGHT, FINAL } = await import('./checks.mjs')
-const { runProbes } = await import('./probes.mjs')
+const suiteSuffix = suite === 'a' ? '' : `-${suite}`
+const { START, END, DAYS } = await import(`./timeline${suiteSuffix}.mjs`)
+const { EVERY_NIGHT, AFTER_NIGHT, FINAL } = await import(`./checks${suiteSuffix}.mjs`)
+const { runProbes } = await import(`./probes${suiteSuffix}.mjs`)
 
 // 2) 配置：线上 config.json 的副本，走仓库自己的 normalize
 let cfg = JSON.parse(readFileSync(join(dataDir, 'config.json'), 'utf8'))
@@ -64,7 +70,8 @@ const chatModel = cfg.model?.model
 if (cfg.model?.provider !== MODEL_CFG.provider) throw new Error(`线上配置的 provider 是 ${cfg.model?.provider}，验收脚本只接了 ${MODEL_CFG.provider}；不一致就不是同一个模型，先改 REPLAY_PROVIDER / REPLAY_BASE_URL`)
 const chatEffort = process.env.REPLAY_CHAT_EFFORT || cfg.model?.reasoningEffort || 'medium'
 
-say(`# wiki-acceptance ${mode}  输出：${outDir}`)
+const suiteTitle = mode === 'replay' ? ` / Suite ${suite.toUpperCase()}` : ''
+say(`# wiki-acceptance ${mode}${suiteTitle}  输出：${outDir}`)
 say(`模型：${MODEL_CFG.provider}/${chatModel}（语言层 effort=${chatEffort}，后台调用走 askModel 原逻辑）  评测：${MODEL_CFG.judgeModel}`)
 say(`预检：${(await preflight(chatModel)).slice(0, 20)}`)
 
@@ -164,12 +171,12 @@ const hardFails = checkResults.filter((c) => c.hard && !c.pass)
 const warns = checkResults.filter((c) => !c.hard && !c.pass)
 const probeHardFails = probe ? probe.summary.criteria.filter((c) => c.hard && !c.pass) : []
 const passed = !hardFails.length && !probeHardFails.length
-const report = { mode, passed, outDir, model: `${MODEL_CFG.provider}/${chatModel}`, chatEffort, judge: MODEL_CFG.judgeModel, stats, nights, checks: checkResults, probes: probe }
+const report = { mode, suite, passed, outDir, model: `${MODEL_CFG.provider}/${chatModel}`, chatEffort, judge: MODEL_CFG.judgeModel, stats, nights, checks: checkResults, probes: probe }
 writeFileSync(join(outDir, 'report.json'), JSON.stringify(report, null, 2))
 
 const pct = (c) => (c.rate ? `${Math.round(c.value * 100)}%` : String(c.value))
 const md = []
-md.push(`# LLM Wiki 回放验收报告（${mode}）`, '')
+md.push(`# LLM Wiki 回放验收报告（${mode}${suiteTitle}）`, '')
 md.push(`- 结论：**${passed ? '通过' : '不通过'}**`)
 md.push(`- 模型：${report.model}（语言层 effort=${chatEffort}）；评测：${MODEL_CFG.judgeModel}`)
 md.push(`- 模型调用 ${stats.calls} 次，出错 ${stats.errors} 次，输入 ${stats.inputTokens} / 输出 ${stats.outputTokens} tokens，累计 ${Math.round(stats.ms / 1000)}s`, '')

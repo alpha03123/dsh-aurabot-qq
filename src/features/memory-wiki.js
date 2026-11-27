@@ -476,7 +476,7 @@ export function createMemoryWiki({ directory = () => dataDir('memory-wiki'), log
       if (st.body.length > MAX_CONTENT_CHARS) {
         return { ok: false, error: `页面「${canonical}」超过字数上限（${st.body.length}/${MAX_CONTENT_CHARS}）`, changedPages: [], rejectedOps }
       }
-      if (st.origExists && st.origBody.length >= 150) {
+      if (st.origExists && st.origBody.length >= 400) {
         if (canonical !== RECENT_PAGE && canonical !== INDEX_PAGE) {
           const minRatio = st.isRewrite ? archiveMinRatio : shrinkMinRatio
           if (st.body.length < st.origBody.length * minRatio) {
