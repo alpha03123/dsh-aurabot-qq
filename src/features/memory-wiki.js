@@ -49,7 +49,7 @@ export function extractPageLinks(content) {
 export function extractMemoryRefs(content) {
   const stripped = String(content || '').replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\r\n]*`/g, ' ')
   const found = new Set()
-  for (const m of stripped.matchAll(/(?:^|[\s（(，,；;：:])#([0-9a-f]{8})\b/gi)) {
+  for (const m of stripped.matchAll(/(?:^|[\s（(）)，,。.;；:：、！？!?])#([0-9a-f]{8})\b/gi)) {
     found.add(m[1].toLowerCase())
     if (found.size >= MAX_LINKS) break
   }
@@ -315,7 +315,7 @@ export function createMemoryWiki({ directory = () => dataDir('memory-wiki'), log
     maxCatalogChars = MEM_LIMITS.WIKI_CATALOG,
   } = {}) {
     const docs = listAll().filter((d) => d.scope === 'owner')
-    if (!docs.length) return { hasOwnerPage: false, text: '', updatedAt: 0 }
+    if (!docs.length) return { hasOwnerPage: false, text: '', updatedAt: 0, memoryRefs: [] }
     const wantKey = keyOf(ownerTitle)
     const ownerDoc = docs.find((d) => !d.isSelf && !d.isIndex && (keyOf(d.title) === wantKey || keyOf(d.title) === '主人')) || null
     const selfDoc = docs.find((d) => d.isSelf) || null
@@ -337,6 +337,7 @@ export function createMemoryWiki({ directory = () => dataDir('memory-wiki'), log
       hasOwnerPage: Boolean(ownerDoc && ownerDoc.body),
       text: blocks.join('\n\n'),
       updatedAt: Number(ownerDoc?.updatedAt) || 0,
+      memoryRefs: [...new Set([...(ownerDoc?.memoryRefs || []), ...(selfDoc?.memoryRefs || [])])],
     }
   }
 
